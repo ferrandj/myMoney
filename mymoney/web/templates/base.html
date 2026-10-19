@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}myMoney{% endblock %} · myMoney</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  {% if unlocked and csrf %}
+  <header class="topbar">
+    <a class="brand" href="/">myMoney</a>
+    <nav>
+      <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Patrimoine</a>
+      <a href="/connections" {% if request.url.path.startswith('/connections') %}aria-current="page"{% endif %}>Connexions</a>
+      <a href="/documents" {% if request.url.path.startswith('/documents') %}aria-current="page"{% endif %}>Documents</a>
+      <a href="/settings" {% if request.url.path.startswith('/settings') %}aria-current="page"{% endif %}>Paramètres</a>
+    </nav>
+    <form method="post" action="/logout" class="lock">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="lock" value="1">
+      <button type="submit" class="btn ghost" title="Efface la clé de la mémoire : plus rien n'est lisible">🔒 Verrouiller</button>
+    </form>
+  </header>
+  {% endif %}
+  <main class="{% block main_class %}container{% endblock %}">
+    {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
+    {% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

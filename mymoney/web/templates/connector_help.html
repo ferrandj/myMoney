@@ -1,0 +1,29 @@
+<section class="card help">
+  <h2>Mode d'emploi</h2>
+  {% if cls.type == 'enablebanking' %}
+  <ol>
+    <li>Crée un compte gratuit sur <strong>enablebanking.com</strong>, puis une application en environnement <em>Production</em>.</li>
+    <li>Dans « Redirect URLs », ajoute <code>{{ request.base_url }}connections/callback</code> (ou l'URL publique de ton NAS). Si ton NAS n'est pas en HTTPS, mets n'importe quelle URL https : tu colleras l'adresse de retour à la main.</li>
+    <li>Télécharge la clé privée (.pem) générée, copie son contenu ici avec l'Application ID.</li>
+    <li>Clique sur « Activate by linking accounts » dans le panneau Enable Banking (mode restreint gratuit, tes comptes uniquement).</li>
+    <li>Une connexion par banque : Fortuneo, BforBank, Hello bank!, Boursorama, Revolut, Trade Republic…</li>
+  </ol>
+  <p class="muted small">Le consentement bancaire (DSP2) dure 180 jours : l'app te demandera de te reconnecter ensuite.</p>
+  {% elif cls.type == 'gocardless' %}
+  <p>Clés dans le portail GoCardless Bank Account Data → User secrets. Limite : 4 synchros par jour et par compte.</p>
+  {% elif cls.type == 'exchange' %}
+  <ul>
+    <li><strong>Binance</strong> : Gestion API → créer une clé, cocher uniquement « Enable Reading ». Restreins à l'IP de ta box.</li>
+    <li><strong>Kraken</strong> : Settings → API → permissions « Query Funds » et « Query Ledger Entries » uniquement.</li>
+    <li>Ne coche <strong>jamais</strong> trading ou retrait.</li>
+  </ul>
+  {% elif cls.type == 'woob' %}
+  <p>Woob se connecte au site de ta banque avec tes identifiants web, comme le faisaient les agrégateurs avant la DSP2. Utile pour l'assurance-vie, le PEA, le PER… Si ta banque demande une validation (SMS, appli), l'app te la demandera.</p>
+  <p class="muted small">Modules : fortuneo, bforbank, hellobank, boursorama, bnporc, cragr, creditmutuel, caissedepargne, lcl, ing, spirica, linebourse, amundi… Liste complète : woob.tech.</p>
+  {% elif cls.type == 'traderepublic' %}
+  <p>Après l'enregistrement, Trade Republic envoie une demande de connexion dans l'application mobile : valide-la puis reviens cliquer sur Continuer. La session est conservée chiffrée.</p>
+  {% elif cls.type in ['evm', 'bitcoin', 'solana'] %}
+  <p>Seules les <strong>adresses publiques</strong> sont nécessaires. Ne saisis <strong>jamais</strong> ta seed phrase ni une clé privée : aucune app légitime n'en a besoin pour lire un solde.</p>
+  <p class="muted small">Confidentialité : les API publiques voient les adresses consultées. Si tu as un nœud ou un mempool sur ton NAS, indique son URL.</p>
+  {% endif %}
+</section>

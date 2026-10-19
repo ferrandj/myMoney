@@ -1,0 +1,47 @@
+services:
+  mymoney:
+    image: ghcr.io/ferrandj/mymoney:latest
+    # Pour construire l'image directement sur le NAS à la place :
+    # build: .
+    container_name: mymoney
+    restart: unless-stopped
+    ports:
+      # Écoute sur le réseau local uniquement. N'expose JAMAIS ce port sur Internet
+      # (pas de redirection de port sur la box) : utilise un VPN (Tailscale, WireGuard).
+      - "8000:8000"
+    volumes:
+      # Tout est chiffré dans ce dossier : base SQLCipher, documents, trousseau de clés.
+      - ./data:/data
+    environment:
+      TZ: Europe/Paris
+      # URL à laquelle tu ouvres l'app (sert aux retours de connexion bancaire).
+      MYMONEY_PUBLIC_URL: "http://nas.local:8000"
+      # Mets true dès que l'app est servie en HTTPS (reverse proxy du NAS).
+      MYMONEY_COOKIE_SECURE: "false"
+      MYMONEY_AUTO_LOCK_MINUTES: "15"
+      MYMONEY_AUTO_SYNC_HOURS: "6"
+      # Adresse du reverse proxy, s'il y en a un, pour qu'il soit cru sur l'IP du client.
+      # MYMONEY_TRUSTED_PROXIES: "172.17.0.1"
+    # Durcissement du conteneur
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+
+    # Option (moins sûre, voir SECURITY.md) : déverrouillage automatique au démarrage
+    # pour que la synchro tourne sans toi. Le mot de passe est alors sur le NAS.
+    # secrets: [mymoney_password]
+    # environment:
+    #   MYMONEY_UNLOCK_PASSWORD_FILE: /run/secrets/mymoney_password
+
+# secrets:
+#   mymoney_password:
+#     file: ./mymoney_password.txt

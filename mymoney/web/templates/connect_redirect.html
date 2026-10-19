@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Connexion bancaire{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<h1>Connecter « {{ connection.name }} »</h1>
+<div class="card stack">
+  <p>Tu vas être redirigé vers ta banque pour autoriser un accès <strong>en lecture seule</strong> (180 jours). L'app ne voit jamais ton mot de passe bancaire.</p>
+  <a class="btn primary" href="/connections/{{ connection.id }}/authorize">Aller sur le site de ma banque →</a>
+  {% if cls.type == 'enablebanking' %}<a class="btn ghost small" href="/connections/{{ connection.id }}/banks">Voir les noms de banques acceptés</a>{% endif %}
+</div>
+<details class="card">
+  <summary>La page de retour ne s'affiche pas ?</summary>
+  <p class="small">Après l'autorisation, la banque renvoie vers <code>{{ redirect_url }}</code>. Si cette adresse n'est pas joignable, copie l'URL complète de la barre d'adresse et colle-la ici :</p>
+  <form method="post" action="/connections/{{ connection.id }}/callback-paste" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="url" required placeholder="https://…?code=…&state=…" autocomplete="off">
+    <button class="btn">Valider</button>
+  </form>
+</details>
+{% endblock %}

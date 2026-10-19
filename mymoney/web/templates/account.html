@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ account.name }}{% endblock %}
+{% block content %}
+<p><a href="/">← Patrimoine</a></p>
+<section class="hero">
+  <div>
+    <p class="muted">{{ [account.institution, account.type_label, ('via ' ~ account.connection.name) if account.connection else 'saisi manuellement']|select|join(' · ') }}</p>
+    <h1>{{ account.name }}</h1>
+    <p class="big">{{ value.total|money }}</p>
+    {% if account.currency != 'EUR' %}<p class="muted small">Solde {{ account.balance|money(account.currency) }}</p>{% endif %}
+    <p class="muted small">Mis à jour {{ account.balance_date|frdate }}</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/accounts/{{ account.id }}/edit">Modifier</a>
+  </div>
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h2>Informations</h2>
+    <dl class="kv">
+      {% if rate is not none %}<dt>Taux</dt><dd><strong>{{ '%.2f'|format(rate)|replace('.', ',') }} %</strong> <span class="muted small">{{ rate_source }}</span></dd>{% endif %}
+      {% if account.iban %}<dt>IBAN</dt><dd><code>{{ account.iban }}</code></dd>{% endif %}
+      <dt>Devise</dt><dd>{{ account.currency }}</dd>
+      {% if account.notes %}<dt>Notes</dt><dd>{{ account.notes }}</dd>{% endif %}
+    </dl>
+    {% for w in value.warnings %}<p class="warn small">⚠ {{ w }}</p>{% endfor %}
+  </div>
+</section>
+
+{% if account.holdings or account.category in ['crypto', 'investissements', 'autres'] %}
+<section class="card">
+  <h2>Positions</h2>
+  {% if value.holdings %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Actif</th><th class="num">Quantité</th><th class="num">Prix</th><th class="num">Valeur</th><th></th></tr></thead>
+    <tbody>
+    {% for hv in value.holdings %}
+      <tr>
+        <td>{{ hv.holding.name or hv.holding.symbol or hv.holding.isin }}
+          <div class="muted small">{{ hv.holding.symbol or '' }} {{ hv.holding.isin or '' }}{% if hv.holding.manual %} · manuel{% endif %}</div></td>
+        <td class="num">{{ hv.holding.quantity|qty }}</td>
+        <td class="num">{{ hv.unit_price_eur|money }}</td>
+        <td class="num">{{ hv.value_eur|money }}</td>
+        <td>{% if hv.holding.manual %}
+          <form method="post" action="/holdings/{{ hv.holding.id }}/delete" data-confirm="Supprimer cette position ?">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="account_id" value="{{ account.id }}">
+            <button class="btn ghost small" aria-label="Supprimer">✕</button></form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="muted">Aucune position.</p>{% endif %}
+  <details>
+    <summary>Ajouter une position à la main</summary>
+    <form method="post" action="/accounts/{{ account.id }}/holdings" class="row-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Symbole <input name="symbol" placeholder="BTC, ETH…"></label>
+      <label>ou ISIN <input name="isin" placeholder="FR0000120271"></label>
+      <label>Quantité <input name="quantity" required inputmode="decimal"></label>
+      <label>Nom <input name="name"></label>
+      <label>Type <select name="asset_class"><option value="crypto">Crypto</option><option value="stock">Action</option><option value="etf">ETF</option><option value="fund">Fonds / UC</option><option value="other">Autre</option></select></label>
+      <label>Valeur fixe (€) <input name="value" inputmode="decimal" placeholder="si pas de cotation"></label>
+      <button class="btn primary">Ajouter</button>
+    </form>
+  </details>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Opérations <span class="muted small">({{ total_tx }})</span></h2>
+  {% if transactions %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
+    <tbody>
+    {% for t in transactions %}
+      <tr><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}{% if t.source == 'import' %} <span class="tag">import</span>{% endif %}</td>
+      <td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if pages > 1 %}<p class="pager">{% if page > 1 %}<a href="?page={{ page - 1 }}">← Plus récentes</a>{% endif %} Page {{ page }}/{{ pages }} {% if page < pages %}<a href="?page={{ page + 1 }}">Plus anciennes →</a>{% endif %}</p>{% endif %}
+  {% else %}<p class="muted">Aucune opération. Importe un relevé ou connecte la banque.</p>{% endif %}
+</section>
+{% endblock %}

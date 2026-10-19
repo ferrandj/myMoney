@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Paramètres{% endblock %}
+{% block content %}
+<h1>Paramètres</h1>
+{% if recovered %}<p class="flash error">Tu t'es connecté avec le code de secours : choisis un nouveau mot de passe ci-dessous, puis génère un nouveau code de secours.</p>{% endif %}
+<section class="grid">
+  <form method="post" action="/settings/password" class="card stack">
+    <h2>Mot de passe maître</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Mot de passe actuel (ou code de secours) <input type="password" name="current" required autocomplete="current-password"></label>
+    <label>Nouveau <input type="password" name="new" required minlength="12" autocomplete="new-password"></label>
+    <label>Confirmation <input type="password" name="confirm" required minlength="12" autocomplete="new-password"></label>
+    <button class="btn primary">Changer</button>
+  </form>
+  <form method="post" action="/settings/recovery" class="card stack" data-confirm="L'ancien code de secours ne fonctionnera plus. Continuer ?">
+    <h2>Code de secours</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p class="small muted">Génère un nouveau code et invalide l'ancien.</p>
+    <label>Mot de passe actuel <input type="password" name="current" required autocomplete="current-password"></label>
+    <button class="btn">Générer un nouveau code</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Sécurité</h2>
+  <ul class="small">
+    <li>Base de données chiffrée par SQLCipher (AES-256), documents par AES-256-GCM, identifiants chiffrés une seconde fois.</li>
+    <li>Clé dérivée du mot de passe par Argon2id ({{ (settings.argon2_memory_kib / 1024)|int }} Mio, {{ settings.argon2_time_cost }} passes), jamais écrite sur le disque.</li>
+    <li>Verrouillage automatique après {{ settings.auto_lock_minutes }} min d'inactivité{% if settings.unlock_password_file %} : <strong class="warn">désactivé, car le déverrouillage automatique est configuré</strong>{% endif %}.</li>
+    <li>Cookie de session {{ 'sécurisé (HTTPS)' if settings.cookie_secure else '<strong class="warn">non sécurisé : active HTTPS puis MYMONEY_COOKIE_SECURE=true</strong>'|safe }}.</li>
+    <li>Synchronisation automatique : {{ 'toutes les %d h'|format(settings.auto_sync_hours) if settings.auto_sync_hours else 'désactivée' }} (uniquement quand le coffre est ouvert).</li>
+  </ul>
+</section>
+
+<section class="grid">
+  <form method="post" action="/settings/general" class="card stack">
+    <h2>Prix</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p class="small muted">Sources gratuites : CoinGecko (crypto), Yahoo Finance (actions, ETF), BCE (devises). Une clé « Demo » CoinGecko gratuite augmente les limites.</p>
+    <label>Clé API CoinGecko (optionnel) <input type="password" name="coingecko_api_key" placeholder="{{ '•••••• configurée' if coingecko_key else 'CG-…' }}" autocomplete="off"></label>
+    {% if coingecko_key %}<label class="check"><input type="checkbox" name="clear_coingecko"> Supprimer la clé</label>{% endif %}
+    <button class="btn">Enregistrer</button>
+  </form>
+  <form method="post" action="/settings/woob-update" class="card stack">
+    <h2>Woob</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p class="small muted">Les sites des banques changent : mets à jour les modules si une connexion Woob échoue.</p>
+    <button class="btn">Mettre à jour les modules Woob</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Taux réglementés</h2>
+  <p class="small muted">Appliqués automatiquement aux livrets de ce type, sauf si un taux est saisi sur le compte.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Depuis le</th><th class="num">Livret A</th><th class="num">LDDS</th><th class="num">LEP</th><th class="num">CEL</th></tr></thead>
+    {% for since, r in rates %}
+    <tr><td>{{ since|frdate }}</td>{% for k in ['livret_a', 'ldds', 'lep', 'cel'] %}<td class="num">{{ ('%.2f'|format(r[k]))|replace('.', ',') ~ ' %' if k in r else '—' }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endblock %}

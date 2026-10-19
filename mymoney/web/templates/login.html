@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Déverrouiller{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<h1>🔒 myMoney</h1>
+<form method="post" action="/login" class="card stack">
+  <label>Mot de passe maître
+    <input type="password" name="password" autofocus autocomplete="current-password">
+  </label>
+  <button class="btn primary" type="submit">Déverrouiller</button>
+</form>
+<details class="card">
+  <summary>Mot de passe oublié ?</summary>
+  <form method="post" action="/login" class="stack">
+    <label>Code de secours
+      <input name="recovery" autocomplete="off" placeholder="XXXX-XXXX-…">
+    </label>
+    <button class="btn" type="submit">Ouvrir avec le code de secours</button>
+    <small class="muted">Change ensuite ton mot de passe dans les paramètres.</small>
+  </form>
+</details>
+{% endblock %}

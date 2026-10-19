@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.filename }}{% endblock %}
+{% block content %}
+<p><a href="/documents">← Documents</a></p>
+<h1>{{ doc.filename }}</h1>
+{% if doc.parse_result and doc.parse_result.get('error') %}
+<p class="card warn">Analyse impossible : {{ doc.parse_result.error }}. Le document reste stocké chiffré ; tu peux saisir le solde à la main sur le compte.</p>
+{% endif %}
+{% if doc.status == 'imported' %}<p class="flash">Déjà importé{% if doc.account_id %} dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>{% endif %}. Un nouvel import ignore les opérations déjà présentes.</p>{% endif %}
+
+{% for st in statements %}
+{% set idx = loop.index0 %}
+<section class="card">
+  <h2>{{ st.account_label or 'Compte' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
+  <dl class="kv">
+    {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+    {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban }}</code></dd>{% endif %}
+    {% if st.account_number %}<dt>N° de compte</dt><dd>{{ st.account_number }}</dd>{% endif %}
+    {% if st.period_start or st.period_end %}<dt>Période</dt><dd>{{ st.period_start|frdate }} → {{ st.period_end|frdate }}</dd>{% endif %}
+    {% if st.opening_balance is not none %}<dt>Solde initial</dt><dd>{{ st.opening_balance|money(st.currency) }}</dd>{% endif %}
+    {% if st.balance is not none %}<dt>Solde</dt><dd><strong>{{ st.balance|money(st.currency) }}</strong> au {{ st.balance_date|frdate }}</dd>{% endif %}
+    <dt>Opérations lues</dt><dd>{{ st.transactions|length }}</dd>
+  </dl>
+  {% for w in st.warnings %}<p class="warn small">⚠ {{ w }}</p>{% endfor %}
+
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Compte de destination
+      <select name="account_id" data-toggle-new>
+        <option value="new" {% if not suggestions[idx] %}selected{% endif %}>➕ Créer un nouveau compte</option>
+        {% for a in accounts %}<option value="{{ a.id }}" {% if suggestions[idx] == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset class="new-account">
+      <legend>Nouveau compte</legend>
+      <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
+      <label>Établissement <input name="institution" value="{{ st.institution or '' }}"></label>
+      <label>Type <select name="account_type">
+        {% for code, (label, cat) in ACCOUNT_TYPES.items() %}<option value="{{ code }}" {% if st.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+    </fieldset>
+    {% set candidate = st.balance if st.balance is not none else (st.candidate_balances[0][1] if st.candidate_balances else '') %}
+    <label class="check"><input type="checkbox" name="update_balance" {% if candidate != '' %}checked{% endif %}> Mettre à jour le solde</label>
+    <label>Solde <input name="balance" value="{{ candidate }}" inputmode="decimal"></label>
+    {% if st.candidate_balances %}
+    <p class="small muted">Montants trouvés dans le document :</p>
+    <ul class="small">{% for label, amount in st.candidate_balances %}<li>{{ label }} : <strong>{{ amount|money }}</strong></li>{% endfor %}</ul>
+    {% endif %}
+    {% if st.transactions %}<label class="check"><input type="checkbox" name="import_transactions" checked> Importer les {{ st.transactions|length }} opérations (doublons ignorés)</label>{% endif %}
+    {% if st.holdings %}<label class="check"><input type="checkbox" name="import_holdings" checked> Importer les {{ st.holdings|length }} positions</label>{% endif %}
+    <button class="btn primary">Valider l'import</button>
+  </form>
+
+  {% if st.holdings %}
+  <h3>Positions</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Support</th><th>ISIN / symbole</th><th class="num">Quantité</th><th class="num">Valeur</th></tr></thead>
+    {% for h in st.holdings %}<tr><td>{{ h.name }}</td><td>{{ h.isin or h.symbol }}</td><td class="num">{{ h.quantity|qty }}</td><td class="num">{{ h.value|money(h.value_currency or 'EUR') }}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  {% if st.transactions %}
+  <details>
+    <summary>Voir les opérations lues</summary>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
+      {% for t in st.transactions %}<tr><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}</td><td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+    </table></div>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+<form method="post" action="/documents/{{ doc.id }}/delete" class="danger-zone" data-confirm="Supprimer définitivement ce document ? (les opérations importées sont conservées)">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <a class="btn" href="/documents/{{ doc.id }}/download">Télécharger l'original</a>
+  <button class="btn danger">Supprimer le document</button>
+</form>
+{% endblock %}

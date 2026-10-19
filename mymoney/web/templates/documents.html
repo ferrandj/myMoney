@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Documents{% endblock %}
+{% block content %}
+<h1>Documents</h1>
+<form method="post" action="/documents" enctype="multipart/form-data" class="card stack dropzone">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Relevés et documents <span class="muted small">(PDF, CSV, OFX/QFX, QIF · {{ max_mb }} Mo max)</span>
+    <input type="file" name="files" multiple required accept=".pdf,.csv,.ofx,.qfx,.qif,.txt,.tsv">
+  </label>
+  <small class="muted">Les fichiers sont chiffrés (AES-256-GCM) dès l'arrivée. Chaque document est analysé : tu valides ce qui a été compris avant toute écriture dans tes comptes.</small>
+  <button class="btn primary">Envoyer</button>
+</form>
+{% if documents %}
+<section class="card">
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Fichier</th><th>Ajouté</th><th>État</th><th></th></tr></thead>
+    <tbody>
+    {% for d in documents %}
+    <tr>
+      <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
+      <td class="nowrap">{{ d.uploaded_at|frdate }}</td>
+      <td><span class="tag status-{{ d.status }}">{{ {'parsed': 'à valider', 'imported': 'importé', 'failed': 'non reconnu', 'uploaded': 'stocké'}[d.status] }}</span></td>
+      <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

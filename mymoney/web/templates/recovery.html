@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Code de secours{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<h1>Ton code de secours</h1>
+<div class="card stack">
+  <p>Ce code permet de rouvrir le coffre si tu oublies ton mot de passe. <strong>Il ne sera plus jamais affiché.</strong> Note-le sur papier ou dans ton gestionnaire de mots de passe, jamais sur le NAS.</p>
+  <p class="recovery"><code>{{ recovery }}</code></p>
+  <a class="btn primary" href="/">C'est noté, continuer</a>
+</div>
+{% endblock %}

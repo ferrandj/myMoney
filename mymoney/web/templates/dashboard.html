@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Patrimoine{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="muted">Patrimoine net</p>
+    <p class="big">{{ portfolio.total|money }}</p>
+    <p class="muted small">Actifs {{ portfolio.assets|money }}{% if portfolio.debts %} · Dettes {{ portfolio.debts|money }}{% endif %}</p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/connections/sync-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">↻ Tout synchroniser</button></form>
+    <a class="btn" href="/documents">⇪ Importer</a>
+    <a class="btn primary" href="/accounts/new">+ Compte manuel</a>
+  </div>
+</section>
+
+{% if chart %}<section class="card chart">{{ chart|safe }}</section>{% endif %}
+
+{% if portfolio.by_category %}
+<section class="card">
+  <h2>Répartition</h2>
+  <ul class="bars">
+    {% for code, label, value in portfolio.by_category %}
+    {% set pct = (value / portfolio.assets * 100) if portfolio.assets and value > 0 else 0 %}
+    <li>
+      <span class="bar-label">{{ label }}</span>
+      <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect class="fill cat-{{ code }}" width="{{ '%.2f'|format(pct) }}" height="10" rx="2"/></svg>
+      <span class="bar-value">{{ value|money }} <small class="muted">{{ '%.1f'|format(pct) }} %</small></span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if not portfolio.accounts %}
+<section class="card empty">
+  <h2>Bienvenue 👋</h2>
+  <p>Trois façons d'ajouter tes comptes :</p>
+  <ol>
+    <li><a href="/connections/new">Connecter</a> une banque, une plateforme crypto ou un wallet (synchronisation automatique).</li>
+    <li><a href="/documents">Importer</a> des relevés (PDF, CSV, OFX) : les comptes sont créés à partir des documents.</li>
+    <li><a href="/accounts/new">Saisir</a> un compte à la main (Livret A, bien immobilier…).</li>
+  </ol>
+</section>
+{% endif %}
+
+{% for code, label, values in groups %}
+<section class="card">
+  <h2>{{ label }}</h2>
+  <table class="accounts">
+    {% for v in values %}
+    <tr>
+      <td><a href="/accounts/{{ v.account.id }}">{{ v.account.name }}</a>
+        <div class="muted small">{{ [v.account.institution, v.account.type_label, 'manuel' if v.account.connection_id is none else none]|select|join(' · ') }}</div>
+        {% for w in v.warnings %}<div class="warn small">⚠ {{ w }}</div>{% endfor %}
+      </td>
+      <td class="num">{{ v.total|money }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endfor %}
+
+{% set problems = connections|selectattr('status', 'in', ['error', 'needs_auth', 'needs_input'])|list %}
+{% if problems %}
+<section class="card">
+  <h2>À traiter</h2>
+  <ul>{% for c in problems %}<li><a href="/connections">{{ c.name }}</a> : {{ c.last_error }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}

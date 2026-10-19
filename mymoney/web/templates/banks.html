@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Banques disponibles{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<p><a href="/connections/{{ conn_id }}/connect">← Retour</a></p>
+<h1>Banques disponibles</h1>
+<p class="muted">Copie le nom exact dans le champ « Nom de la banque » de la connexion.</p>
+<ul class="card columns">{% for b in banks %}<li>{{ b }}</li>{% endfor %}</ul>
+{% endblock %}
