@@ -1,0 +1,78 @@
+# myMoney: prêt à déployer. Aucun secret dans ce fichier.
+#
+# Synology (Container Manager): Projet -> Créer -> colle ce fichier (ou "docker compose -f docker-compose.nas.yml up -d" en SSH).
+# Le dossier data est préparé tout seul (service mymoney-init): rien à créer ni à chmod à la main.
+#
+# Premier démarrage (dossier data vide): récupère le code d'installation avec  docker logs mymoney
+# puis ouvre http://<adresse-du-nas>:10458, crée ton mot de passe maître et NOTE LE CODE DE SECOURS.
+# Ensuite, le dossier data est la seule source de vérité: mettre à jour ou recréer le conteneur n'y touche jamais.
+services:
+  mymoney-init:
+    # Donne le dossier data à l'utilisateur 10001 (celui de l'app) puis s'arrête.
+    # Ordre chmod puis chown voulu: après le chown, root sans capability ne serait plus propriétaire.
+    image: busybox:1.37
+    container_name: mymoney-init
+    restart: "no"
+    user: "0:0"
+    command: sh -c "chmod 700 /data && chown 10001:10001 /data"
+    volumes:
+      - /volume1/docker/mymoney/data:/data
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+
+  mymoney:
+    # L'image est construite et publiée par GitHub (CI): RIEN à construire sur le NAS (pas de "build:" volontairement).
+    image: ghcr.io/ferrandj/mymoney:latest
+    # :latest = dernière version de main, :1.1.0 = figé sur une version (tags "v*").
+    # Mise à jour: docker compose pull && docker compose up -d   (ou Watchtower, voir le label plus bas)
+    container_name: mymoney
+    restart: unless-stopped
+    depends_on:
+      mymoney-init:
+        condition: service_completed_successfully
+    ports:
+      # <port sur le NAS>:<port dans le conteneur, garde 8000>  ->  http://<adresse-du-nas>:10458
+      # Réseau local uniquement. N'expose JAMAIS ce port sur Internet (pas de redirection sur la box): utilise un VPN.
+      - "10458:8000"
+    volumes:
+      # TOUT vit dans ce dossier: base SQLCipher, documents, trousseau de clés (le tout chiffré).
+      # Inclus-le dans ta sauvegarde NAS (Hyper Backup, rsync...). Garde le code de secours AILLEURS que sur le NAS.
+      - /volume1/docker/mymoney/data:/data
+    environment:
+      TZ: Europe/Paris
+      # URL à laquelle tu ouvres l'app (sert aux retours de connexion bancaire). À adapter.
+      MYMONEY_PUBLIC_URL: "http://nas.local:10458"
+      # Mets "true" dès que l'app est servie en HTTPS (reverse proxy du NAS).
+      MYMONEY_COOKIE_SECURE: "false"
+      MYMONEY_AUTO_LOCK_MINUTES: "15"
+      MYMONEY_AUTO_SYNC_HOURS: "6"
+      # Si un reverse proxy est devant, son adresse, pour qu'il soit cru sur l'IP du client:
+      # MYMONEY_TRUSTED_PROXIES: "172.17.0.1"
+    # Durcissement
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "3" }
+    labels:
+      # Permet à Watchtower (si tu l'utilises) de mettre à jour ce conteneur automatiquement.
+      - com.centurylinklabs.watchtower.enable=true
+
+    # --- Seulement si besoin ---------------------------------------------------------------------
+    # Déverrouillage automatique au démarrage pour que la synchro tourne sans toi (MOINS SÛR, voir SECURITY.md:
+    # le mot de passe est alors stocké sur le NAS). Décommente aussi le bloc "secrets:" en bas.
+    # secrets: [mymoney_password]
+    # (ajoute dans environment:)  MYMONEY_UNLOCK_PASSWORD_FILE: /run/secrets/mymoney_password
+
+# secrets:
+#   mymoney_password:
+#     file: /volume1/docker/mymoney/mymoney_password.txt
