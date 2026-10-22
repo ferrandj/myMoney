@@ -36,15 +36,29 @@ Résumé (détails dans [SECURITY.md](SECURITY.md)) :
 
 ## Installation sur le NAS
 
-1. Copie `docker-compose.yml` dans un dossier du NAS (ex. `/volume1/docker/mymoney/`).
-2. Construis l'image ou récupère-la :
-   - `docker compose build` après avoir décommenté `build: .` (avec le code source dans le dossier), **ou**
-   - l'image `ghcr.io/ferrandj/mymoney` publiée par la CI GitHub (amd64 et arm64).
-3. Adapte `MYMONEY_PUBLIC_URL` puis lance `docker compose up -d`.
-4. Récupère le code d'installation : `docker logs mymoney`.
-5. Ouvre `http://IP-DU-NAS:8000`, crée ton mot de passe maître et **note le code de secours**.
+Le plus simple : `docker-compose.nas.yml`. Rien à construire ni à préparer à la main (un petit conteneur d'init crée le dossier `data` avec les bons droits).
 
-Sur Synology : Container Manager → Projet → Créer → choisir le dossier qui contient `docker-compose.yml`.
+1. Copie `docker-compose.nas.yml` dans un dossier du NAS (ex. `/volume1/docker/mymoney/`) et adapte `MYMONEY_PUBLIC_URL` et le chemin du dossier `data` si besoin.
+2. Lance `docker compose -f docker-compose.nas.yml up -d` (Synology : Container Manager → Projet → Créer, colle le fichier).
+3. Récupère le code d'installation : `docker logs mymoney`.
+4. Ouvre `http://IP-DU-NAS:10458`, crée ton mot de passe maître et **note le code de secours**.
+
+L'image `ghcr.io/ferrandj/mymoney` est publiée par la CI GitHub (amd64 et arm64). Chaque push sur `main` dont les tests passent devient une release (`v1.0.0`, `v1.0.1`…) avec les tags `latest`, `1`, `1.0` et `1.0.1`. Pour monter de version mineure ou majeure, mets `[minor]` ou `[major]` dans la première ligne du message de commit, ou lance le workflow à la main. Si le `pull` est refusé, rends le paquet public (GitHub → Packages → mymoney → Package settings) ou fais un `docker login ghcr.io`.
+
+Mise à jour : `docker compose -f docker-compose.nas.yml pull && docker compose -f docker-compose.nas.yml up -d` (ou Watchtower). Le dossier `data` n'est jamais touché.
+
+Sans le fichier NAS : `docker-compose.yml` (même image, port 8000, dossier `./data` à créer avec `chown 10001:10001`), ou `docker compose build` après avoir décommenté `build: .`.
+
+### Installer l'application sur Android
+
+myMoney est une application web installable (PWA). Ouvre-la dans Chrome sur le téléphone, puis menu ⋮ → **Installer l'application** (ou le bouton dans Paramètres). Elle s'ajoute à l'écran d'accueil et s'ouvre en plein écran.
+
+Le navigateur exige **HTTPS** pour l'installation (en `http://IP-DU-NAS:10458`, Chrome ne propose qu'un simple raccourci). Deux façons simples, sans ouvrir de port sur Internet :
+
+- **Tailscale** : active HTTPS dans la console Tailscale, puis `tailscale serve --bg --https=443 http://127.0.0.1:10458` sur le NAS. L'adresse devient `https://<nas>.<tailnet>.ts.net`, accessible depuis le téléphone avec l'app Tailscale.
+- **Reverse proxy Synology** : Panneau de configuration → Portail de connexion → Avancé → Proxy inversé, avec un certificat pour un nom de domaine local.
+
+Ensuite, mets `MYMONEY_PUBLIC_URL` sur cette adresse HTTPS et `MYMONEY_COOKIE_SECURE=true` (et `MYMONEY_TRUSTED_PROXIES` si besoin). L'application n'enregistre rien dans le navigateur : sans réseau elle affiche seulement « myMoney est injoignable ».
 
 ### Accès à distance
 
