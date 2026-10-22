@@ -1,17 +1,35 @@
-name: CI
+name: Test, release and publish image
+
+# Every push to the default branch that passes the tests becomes a new GitHub Release
+# (v1.0.0, v1.0.1, ...) and a new multi-arch image on ghcr.io with matching tags.
+# Other branches and pull requests are test + build only (nothing is published).
+#
+# Version bump: patch by default. Put [minor] or [major] in the first line of the commit
+# message, or run this workflow manually and choose the bump.
 
 on:
   push:
-    branches: ["**"]
-    tags: ["v*"]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump for the new release
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a release in progress on the default branch (queued runs keep versions in order).
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 permissions:
   contents: read
 
 jobs:
   test:
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,34 +39,158 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
-  image:
-    # Published from main (tag "latest") and from version tags.
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: test
+  # Build the real image and check the promises that matter on the NAS: it starts as the unprivileged user
+  # with a read-only filesystem, serves the web app and the installable-app files, and keeps working after a restart.
+  container:
+    name: Container smoke test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mymoney:test
+          cache-from: type=gha,scope=smoke
+          cache-to: type=gha,scope=smoke,mode=max
+      - name: The deployment files are valid
+        run: |
+          for f in docker-compose.yml docker-compose.nas.yml; do docker compose -f "$f" config -q; done
+          # On the NAS the project folder holds only this file: a "build:" line would make Compose look for a Dockerfile there.
+          if docker compose -f docker-compose.nas.yml config | grep -qE '^\s+build:'; then echo 'docker-compose.nas.yml must not contain build:'; exit 1; fi
+      - name: Starts hardened, serves the app and survives a restart
+        run: |
+          data=$(mktemp -d)
+          sudo chown 10001:10001 "$data" && sudo chmod 700 "$data"
+          docker run -d --name mymoney -p 18000:8000 -v "$data:/data" \
+            --user 10001:10001 --read-only --tmpfs /tmp:size=64m,mode=1777 --cap-drop ALL --security-opt no-new-privileges mymoney:test
+          wait_up() {
+            for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:18000/healthz >/dev/null 2>&1 && return 0; sleep 1; done
+            docker logs mymoney; return 1
+          }
+          wait_up
+          docker logs mymoney 2>&1 | grep -q "code d'installation"
+          curl -fsS http://127.0.0.1:18000/manifest.webmanifest | grep -q standalone
+          curl -fsS http://127.0.0.1:18000/sw.js | grep -q skipWaiting
+          curl -fsS -o /dev/null http://127.0.0.1:18000/icons/icon-192.png
+          docker restart mymoney
+          wait_up
+
+  image:
+    needs: [test, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the tag and release
+      packages: write   # push to ghcr.io
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name (must be lowercase)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Work out the version
+        id: ver
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          INPUT_BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$PUBLISH" != "true" ]; then
+            echo "version=dev" >> "$GITHUB_OUTPUT"; echo "major=0" >> "$GITHUB_OUTPUT"; echo "minor=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --tags --force --quiet origin
+          existing=$(git tag --points-at "$GITHUB_SHA" --list 'v[0-9]*.[0-9]*.[0-9]*' | head -n1)
+          if [ -n "$existing" ]; then
+            v="${existing#v}"   # re-run of a commit that was already released: keep its version
+          else
+            last=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+            title="${COMMIT_MSG%%$'\n'*}"
+            bump=patch
+            case "$title" in *'[major]'*) bump=major;; *'[minor]'*) bump=minor;; esac
+            if [ -n "$INPUT_BUMP" ]; then bump="$INPUT_BUMP"; fi
+            if [ -z "$last" ]; then
+              v=1.0.0
+            else
+              IFS=. read -r ma mi pa <<< "${last#v}"
+              case "$bump" in
+                major) ma=$((ma+1)); mi=0; pa=0;;
+                minor) mi=$((mi+1)); pa=0;;
+                *) pa=$((pa+1));;
+              esac
+              v="$ma.$mi.$pa"
+            fi
+          fi
+          IFS=. read -r ma mi pa <<< "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"; echo "major=$ma" >> "$GITHUB_OUTPUT"; echo "minor=$mi" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$v"
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
+
+      - name: Tags and labels
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/mymoney
+          images: ${{ env.IMAGE }}
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ env.PUBLISH == 'true' }}
+            type=raw,value=${{ steps.ver.outputs.major }}.${{ steps.ver.outputs.minor }},enable=${{ env.PUBLISH == 'true' }}
+            type=raw,value=${{ steps.ver.outputs.major }},enable=${{ env.PUBLISH == 'true' }}
+            type=sha,format=short
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=myMoney
+            org.opencontainers.image.description=Self-hosted, encrypted net-worth tracker
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+
+      - name: Build (and push when publishing)
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Plain manifests keep NAS container UIs happy (no extra attestation entries).
+          provenance: false
+          sbom: false
+
+      # Only after the image is safely pushed, so a release never points at a missing image.
+      - name: Create the GitHub release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists"
+            exit 0
+          fi
+          {
+            echo '## Docker image'
+            echo
+            echo '```sh'
+            echo "docker pull $IMAGE:$VERSION"
+            echo '```'
+            echo
+            echo "Tags: \`$VERSION\`, \`${{ steps.ver.outputs.major }}.${{ steps.ver.outputs.minor }}\`, \`${{ steps.ver.outputs.major }}\`, \`latest\` (linux/amd64, linux/arm64)."
+            echo
+            echo "Your data lives in the mounted \`/data\` folder and is never touched by an update."
+            echo
+          } > release-header.md
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file release-header.md --generate-notes --latest

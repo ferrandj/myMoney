@@ -24,11 +24,12 @@ from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
+from . import pwa
 from .security import COOKIE, SECURITY_HEADERS, Sessions, verified_form
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
-PUBLIC_PATHS = ("/static/", "/healthz", "/login", "/setup", "/connections/callback")
+PUBLIC_PATHS = ("/static/", "/healthz", "/login", "/setup", "/connections/callback", "/manifest.webmanifest", "/sw.js", "/icons/")
 
 
 # ----------------------------------------------------------------- formatting
@@ -105,6 +106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.core = core
     app.state.sessions = sessions
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+    pwa.install(app)
 
     def render(request: Request, name: str, status_code: int = 200, **context) -> HTMLResponse:
         session = getattr(request.state, "session", None)
