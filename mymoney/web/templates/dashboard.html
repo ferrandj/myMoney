@@ -8,12 +8,13 @@
     <p class="muted small">Actifs {{ portfolio.assets|money }}{% if portfolio.debts %} · Dettes {{ portfolio.debts|money }}{% endif %}</p>
   </div>
   <div class="actions">
+    <a class="btn" href="/analytics">📈 Analyses</a>
     <a class="btn primary" href="/documents">⇪ Déposer un document</a>
     <a class="btn" href="/accounts/new">+ Compte manuel</a>
   </div>
 </section>
 
-{% if chart %}<section class="card chart">{{ chart|safe }}</section>{% endif %}
+{% if chart %}<a class="card chart" href="/analytics" aria-label="Voir les analyses">{{ chart|safe }}</a>{% endif %}
 
 {% if portfolio.by_category %}
 <section class="card">

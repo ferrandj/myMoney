@@ -80,3 +80,33 @@ if (dropzone) {
   });
   input.addEventListener("change", () => input.files.length && dropzone.requestSubmit());
 }
+
+// Analyses: filters apply as soon as they change; table headers sort their column.
+document.querySelectorAll("form[data-autosubmit]").forEach((form) => {
+  form.addEventListener("change", () => form.requestSubmit());
+  form.querySelectorAll("button[data-check]").forEach((button) =>
+    button.addEventListener("click", () => {
+      form.querySelectorAll("input[type=checkbox]").forEach((box) => (box.checked = button.dataset.check === "all"));
+      form.requestSubmit();
+    }),
+  );
+});
+document.querySelectorAll("table[data-sortable]").forEach((table) => {
+  const body = table.tBodies[0];
+  table.tHead.querySelectorAll("th").forEach((th, column) =>
+    th.addEventListener("click", () => {
+      const direction = th.dataset.sortDir === "asc" ? "desc" : "asc";
+      table.tHead.querySelectorAll("th").forEach((other) => delete other.dataset.sortDir);
+      th.dataset.sortDir = direction;
+      const key = (row) => {
+        const cell = row.cells[column];
+        const raw = cell.dataset.sort !== undefined ? cell.dataset.sort : cell.textContent.trim();
+        const number = Number(raw);
+        return raw !== "" && !Number.isNaN(number) ? number : raw.toLowerCase();
+      };
+      [...body.rows]
+        .sort((a, b) => (key(a) > key(b) ? 1 : key(a) < key(b) ? -1 : 0) * (direction === "asc" ? 1 : -1))
+        .forEach((row) => body.appendChild(row));
+    }),
+  );
+});

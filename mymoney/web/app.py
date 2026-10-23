@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,11 +22,12 @@ from ..core import MyMoney
 from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, Transaction
 from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
+from ..services import analytics
 from ..services import counterparties as contact_service
 from ..services import statements as statement_service
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
-from . import pwa
+from . import charts, pwa
 from .security import COOKIE, SECURITY_HEADERS, Sessions, verified_form
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,11 @@ PUBLIC_PATHS = ("/static/", "/healthz", "/login", "/setup", "/manifest.webmanife
 KIND_LABELS = {
     "card": "Carte", "transfer": "Virement", "instant_transfer": "Virement instantané", "direct_debit": "Prélèvement",
     "loan_payment": "Prêt", "fee": "Frais", "cash": "Retrait", "cheque": "Chèque", "interest": "Intérêts",
+}
+ANALYTICS_VIEWS = {"evolution": "Évolution", "repartition": "Répartition", "flux": "Entrées / sorties", "depenses": "Dépenses"}
+ANALYTICS_GROUPS = {
+    "evolution": {"total": "Total", "compte": "Par compte", "categorie": "Par catégorie"},
+    "repartition": {"categorie": "Par catégorie", "compte": "Par compte"},
 }
 DOCUMENT_STATUS = {"uploaded": "stocké", "needs_choice": "à préciser", "parsed": "à valider", "imported": "importé", "failed": "non reconnu"}
 
@@ -102,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
         DOCUMENT_STATUS=DOCUMENT_STATUS,
     )
+    templates.env.filters.update(pct=lambda v: "—" if v is None else f"{Decimal(v):+.1f} %".replace(".", ","))
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -241,6 +248,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             groups=[(code, CATEGORIES[code], groups[code]) for code in CATEGORIES if code in groups],
             chart=sparkline(portfolio.history),
             to_identify=to_identify,
+        )
+
+    # -------------------------------------------------------- analytics
+    @app.get("/analytics")
+    async def analytics_page(
+        request: Request, vue: str = "evolution", periode: str = "1a", par: str = "", c: list[int] = Query(default=[]), interne: int = 0
+    ):
+        vue = vue if vue in ANALYTICS_VIEWS else "evolution"
+        periode = periode if periode in analytics.PERIODS else "1a"
+        groups = ANALYTICS_GROUPS.get(vue, {})
+        par = par if par in groups else next(iter(groups), "")
+        portfolio = await run_in_threadpool(core.portfolio, False)
+        values = {v.account.id: v for v in portfolio.accounts}
+        accounts = {i: v.account for i, v in values.items()}
+        selected = [i for i in c if i in accounts] or list(accounts)
+        everything = set(selected) == set(accounts)
+        today = date.today()
+
+        def url(**over) -> str:
+            params = {"vue": vue, "periode": periode, "par": par, "interne": interne or "", **over}
+            pairs = [(k, str(v)) for k, v in params.items() if v not in (None, "")]
+            pairs += [] if everything else [("c", str(i)) for i in selected]
+            return "/analytics?" + urlencode(pairs)
+
+        with core.db.session() as s:
+            histories = {i: analytics.account_history(s, accounts[i], values[i].total, today) for i in selected}
+            start = analytics.period_start(periode, today, analytics.earliest_day(histories, selected, today))
+            total_points = analytics.build_series(histories, accounts, selected, "total", start, today)
+            flows = analytics.monthly_flows(s, selected, start, today, bool(interne)) if vue == "flux" else []
+            spent = analytics.spending(s, selected, start, today, bool(interne)) if vue == "depenses" else None
+        sel_values = [values[i] for i in selected]
+        assets = sum((v.total for v in sel_values if v.total > 0), Decimal(0))
+        debts = sum((v.total for v in sel_values if v.total < 0), Decimal(0))
+
+        rows = []
+        for v in sel_values:
+            history = histories[v.account.id]
+            before = history.get(start)
+            rows.append({
+                "account": v.account, "total": v.total, "share": (v.total / assets * 100) if assets and v.total > 0 else None,
+                "delta": (v.total - before) if before is not None else None,
+                "pct": ((v.total - before) / abs(before) * 100) if before else None,
+            })
+        # Like for like: only accounts that already existed at the start count towards the variation, so adding an account
+        # (or importing its first statement) is not mistaken for growth.
+        compared = [r for r in rows if r["delta"] is not None]
+        base = sum((r["total"] - r["delta"] for r in compared), Decimal(0))
+        variation = {"delta": sum((r["delta"] for r in compared), Decimal(0)), "pct": None} if compared else None
+        if variation and base:
+            variation["pct"] = variation["delta"] / abs(base) * 100
+
+        content: dict = {}
+        if vue == "evolution":
+            series = analytics.build_series(histories, accounts, selected, par, start, today)
+            content = {"chart": charts.line_chart(series), "series": series, "stats": {s.key: analytics.stats(s.points) for s in series}}
+        elif vue == "repartition":
+            items = analytics.repartition(sel_values, par)
+            content = {"chart": charts.donut(items), "items": items, "ring_total": sum((x[2] for x in items), Decimal(0))}
+        elif vue == "flux":
+            content = {"chart": charts.flow_chart(flows), "flows": flows}
+        else:
+            content = {"spent": spent}
+
+        return render(
+            request, "analytics.html", vue=vue, periode=periode, par=par, interne=interne, accounts=list(accounts.values()), selected=set(selected),
+            everything=everything, rows=rows, assets=assets, debts=debts, total=assets + debts, variation=variation, start=start, today=today,
+            views=[(code, label, url(vue=code, par="")) for code, label in ANALYTICS_VIEWS.items()],
+            periods=[(code, label, url(periode=code)) for code, (label, _) in analytics.PERIODS.items()],
+            group_options=[(code, label, url(par=code)) for code, label in groups.items()], palette=charts.PALETTE_SIZE, **content,
         )
 
     # --------------------------------------------------------- accounts

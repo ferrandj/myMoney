@@ -13,6 +13,12 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 - **Identité des comptes** lue dans les documents : titulaire, adresse, IBAN, BIC, RIB (banque, guichet, compte, clé), vérifiés (clé RIB, IBAN).
 - **Contacts** : à qui va l'argent, d'où il vient. Tu nommes une fois un IBAN ou un nom imprimé par la banque (avec un téléphone, des notes…) ; l'application le retient et le reconnaît dans tous les imports suivants, quelle que soit l'orthographe (« DUPONT Jean », « M Jean Dupont »). Les virements entre tes propres comptes sont repérés.
 - **Documents originaux conservés chiffrés** (illisibles sur le disque) et **téléchargeables** depuis l'application.
+- **Analyses** (onglet dédié, graphiques SVG générés sur le NAS, sans bibliothèque externe) :
+  - *Évolution* : courbe du patrimoine, au total, par compte ou par catégorie, sur 1, 3, 6 mois, 1 an ou tout l'historique. L'historique de chaque compte est reconstitué à partir du solde des relevés et des opérations importées ;
+  - *Répartition* : anneau par catégorie ou par compte ;
+  - *Entrées / sorties* : barres mensuelles, avec ou sans les virements entre tes propres comptes ;
+  - *Dépenses* : par type d'opération, où part l'argent et d'où il vient (regroupé par contact) ;
+  - choix des comptes pris en compte (la somme totale, les actifs, les dettes et la variation suivent la sélection) et tableau des comptes triable par colonne, avec total. La variation ne compte que les comptes déjà suivis au début de la période : ajouter un compte n'est pas de la croissance.
 - **Patrimoine net** avec répartition (liquidités, épargne, investissements, crypto, immobilier, dettes) et historique.
 - **Taux réglementés automatiques** : Livret A, LDDS, LEP, CEL, Livret Jeune. Un taux saisi sur le compte reste prioritaire.
 - **Comptes manuels** : livret, bien immobilier, crédit, positions crypto ou bourse saisies à la main, valorisées avec des prix gratuits (CoinGecko, Yahoo Finance, BCE via Frankfurter).

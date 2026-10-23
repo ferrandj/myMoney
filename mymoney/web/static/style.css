@@ -131,3 +131,52 @@ tr.tx-probable td { background: color-mix(in srgb, var(--warn) 10%, transparent)
 .identifier { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0; }
 .status-needs_choice, .status-uploaded { color: var(--warn); }
 fieldset[hidden].new-contact { display: none; }
+
+/* Analyses */
+:root { --s0: #3b5bdb; --s1: #12805c; --s2: #d97706; --s3: #7c3aed; --s4: #0e7490; --s5: #c4320a; --s6: #667085; --s7: #be185d; }
+@media (prefers-color-scheme: dark) { :root { --s0: #6d8bff; --s1: #3ccf91; --s2: #fbbf24; --s3: #a78bfa; --s4: #22d3ee; --s5: #ff7a59; --s6: #98a2b3; --s7: #f472b6; } }
+.s0 { color: var(--s0); } .s1 { color: var(--s1); } .s2 { color: var(--s2); } .s3 { color: var(--s3); }
+.s4 { color: var(--s4); } .s5 { color: var(--s5); } .s6 { color: var(--s6); } .s7 { color: var(--s7); }
+.s-pos { color: var(--pos); } .s-neg { color: var(--neg); } .neg { color: var(--neg); }
+.chart-svg { width: 100%; height: auto; display: block; }
+.chart-svg .line { fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.chart-svg .area { fill: currentColor; opacity: .12; }
+.chart-svg .grid { stroke: var(--border); stroke-width: 1; }
+.chart-svg .zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-svg .axis { fill: var(--muted); font-size: 11px; }
+.chart-svg .hit { fill: transparent; }
+.chart-svg .hit:hover { fill: color-mix(in srgb, var(--text) 7%, transparent); }
+.chart-svg .bar-pos { fill: var(--pos); } .chart-svg .bar-neg { fill: var(--neg); }
+.donut-box { width: 240px; max-width: 100%; flex: none; }
+.donut-svg { width: 100%; height: auto; transform: rotate(0deg); }
+.donut-svg .arc { fill: none; stroke: currentColor; stroke-width: 6; }
+.donut-svg .donut-total { font-size: 3.4px; fill: var(--text); font-weight: 600; }
+.split { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; }
+.legend { list-style: none; padding: 0; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.legend.vertical { flex-direction: column; flex-wrap: nowrap; margin: 0; }
+.legend li { display: flex; gap: 6px; align-items: baseline; }
+.legend .legend-label { color: var(--text); }
+.inline-legend { gap: 18px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: currentColor; }
+.tabs { display: flex; gap: 4px; margin: 4px 0 12px; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.tabs a { padding: 8px 14px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs a[aria-current="page"] { color: var(--text); font-weight: 600; border-bottom-color: var(--primary); }
+.toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.toolbar .inline { margin: 0 0 0 auto; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg a { padding: 5px 11px; color: var(--muted); font-size: .9rem; border-right: 1px solid var(--border); white-space: nowrap; }
+.seg a:last-child { border-right: 0; }
+.seg a[aria-current="true"] { background: var(--primary); color: var(--primary-text); }
+.seg a:hover { text-decoration: none; background: var(--bg); }
+.seg a[aria-current="true"]:hover { background: var(--primary); }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.kpi { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.small-big { font-size: 1.7rem; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.ranking .bar-label a { color: var(--text); }
+.fill.out { fill: var(--neg); } .fill.in { fill: var(--pos); }
+th[data-sort-dir]::after { content: " ▲"; font-size: .65rem; } th[data-sort-dir="desc"]::after { content: " ▼"; }
+table[data-sortable] thead th { cursor: pointer; user-select: none; }
+tfoot th { border-top: 2px solid var(--border); text-transform: none; font-size: .9rem; color: var(--text); }
+a.card.chart { display: block; color: inherit; }
+.chart-svg .dot { fill: currentColor; stroke: var(--surface); stroke-width: 1.5; }
+.ranking li { grid-template-columns: minmax(110px, 1.3fr) 1fr auto; }
