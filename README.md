@@ -1,33 +1,39 @@
 # myMoney
 
-Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes bancaires, livrets, assurance-vie, bourse, crypto (plateformes et wallets), immobilier. Tout est **chiffré au repos**, rien ne part chez un tiers en dehors des sources de données que tu configures.
+Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes bancaires, livrets, assurance-vie, bourse, crypto, immobilier. Tout est **chiffré au repos** et **aucune banque n'est connectée** : tu déposes tes relevés (PDF, CSV, OFX…), des **adapters** les lisent, et l'application en tire les comptes, leurs titulaires, leurs RIB et leurs opérations.
 
 ## Fonctionnalités
 
+- **Dépose un fichier, le bon adapter est choisi tout seul.** Chaque adapter lit un type de document d'un établissement ; un établissement peut en avoir plusieurs (relevé mensuel PDF, export CSV, relevé d'épargne…). En cas de doute (deux lectures plausibles, établissement reconnu mais document inconnu), l'application te demande laquelle utiliser.
+- **Tout est rendu cohérent et contrôlé** :
+  - le solde initial + les opérations doivent donner le solde final du relevé ;
+  - le relevé doit prolonger le précédent (soldes qui se suivent, pas de mois manquant) ;
+  - les **doublons sont signalés** : même fichier déposé deux fois, même relevé retéléchargé, relevés qui se chevauchent, opérations « probablement identiques » venues d'une autre source. Rien n'est ajouté deux fois, et tu vois ce qui a été ignoré ;
+  - un import peut être **annulé** (les opérations qu'il a apportées sont retirées).
+- **Identité des comptes** lue dans les documents : titulaire, adresse, IBAN, BIC, RIB (banque, guichet, compte, clé), vérifiés (clé RIB, IBAN).
+- **Contacts** : à qui va l'argent, d'où il vient. Tu nommes une fois un IBAN ou un nom imprimé par la banque (avec un téléphone, des notes…) ; l'application le retient et le reconnaît dans tous les imports suivants, quelle que soit l'orthographe (« DUPONT Jean », « M Jean Dupont »). Les virements entre tes propres comptes sont repérés.
+- **Documents originaux conservés chiffrés** (illisibles sur le disque) et **téléchargeables** depuis l'application.
 - **Patrimoine net** avec répartition (liquidités, épargne, investissements, crypto, immobilier, dettes) et historique.
-- **Connecteurs gratuits** synchronisés automatiquement (toutes les 6 h quand le coffre est ouvert) :
+- **Taux réglementés automatiques** : Livret A, LDDS, LEP, CEL, Livret Jeune. Un taux saisi sur le compte reste prioritaire.
+- **Comptes manuels** : livret, bien immobilier, crédit, positions crypto ou bourse saisies à la main, valorisées avec des prix gratuits (CoinGecko, Yahoo Finance, BCE via Frankfurter).
 
-| Connecteur | Pour | Comment |
+### Documents pris en charge
+
+| Établissement | Adapter | Document |
 |---|---|---|
-| Enable Banking (DSP2) | Fortuneo, BforBank, Hello bank!, Boursorama, Revolut, espèces Trade Republic… | API officielle d'open banking, gratuite pour tes propres comptes (mode restreint) |
-| GoCardless Bank Account Data | idem, si tu as déjà un compte | API officielle, offre gratuite |
-| Woob | assurance-vie, PEA, compte-titres, PER, épargne salariale, banques sans DSP2 | bibliothèque libre qui lit le site de la banque |
-| Trade Republic (pytr) | portefeuille actions, ETF, crypto et espèces | client libre de l'app web, validation dans l'app mobile |
-| Plateformes crypto (ccxt) | Binance (y compris Earn et Funding), Kraken (y compris staking), Coinbase, Bitstamp, Crypto.com, KuCoin, Bybit, OKX… | clés API en lecture seule |
-| Wallets EVM | Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, Avalanche, Gnosis, Linea, Scroll, zkSync, Celo | adresses publiques, RPC publics et Blockscout, filtre anti-spam |
-| Wallet Bitcoin | adresses, xpub, ypub ou zpub (scan avec limite de 20 adresses vides) | mempool.space ou ton propre mempool |
-| Wallet Solana | SOL et tokens SPL | RPC public ou le tien |
+| BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » (relevé mensuel) |
+| Revolut | `revolut.statement_csv` | export CSV d'un compte |
+| tous | `generic.ofx`, `generic.qif` | fichiers OFX / QFX et QIF |
+| tous | `generic.csv`, `generic.pdf` | lecture « devinée » (colonnes date / montant / débit / crédit) : jamais importée sans que tu voies ce qui a été compris |
 
-- **Prix gratuits** : CoinGecko (crypto, y compris par adresse de contrat), Yahoo Finance (actions, ETF par ISIN), BCE via Frankfurter (devises).
-- **Import de documents** : relevés **PDF** (colonnes débit et crédit détectées, contrôle par les soldes), **CSV** (toutes banques, Revolut, listes de positions), **OFX/QFX**, **QIF**. Les comptes peuvent être **créés à partir des documents** (IBAN, établissement et type détectés). Rien n'est écrit sans ta validation. Les originaux sont conservés chiffrés.
-- **Taux réglementés automatiques** : Livret A, LDDS, LEP, CEL, Livret Jeune. Le taux en vigueur à la date du jour est appliqué (1,70 % pour le Livret A depuis le 01/08/2026). Un taux saisi sur le compte (ex. livret boosté Cashbee) reste prioritaire.
-- **Comptes manuels** : livret, bien immobilier, crédit, positions crypto ou bourse saisies à la main (Nexo, Revolut crypto…), valorisées automatiquement.
+Pour ajouter un adapter (un autre établissement, ou un autre type de document d'un établissement déjà géré), il suffit d'un document d'exemple : voir « Développement ».
 
 ## Sécurité
 
-Résumé (détails dans [SECURITY.md](SECURITY.md)) :
+Résumé (détails dans [SECURITY.md](SECURITY.md)). Les relevés contiennent des données très personnelles (nom, adresse, RIB, bénéficiaires) : elles ne sont jamais écrites en clair sur le disque, et **le dépôt Git n'en contient aucune** (les tests fabriquent des relevés fictifs ; `.gitignore` écarte les PDF, CSV et OFX).
 
-- **Base de données chiffrée** (SQLCipher, AES-256), **documents chiffrés** (AES-256-GCM), identifiants et clés API **chiffrés une seconde fois**.
+- **Base de données chiffrée** (SQLCipher, AES-256) : comptes, titulaires, adresses, RIB, opérations, contacts. **Documents originaux chiffrés** un par un (AES-256-GCM, nom de fichier aléatoire).
+- **Aucune connexion à une banque**, aucun identifiant bancaire stocké : l'application ne reçoit que ce que tu lui donnes.
 - La clé maîtresse est aléatoire. Elle n'est stockée que **chiffrée** par ton mot de passe (Argon2id) et par un **code de secours** affiché une seule fois. **Rien n'est lisible sur le NAS quand le coffre est verrouillé** (au démarrage, sur demande ou après 15 min d'inactivité).
 - Interface web durcie : CSP stricte sans aucune ressource externe, cookies HttpOnly et SameSite=Strict, jetons CSRF, anti-force brute, code d'installation à usage unique.
 - Conteneur durci : utilisateur non root, système de fichiers en lecture seule, aucune capability, `no-new-privileges`.
@@ -38,7 +44,7 @@ Résumé (détails dans [SECURITY.md](SECURITY.md)) :
 
 Le plus simple : `docker-compose.nas.yml`. Rien à construire ni à préparer à la main (un petit conteneur d'init crée le dossier `data` avec les bons droits).
 
-1. Copie `docker-compose.nas.yml` dans un dossier du NAS (ex. `/volume1/docker/mymoney/`) et adapte `MYMONEY_PUBLIC_URL` et le chemin du dossier `data` si besoin.
+1. Copie `docker-compose.nas.yml` dans un dossier du NAS (ex. `/volume1/docker/mymoney/`) et adapte le chemin du dossier `data` si besoin.
 2. Lance `docker compose -f docker-compose.nas.yml up -d` (Synology : Container Manager → Projet → Créer, colle le fichier).
 3. Récupère le code d'installation : `docker logs mymoney`.
 4. Ouvre `http://IP-DU-NAS:10458`, crée ton mot de passe maître et **note le code de secours**.
@@ -58,7 +64,7 @@ Le navigateur exige **HTTPS** pour l'installation (en `http://IP-DU-NAS:10458`, 
 - **Tailscale** : active HTTPS dans la console Tailscale, puis `tailscale serve --bg --https=443 http://127.0.0.1:10458` sur le NAS. L'adresse devient `https://<nas>.<tailnet>.ts.net`, accessible depuis le téléphone avec l'app Tailscale.
 - **Reverse proxy Synology** : Panneau de configuration → Portail de connexion → Avancé → Proxy inversé, avec un certificat pour un nom de domaine local.
 
-Ensuite, mets `MYMONEY_PUBLIC_URL` sur cette adresse HTTPS et `MYMONEY_COOKIE_SECURE=true` (et `MYMONEY_TRUSTED_PROXIES` si besoin). L'application n'enregistre rien dans le navigateur : sans réseau elle affiche seulement « myMoney est injoignable ».
+Ensuite, mets `MYMONEY_COOKIE_SECURE=true` (et `MYMONEY_TRUSTED_PROXIES` si un proxy est devant). L'application n'enregistre rien dans le navigateur : sans réseau elle affiche seulement « myMoney est injoignable ».
 
 ### Accès à distance
 
@@ -70,18 +76,20 @@ Sauvegarde le dossier `data/` tel quel (Hyper Backup, rsync…). Il est chiffré
 
 ## Ajouter tes comptes
 
-- **Banques** (Fortuneo, BforBank, Hello bank!…) : Connexions → Enable Banking. Le mode d'emploi s'affiche dans le formulaire. Une connexion par banque. Le consentement dure 180 jours.
-- **Assurance-vie, PEA chez un assureur ou un courtier** : Connexions → Woob, ou import du relevé de situation PDF.
-- **Trade Republic** : Connexions → Trade Republic (numéro et PIN, puis validation dans l'app).
-- **Binance, Kraken** : Connexions → Plateforme crypto, avec une clé API **en lecture seule**.
-- **Revolut crypto, Nexo, Cashbee** : pas d'API gratuite. Importe leurs exports CSV ou PDF, ou crée un compte manuel avec tes positions.
-- **Wallets** : colle tes adresses publiques ou ton xpub. **Jamais de seed phrase.**
+1. Télécharge le relevé dans l'espace client de ta banque (PDF, CSV ou OFX).
+2. Va dans **Documents** et **dépose** le fichier (glisser-déposer, plusieurs fichiers possibles).
+3. Le document est chiffré, reconnu, lu, puis contrôlé :
+   - compte déjà connu (même IBAN / même RIB), relevé cohérent, sans doublon : **importé automatiquement** ;
+   - sinon, une page de vérification montre ce qui a été compris (titulaire, RIB, soldes, opérations, doublons, anomalies) et te laisse choisir le compte, l'adapter ou ce qu'il faut importer.
+4. Dans **Contacts**, nomme les bénéficiaires et émetteurs qui reviennent : ils seront reconnus automatiquement ensuite.
+
+Un livret, un bien immobilier, un crédit ou des positions crypto sans relevé : **+ Compte manuel** sur la page Patrimoine.
 
 ## Développement
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev,woob,traderepublic]"
+pip install -e ".[dev]"
 pytest
 MYMONEY_DATA_DIR=./data mymoney serve   # http://127.0.0.1:8000
 ```
@@ -92,10 +100,22 @@ Structure :
 mymoney/
   security/    crypto (AES-GCM, Argon2id, HKDF), trousseau de clés, coffre en mémoire
   db.py        base SQLCipher ouverte uniquement quand le coffre est déverrouillé
-  connectors/  banques, plateformes, wallets
-  importers/   PDF, CSV, OFX, QIF
-  services/    prix, valorisation, taux réglementés, synchronisation
+  adapters/    un adapter par type de document et par établissement
+    base.py        contrat (Adapter, Detection, SourceDocument, ParsedStatement)
+    registry.py    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
+    boursobank/    statement_pdf.py : extrait de compte mensuel
+    revolut/       statement_csv.py : export CSV
+    generic/       OFX, QIF, CSV et PDF « devinés »
+  services/    import (doublons, cohérence), contacts, prix, valorisation, taux réglementés
   web/         interface (FastAPI + Jinja, sans JavaScript externe)
 ```
+
+### Écrire un adapter
+
+1. Crée `mymoney/adapters/<etablissement>/<type_de_document>.py` avec une classe qui hérite de `Adapter` (`id`, `institution`, `label`, `formats`).
+2. `detect(doc)` note de 0 à 1 à quel point le document est bien de ce type, d'après ce qui le distingue des autres documents du même établissement (titre, en-têtes de colonnes, mentions) ; il ne lit rien de personnel.
+3. `parse(doc)` renvoie des `ParsedStatement` : identité du compte (titulaire, adresse, IBAN, RIB), période, soldes initial et final, et des `TransactionData` structurées (date, date de valeur, type, interlocuteur, IBAN de l'interlocuteur, référence, libellé complet dans `raw`). Les soldes servent au contrôle : opérations lues = solde initial → solde final.
+4. Ajoute la classe à `ADAPTERS` dans `registry.py`.
+5. **Écris le test avec un document fictif** (voir `tests/fixtures.py`, qui dessine un faux relevé à la mise en page réelle). Ne commite jamais un vrai relevé.
 
 Les taux réglementés se mettent à jour dans `mymoney/services/rates.py` (une ligne par changement, les 1er février et 1er août).

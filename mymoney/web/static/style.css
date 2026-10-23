@@ -114,3 +114,20 @@ fieldset[hidden] { display: none; }
   .kv { grid-template-columns: 1fr; }
   .kv dt { margin-top: 6px; }
 }
+
+/* Documents and contacts */
+.dropzone .drop-target { border: 2px dashed var(--border); border-radius: var(--radius); padding: 28px 16px; text-align: center; cursor: pointer; align-items: center; }
+.dropzone .drop-target input { margin-top: 10px; max-width: 360px; }
+.dropzone.dragging .drop-target { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 8%, var(--surface)); }
+.choice { align-items: flex-start; }
+.choice > span { display: flex; flex-direction: column; gap: 2px; }
+.checks { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.checks .ok { color: var(--pos); }
+.checks .bad { color: var(--warn); }
+tr.tx-exact td { opacity: .55; }
+tr.tx-probable td { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.inline-identify { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.inline-identify input, .inline-identify select { width: auto; flex: 1 1 130px; min-width: 110px; padding: 5px 8px; }
+.identifier { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0; }
+.status-needs_choice, .status-uploaded { color: var(--warn); }
+fieldset[hidden].new-contact { display: none; }

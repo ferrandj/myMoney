@@ -1,101 +1,11 @@
+"""Text, number, date and identifier helpers shared by all adapters."""
+
 from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
-
-from ..connectors.base import HoldingData, TransactionData
-
-
-@dataclass
-class ParsedStatement:
-    source_format: str
-    institution: str | None = None
-    account_label: str | None = None
-    account_number: str | None = None
-    iban: str | None = None
-    account_type: str | None = None
-    currency: str = "EUR"
-    balance: Decimal | None = None
-    balance_date: date | None = None
-    opening_balance: Decimal | None = None
-    period_start: date | None = None
-    period_end: date | None = None
-    transactions: list[TransactionData] = field(default_factory=list)
-    holdings: list[HoldingData] | None = None
-    # Amounts found in documents that are not statements (e.g. "valeur de rachat" of a life insurance).
-    candidate_balances: list[tuple[str, Decimal]] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-    confidence: str = "medium"  # high | medium | low
-
-    def to_json(self) -> dict:
-        return {
-            "source_format": self.source_format,
-            "institution": self.institution,
-            "account_label": self.account_label,
-            "account_number": self.account_number,
-            "iban": self.iban,
-            "account_type": self.account_type,
-            "currency": self.currency,
-            "balance": str(self.balance) if self.balance is not None else None,
-            "balance_date": self.balance_date.isoformat() if self.balance_date else None,
-            "opening_balance": str(self.opening_balance) if self.opening_balance is not None else None,
-            "period_start": self.period_start.isoformat() if self.period_start else None,
-            "period_end": self.period_end.isoformat() if self.period_end else None,
-            "transactions": [
-                {"date": t.date.isoformat(), "label": t.label, "amount": str(t.amount), "currency": t.currency, "external_id": t.external_id}
-                for t in self.transactions
-            ],
-            "holdings": None
-            if self.holdings is None
-            else [
-                {"symbol": h.symbol, "isin": h.isin, "name": h.name, "quantity": str(h.quantity), "asset_class": h.asset_class,
-                 "value": str(h.value) if h.value is not None else None, "value_currency": h.value_currency}
-                for h in self.holdings
-            ],
-            "candidate_balances": [[label, str(amount)] for label, amount in self.candidate_balances],
-            "warnings": self.warnings,
-            "confidence": self.confidence,
-        }
-
-    @classmethod
-    def from_json(cls, data: dict) -> "ParsedStatement":
-        def d(v):
-            return Decimal(v) if v is not None else None
-
-        def dt(v):
-            return date.fromisoformat(v) if v else None
-
-        return cls(
-            source_format=data["source_format"],
-            institution=data.get("institution"),
-            account_label=data.get("account_label"),
-            account_number=data.get("account_number"),
-            iban=data.get("iban"),
-            account_type=data.get("account_type"),
-            currency=data.get("currency") or "EUR",
-            balance=d(data.get("balance")),
-            balance_date=dt(data.get("balance_date")),
-            opening_balance=d(data.get("opening_balance")),
-            period_start=dt(data.get("period_start")),
-            period_end=dt(data.get("period_end")),
-            transactions=[
-                TransactionData(date.fromisoformat(t["date"]), t["label"], Decimal(t["amount"]), t.get("currency") or "EUR", t.get("external_id"))
-                for t in data.get("transactions", [])
-            ],
-            holdings=None
-            if data.get("holdings") is None
-            else [
-                HoldingData(symbol=h["symbol"], isin=h.get("isin"), name=h.get("name"), quantity=Decimal(h["quantity"]),
-                            asset_class=h.get("asset_class") or "other", value=d(h.get("value")), value_currency=h.get("value_currency"))
-                for h in data["holdings"]
-            ],
-            candidate_balances=[(label, Decimal(v)) for label, v in data.get("candidate_balances", [])],
-            warnings=data.get("warnings", []),
-            confidence=data.get("confidence", "medium"),
-        )
 
 
 def strip_accents(text: str) -> str:
@@ -231,3 +141,36 @@ def find_institution(text: str) -> str | None:
             if pos >= 0 and (best is None or pos < best[0]):
                 best = (pos, name)
     return best[1] if best else None
+
+
+# Words that say nothing about who someone is: civilities, "or"/"and" of joint accounts, legal forms.
+_NAME_NOISE = {"m", "mr", "mme", "mlle", "monsieur", "madame", "mademoiselle", "ou", "et", "or", "and", "sas", "sarl", "sa", "sasu", "eurl"}
+
+
+def name_key(name: str) -> str:
+    """Order- and civility-insensitive key: "M DUPONT Jean" and "Jean Dupont" are the same person."""
+    tokens = set(re.findall(r"[a-z0-9]+", strip_accents(name).lower())) - _NAME_NOISE
+    return " ".join(sorted(tokens)) or norm(name)
+
+
+def _rib_digits(value: str) -> int:
+    # RIB letters count as digits: A-I -> 1-9, J-R -> 1-9, S-Z -> 2-9.
+    table = {c: str((i % 9) + 1) for i, c in enumerate("ABCDEFGHIJKLMNOPQR")}
+    table.update({c: str((i % 9) + 2) for i, c in enumerate("STUVWXYZ")})
+    return int("".join(table.get(c, c) for c in value.upper()))
+
+
+def rib_key(bank: str, branch: str, account: str) -> str:
+    return f"{97 - (89 * _rib_digits(bank) + 15 * _rib_digits(branch) + 3 * _rib_digits(account)) % 97:02d}"
+
+
+def rib_valid(bank: str, branch: str, account: str, key: str) -> bool:
+    try:
+        return rib_key(bank, branch, account) == key
+    except ValueError:
+        return False
+
+
+def iban_matches_rib(iban: str, bank: str, branch: str, account: str, key: str) -> bool:
+    """A French IBAN is "FR" + 2 check digits + the RIB."""
+    return iban.replace(" ", "").upper()[4:] == f"{bank}{branch}{account}{key}".upper()

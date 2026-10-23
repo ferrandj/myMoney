@@ -49,3 +49,34 @@ document.querySelectorAll("select[data-toggle-new]").forEach((select) => {
   toggleNewAccount(select);
   select.addEventListener("change", () => toggleNewAccount(select));
 });
+
+function toggleNewContact(select) {
+  const fieldset = select.closest("form").querySelector(".new-contact");
+  if (!fieldset) return;
+  fieldset.hidden = select.value !== "";
+  fieldset.querySelectorAll("input[name=name]").forEach((input) => (input.required = select.value === ""));
+}
+document.querySelectorAll("select[data-toggle-contact]").forEach((select) => {
+  toggleNewContact(select);
+  select.addEventListener("change", () => toggleNewContact(select));
+});
+
+// Drag and drop: dropping files on the zone sends them straight away.
+const dropzone = document.getElementById("dropzone");
+if (dropzone) {
+  const input = dropzone.querySelector("input[type=file]");
+  ["dragenter", "dragover"].forEach((name) =>
+    dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.add("dragging");
+    }),
+  );
+  ["dragleave", "drop"].forEach((name) => dropzone.addEventListener(name, () => dropzone.classList.remove("dragging")));
+  dropzone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    if (!event.dataTransfer || !event.dataTransfer.files.length) return;
+    input.files = event.dataTransfer.files;
+    dropzone.requestSubmit();
+  });
+  input.addEventListener("change", () => input.files.length && dropzone.requestSubmit());
+}

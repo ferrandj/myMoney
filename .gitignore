@@ -6,3 +6,10 @@ __pycache__/
 *.db
 .env
 *.egg-info/
+# Real statements and exports are personal data: tests build synthetic ones (tests/fixtures.py).
+/samples/
+*.pdf
+*.ofx
+*.qfx
+*.qif
+*.csv

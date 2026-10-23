@@ -1,15 +1,10 @@
 import re
-from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
 from fastapi.testclient import TestClient
 
-from mymoney.connectors.base import AccountData, HoldingData, TransactionData
-from mymoney.core import MyMoney
-from mymoney.models import Account, Connection, Transaction
-from mymoney.services import sync as sync_service
+from mymoney.models import Account
 from mymoney.services.valuation import Valuator
 from mymoney.web.app import create_app
 
@@ -23,46 +18,8 @@ class FakePrices:
     def crypto_prices(self, symbols, currency="EUR", ids=None):
         return {s.upper(): {"BTC": Decimal(50000), "ETH": Decimal(2000)}[s.upper()] for s in symbols if s.upper() in ("BTC", "ETH")}
 
-    def token_prices(self, chain, contracts, currency="EUR"):
-        return {}
-
     def security_price(self, isin=None, symbol=None):
         return (Decimal(100), "EUR") if isin == "IE00B4L5Y983" else None
-
-
-def test_sync_dedupes_and_keeps_user_edits(settings):
-    app = MyMoney(settings)
-    app.vault.setup(PASSWORD)
-    with app.db.session() as s:
-        conn = Connection(name="Banque", connector_type="enablebanking")
-        s.add(conn)
-        s.flush()
-        data = [AccountData("A1", "COMPTE", "checking", balance=Decimal(10), transactions=[
-            TransactionData(date(2026, 2, 1), "CB", Decimal(-5)), TransactionData(date(2026, 2, 1), "CB", Decimal(-5)),
-        ])]
-        assert sync_service.apply_accounts(s, conn, data)["transactions"] == 2
-        account = s.scalar(select(Account))
-    app.save_account(account.id, {"name": "Mon compte", "account_type": "checking", "currency": "EUR"})
-    with app.db.session() as s:
-        conn = s.get(Connection, 1)
-        data[0].balance = Decimal(20)
-        assert sync_service.apply_accounts(s, conn, data)["transactions"] == 0
-        acc = s.get(Account, account.id)
-        assert acc.name == "Mon compte" and acc.balance == Decimal(20)
-
-
-def test_import_does_not_duplicate_synced_lines(settings):
-    app = MyMoney(settings)
-    app.vault.setup(PASSWORD)
-    with app.db.session() as s:
-        acc = Account(name="CC", account_type="checking")
-        s.add(acc)
-        s.flush()
-        sync_service.add_transactions(s, acc, [TransactionData(date(2026, 2, 1), "CARTE X", Decimal("-5"), external_id="bank-1")], "sync")
-        added = sync_service.add_transactions(s, acc, [
-            TransactionData(date(2026, 2, 1), "CB CARTE X 01/02", Decimal("-5.00")), TransactionData(date(2026, 2, 2), "AUTRE", Decimal("-1")),
-        ], "import")
-        assert added == 1
 
 
 def test_valuation():
@@ -127,23 +84,3 @@ def test_web_requires_login_and_csrf(client):
     assert client.post("/login", data={"password": "Wrong-Password-1!"}).status_code == 401
     assert client.post("/login", data={"password": PASSWORD}).status_code == 200
     assert core.vault.unlocked
-
-
-def test_web_document_import_creates_account(client):
-    core = client.app_state.core
-    client.post("/setup", data={"setup_token": core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
-    csrf = _csrf(client.get("/documents").text)
-    csv = "Date;Libellé;Montant;Solde\n01/02/2026;INTERETS;12,00;5 012,00\n".encode()
-    r = client.post("/documents", data={"csrf": csrf}, files={"files": ("LIVRET A Fortuneo.csv", csv, "text/csv")})
-    assert r.status_code == 200 and "Valider l'import" in r.text
-    doc_id = int(re.search(r"/documents/(\d+)/import/0", r.text).group(1))
-    r = client.post(f"/documents/{doc_id}/import/0", data={
-        "csrf": csrf, "account_id": "new", "name": "Livret A", "institution": "Fortuneo", "account_type": "livret_a",
-        "update_balance": "on", "balance": "5012.00", "import_transactions": "on",
-    })
-    assert r.status_code == 200
-    with core.db.session() as s:
-        acc = s.scalar(select(Account).where(Account.name == "Livret A"))
-        assert acc.balance == Decimal("5012.00")
-        assert s.query(Transaction).count() == 1
-    assert client.get(f"/documents/{doc_id}/download").content == csv

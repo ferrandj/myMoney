@@ -14,12 +14,9 @@ services:
       - ./data:/data
     environment:
       TZ: Europe/Paris
-      # URL à laquelle tu ouvres l'app (sert aux retours de connexion bancaire).
-      MYMONEY_PUBLIC_URL: "http://nas.local:8000"
       # Mets true dès que l'app est servie en HTTPS (reverse proxy du NAS).
       MYMONEY_COOKIE_SECURE: "false"
       MYMONEY_AUTO_LOCK_MINUTES: "15"
-      MYMONEY_AUTO_SYNC_HOURS: "6"
       # Adresse du reverse proxy, s'il y en a un, pour qu'il soit cru sur l'IP du client.
       # MYMONEY_TRUSTED_PROXIES: "172.17.0.1"
     # Durcissement du conteneur
@@ -36,8 +33,8 @@ services:
       driver: json-file
       options: { max-size: "5m", max-file: "3" }
 
-    # Option (moins sûre, voir SECURITY.md) : déverrouillage automatique au démarrage
-    # pour que la synchro tourne sans toi. Le mot de passe est alors sur le NAS.
+    # Option (moins sûre, voir SECURITY.md) : déverrouillage automatique au démarrage,
+    # sans saisir le mot de passe. Le mot de passe est alors sur le NAS.
     # secrets: [mymoney_password]
     # environment:
     #   MYMONEY_UNLOCK_PASSWORD_FILE: /run/secrets/mymoney_password

@@ -8,9 +8,8 @@
     <p class="muted small">Actifs {{ portfolio.assets|money }}{% if portfolio.debts %} · Dettes {{ portfolio.debts|money }}{% endif %}</p>
   </div>
   <div class="actions">
-    <form method="post" action="/connections/sync-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">↻ Tout synchroniser</button></form>
-    <a class="btn" href="/documents">⇪ Importer</a>
-    <a class="btn primary" href="/accounts/new">+ Compte manuel</a>
+    <a class="btn primary" href="/documents">⇪ Déposer un document</a>
+    <a class="btn" href="/accounts/new">+ Compte manuel</a>
   </div>
 </section>
 
@@ -35,11 +34,10 @@
 {% if not portfolio.accounts %}
 <section class="card empty">
   <h2>Bienvenue 👋</h2>
-  <p>Trois façons d'ajouter tes comptes :</p>
+  <p>Deux façons d'ajouter tes comptes :</p>
   <ol>
-    <li><a href="/connections/new">Connecter</a> une banque, une plateforme crypto ou un wallet (synchronisation automatique).</li>
-    <li><a href="/documents">Importer</a> des relevés (PDF, CSV, OFX) : les comptes sont créés à partir des documents.</li>
-    <li><a href="/accounts/new">Saisir</a> un compte à la main (Livret A, bien immobilier…).</li>
+    <li><a href="/documents">Dépose</a> un relevé (PDF, CSV, OFX…) : le bon adapter est choisi tout seul, le compte est créé avec son titulaire, son RIB et ses opérations.</li>
+    <li><a href="/accounts/new">Saisis</a> un compte à la main (Livret A, bien immobilier…).</li>
   </ol>
 </section>
 {% endif %}
@@ -51,7 +49,7 @@
     {% for v in values %}
     <tr>
       <td><a href="/accounts/{{ v.account.id }}">{{ v.account.name }}</a>
-        <div class="muted small">{{ [v.account.institution, v.account.type_label, 'manuel' if v.account.connection_id is none else none]|select|join(' · ') }}</div>
+        <div class="muted small">{{ [v.account.institution, v.account.type_label, v.account.holder_name]|select|join(' · ') }}</div>
         {% for w in v.warnings %}<div class="warn small">⚠ {{ w }}</div>{% endfor %}
       </td>
       <td class="num">{{ v.total|money }}</td>
@@ -61,11 +59,10 @@
 </section>
 {% endfor %}
 
-{% set problems = connections|selectattr('status', 'in', ['error', 'needs_auth', 'needs_input'])|list %}
-{% if problems %}
+{% if to_identify %}
 <section class="card">
-  <h2>À traiter</h2>
-  <ul>{% for c in problems %}<li><a href="/connections">{{ c.name }}</a> : {{ c.last_error }}</li>{% endfor %}</ul>
+  <h2>À identifier</h2>
+  <p>{{ to_identify }} bénéficiaire(s) ou émetteur(s) vus dans tes opérations ne sont pas encore nommés. <a href="/contacts">Les nommer</a> : les prochains imports les reconnaîtront.</p>
 </section>
 {% endif %}
 {% endblock %}

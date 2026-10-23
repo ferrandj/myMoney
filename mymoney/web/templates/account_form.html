@@ -17,15 +17,26 @@
       {% endfor %}
     </select>
   </label>
-  <label>Établissement <input name="institution" value="{{ account.institution or '' if account else '' }}" placeholder="Fortuneo, Cashbee…"></label>
-  {% if not account or account.connection_id is none %}
+  <label>Établissement <input name="institution" value="{{ account.institution or '' if account else '' }}" placeholder="BoursoBank, Cashbee…"></label>
   <label>Solde / valeur actuelle <input name="balance" inputmode="decimal" value="{{ account.balance if account else '' }}" placeholder="0,00">
-    <small>Pour un crédit, indique le capital restant dû. Pour un compte avec positions (crypto, PEA…), laisse 0 et ajoute les positions.</small></label>
-  {% else %}<p class="muted small">Le solde est mis à jour par la connexion « {{ account.connection.name if account.connection else '' }} ».</p>{% endif %}
+    <small>Pour un crédit, indique le capital restant dû. Pour un compte avec positions (crypto, PEA…), laisse 0 et ajoute les positions. Un relevé importé met le solde à jour.</small></label>
   <label>Devise <input name="currency" value="{{ account.currency if account else 'EUR' }}" maxlength="10"></label>
   <label>Taux d'intérêt (% / an) <input name="interest_rate" inputmode="decimal" value="{{ account.interest_rate if account and account.interest_rate is not none else '' }}">
     <small>Laisse vide pour un livret réglementé (Livret A, LDDS, LEP, CEL, Livret Jeune) : le taux officiel en vigueur est appliqué automatiquement.</small></label>
-  <label>IBAN <input name="iban" value="{{ account.iban or '' if account else '' }}" autocomplete="off"></label>
+  <fieldset>
+    <legend>Titulaire et coordonnées</legend>
+    <small class="muted">Remplis automatiquement à partir des relevés importés ; corrige-les ici si besoin.</small>
+    <label>Titulaire <input name="holder_name" value="{{ account.holder_name or '' if account else '' }}" autocomplete="off"></label>
+    <label>Adresse <textarea name="holder_address" rows="2">{{ account.holder_address or '' if account else '' }}</textarea></label>
+    <label>IBAN <input name="iban" value="{{ account.iban or '' if account else '' }}" autocomplete="off"></label>
+    <label>BIC <input name="bic" value="{{ account.bic or '' if account else '' }}" autocomplete="off"></label>
+    <div class="row-form">
+      <label>Code banque <input name="bank_code" value="{{ account.bank_code or '' if account else '' }}" autocomplete="off"></label>
+      <label>Code guichet <input name="branch_code" value="{{ account.branch_code or '' if account else '' }}" autocomplete="off"></label>
+      <label>N° de compte <input name="account_number" value="{{ account.account_number or '' if account else '' }}" autocomplete="off"></label>
+      <label>Clé RIB <input name="rib_key" value="{{ account.rib_key or '' if account else '' }}" autocomplete="off"></label>
+    </div>
+  </fieldset>
   <label>Notes <textarea name="notes" rows="2">{{ account.notes or '' if account else '' }}</textarea></label>
   {% if account %}<label class="check"><input type="checkbox" name="archived" {% if account.archived %}checked{% endif %}> Archivé (masqué du patrimoine)</label>{% endif %}
   <button class="btn primary">Enregistrer</button>

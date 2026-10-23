@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 import sqlcipher3
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -48,6 +48,7 @@ class Database:
         from .models import Base
 
         Base.metadata.create_all(engine)
+        _add_missing_columns(engine, Base)
         self.engine = engine
         self._sessionmaker = sessionmaker(engine, expire_on_commit=False)
 
@@ -70,3 +71,17 @@ class Database:
             raise
         finally:
             session.close()
+
+
+def _add_missing_columns(engine: Engine, base) -> None:
+    """Light schema upgrade: a database created by an older version gets the columns added since (all nullable)."""
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            have = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in have and column.nullable:
+                    ddl = column.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl}'))

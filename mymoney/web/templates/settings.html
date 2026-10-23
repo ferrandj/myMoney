@@ -30,11 +30,11 @@
 <section class="card">
   <h2>Sécurité</h2>
   <ul class="small">
-    <li>Base de données chiffrée par SQLCipher (AES-256), documents par AES-256-GCM, identifiants chiffrés une seconde fois.</li>
+    <li>Base de données chiffrée par SQLCipher (AES-256) : comptes, titulaires, adresses, RIB, opérations et contacts. Documents originaux chiffrés un par un (AES-256-GCM), illisibles sur le disque et téléchargeables ici.</li>
     <li>Clé dérivée du mot de passe par Argon2id ({{ (settings.argon2_memory_kib / 1024)|int }} Mio, {{ settings.argon2_time_cost }} passes), jamais écrite sur le disque.</li>
     <li>Verrouillage automatique après {{ settings.auto_lock_minutes }} min d'inactivité{% if settings.unlock_password_file %} : <strong class="warn">désactivé, car le déverrouillage automatique est configuré</strong>{% endif %}.</li>
     <li>Cookie de session {{ 'sécurisé (HTTPS)' if settings.cookie_secure else '<strong class="warn">non sécurisé : active HTTPS puis MYMONEY_COOKIE_SECURE=true</strong>'|safe }}.</li>
-    <li>Synchronisation automatique : {{ 'toutes les %d h'|format(settings.auto_sync_hours) if settings.auto_sync_hours else 'désactivée' }} (uniquement quand le coffre est ouvert).</li>
+    <li>Aucune connexion à une banque : l'application ne reçoit que les documents que tu lui donnes. Seules les cotations (CoinGecko, Yahoo Finance, BCE) sortent du NAS, et seulement pour les positions saisies à la main.</li>
   </ul>
 </section>
 
@@ -46,12 +46,6 @@
     <label>Clé API CoinGecko (optionnel) <input type="password" name="coingecko_api_key" placeholder="{{ '•••••• configurée' if coingecko_key else 'CG-…' }}" autocomplete="off"></label>
     {% if coingecko_key %}<label class="check"><input type="checkbox" name="clear_coingecko"> Supprimer la clé</label>{% endif %}
     <button class="btn">Enregistrer</button>
-  </form>
-  <form method="post" action="/settings/woob-update" class="card stack">
-    <h2>Woob</h2>
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <p class="small muted">Les sites des banques changent : mets à jour les modules si une connexion Woob échoue.</p>
-    <button class="btn">Mettre à jour les modules Woob</button>
   </form>
 </section>
 

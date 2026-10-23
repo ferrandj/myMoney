@@ -15,7 +15,7 @@ def main() -> None:
 
     logging.basicConfig(level=os.environ.get("MYMONEY_LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # Libraries can log URLs or payloads: keep them quiet so nothing sensitive reaches the container logs.
-    for noisy in ("httpx", "httpcore", "ccxt", "woob", "pytr", "pdfminer", "urllib3"):
+    for noisy in ("httpx", "httpcore", "pdfminer", "pdfplumber", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     if args.command == "serve":

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -14,14 +14,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
+from ..adapters import ADAPTERS, catalog, get_adapter
 from ..config import Settings, settings as default_settings
-from ..connectors.registry import CONNECTORS, get_connector
 from ..core import MyMoney
-from ..importers import ParsedStatement
-from ..models import ACCOUNT_TYPES, CATEGORIES, Account, Connection, Document, Transaction
+from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, Transaction
 from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
+from ..services import counterparties as contact_service
+from ..services import statements as statement_service
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
 from . import pwa
@@ -29,7 +31,12 @@ from .security import COOKIE, SECURITY_HEADERS, Sessions, verified_form
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
-PUBLIC_PATHS = ("/static/", "/healthz", "/login", "/setup", "/connections/callback", "/manifest.webmanifest", "/sw.js", "/icons/")
+PUBLIC_PATHS = ("/static/", "/healthz", "/login", "/setup", "/manifest.webmanifest", "/sw.js", "/icons/")
+KIND_LABELS = {
+    "card": "Carte", "transfer": "Virement", "instant_transfer": "Virement instantané", "direct_debit": "Prélèvement",
+    "loan_payment": "Prêt", "fee": "Frais", "cash": "Retrait", "cheque": "Chèque", "interest": "Intérêts",
+}
+DOCUMENT_STATUS = {"uploaded": "stocké", "needs_choice": "à préciser", "parsed": "à valider", "imported": "importé", "failed": "non reconnu"}
 
 
 # ----------------------------------------------------------------- formatting
@@ -79,6 +86,11 @@ def sparkline(points: list[tuple[date, Decimal]], width: int = 640, height: int 
 
 
 # ------------------------------------------------------------------------ app
+def safe_next(value: str | None, default: str) -> str:
+    """Only local paths are accepted as a return address (no open redirect)."""
+    return value if value and value.startswith("/") and not value.startswith("//") else default
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or default_settings
     core = MyMoney(settings)
@@ -86,7 +98,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     core.vault.on_lock(sessions.clear)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters.update(money=money, qty=quantity, frdate=frdate)
-    templates.env.globals.update(ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, CONNECTORS=CONNECTORS)
+    templates.env.globals.update(
+        ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
+        DOCUMENT_STATUS=DOCUMENT_STATUS,
+    )
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -215,7 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def dashboard(request: Request):
         portfolio = await run_in_threadpool(core.portfolio)
         with core.db.session() as s:
-            connections = list(s.scalars(select(Connection).order_by(Connection.name)))
+            to_identify = len(contact_service.unresolved(s))
         groups: dict[str, list] = {}
         for value in portfolio.accounts:
             groups.setdefault(value.account.category, []).append(value)
@@ -225,8 +240,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             portfolio=portfolio,
             groups=[(code, CATEGORIES[code], groups[code]) for code in CATEGORIES if code in groups],
             chart=sparkline(portfolio.history),
-            connections=connections,
-            running=core.running,
+            to_identify=to_identify,
         )
 
     # --------------------------------------------------------- accounts
@@ -249,21 +263,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             account = s.get(Account, account_id)
             if account is None:
                 raise HTTPException(404)
-            _ = account.holdings, account.connection
+            _ = account.holdings
             per_page = 100
             total_tx = s.scalar(select(func.count()).select_from(Transaction).where(Transaction.account_id == account_id))
             transactions = list(
                 s.scalars(
-                    select(Transaction).where(Transaction.account_id == account_id)
+                    select(Transaction).where(Transaction.account_id == account_id).options(selectinload(Transaction.counterparty))
                     .order_by(Transaction.date.desc(), Transaction.id.desc()).offset((page - 1) * per_page).limit(per_page)
                 )
             )
+            statements, gaps = statement_service.coverage(s, account_id)
+            to_identify = contact_service.unresolved(s, account_id=account_id)
         valuator = Valuator(core.prices)
         value = await run_in_threadpool(lambda: (valuator.prefetch([account]), valuator.account_value(account))[1])
         rate, rate_source = effective_rate(account.account_type, account.interest_rate)
         return render(
             request, "account.html", account=account, value=value, transactions=transactions, rate=rate, rate_source=rate_source,
-            page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx,
+            page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, gaps=gaps,
+            to_identify=to_identify,
         )
 
     @app.get("/accounts/{account_id}/edit")
@@ -272,7 +289,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             account = s.get(Account, account_id)
             if account is None:
                 raise HTTPException(404)
-            _ = account.connection
         return render(request, "account_form.html", account=account)
 
     @app.post("/accounts/{account_id}/edit")
@@ -305,166 +321,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         core.delete_holding(holding_id)
         return redirect(f"/accounts/{int(form.get('account_id', 0))}", "Position supprimée")
 
-    # ------------------------------------------------------ connections
-    @app.get("/connections")
-    async def connections_page(request: Request):
-        with core.db.session() as s:
-            connections = list(s.scalars(select(Connection).order_by(Connection.name)))
-            for c in connections:
-                _ = c.accounts
-        return render(request, "connections.html", connections=connections, running=core.running, prompts=core.prompts)
-
-    @app.get("/connections/new")
-    async def connection_new(request: Request, type: str | None = None):
-        if not type:
-            return render(request, "connection_types.html")
-        return render(request, "connection_form.html", cls=get_connector(type), connection=None, values={})
-
-    @app.post("/connections/new")
-    async def connection_create(request: Request):
-        form = await verified_form(request)
-        cls = get_connector(form.get("connector_type", ""))
-        try:
-            conn_id = core.create_connection(cls.type, form.get("name", ""), {f.name: form.get(f.name, "") for f in cls.fields})
-        except ValueError as exc:
-            values = {f.name: form.get(f.name, "") for f in cls.fields if not f.secret}
-            return render(request, "connection_form.html", 400, cls=cls, connection=None, values=values, error=str(exc))
-        return redirect(f"/connections/{conn_id}/connect")
-
-    @app.get("/connections/{conn_id}/edit")
-    async def connection_edit(request: Request, conn_id: int):
-        with core.db.session() as s:
-            conn = s.get(Connection, conn_id)
-            if conn is None:
-                raise HTTPException(404)
-            cls = get_connector(conn.connector_type)
-            config = core.connection_config(conn)
-        values = {f.name: config.get(f.name, "") for f in cls.fields if not f.secret}
-        return render(request, "connection_form.html", cls=cls, connection=conn, values=values)
-
-    @app.post("/connections/{conn_id}/edit")
-    async def connection_update(request: Request, conn_id: int):
-        form = await verified_form(request)
-        with core.db.session() as s:
-            cls = get_connector(s.get(Connection, conn_id).connector_type)
-        core.update_connection(conn_id, form.get("name", ""), {f.name: form.get(f.name, "") for f in cls.fields})
-        return redirect("/connections", "Connexion mise à jour")
-
-    @app.post("/connections/{conn_id}/delete")
-    async def connection_delete(request: Request, conn_id: int):
-        form = await verified_form(request)
-        core.delete_connection(conn_id, form.get("delete_accounts") == "on")
-        return redirect("/connections", "Connexion supprimée")
-
-    @app.get("/connections/{conn_id}/connect")
-    async def connection_connect(request: Request, conn_id: int):
-        """Next step after creating a connection: bank login, 2FA prompt, or a first sync."""
-        with core.db.session() as s:
-            conn = s.get(Connection, conn_id)
-            if conn is None:
-                raise HTTPException(404)
-            cls = get_connector(conn.connector_type)
-        if cls.auth_flow == "redirect":
-            return render(request, "connect_redirect.html", connection=conn, cls=cls, redirect_url=f"{settings.public_url}/connections/callback")
-        if cls.auth_flow == "interactive" and conn.connector_type == "traderepublic":
-            return redirect(f"/connections/{conn_id}/login")
-        core.sync_async(conn_id)
-        return redirect("/connections", "Synchronisation lancée")
-
-    @app.get("/connections/{conn_id}/authorize")
-    async def connection_authorize(request: Request, conn_id: int):
-        try:
-            url = await run_in_threadpool(core.start_auth, conn_id)
-        except Exception as exc:
-            return redirect("/connections", f"Impossible de démarrer la connexion : {exc}")
-        return RedirectResponse(url, status_code=303)
-
-    @app.get("/connections/callback")
-    async def connection_callback(request: Request):
-        # The bank redirects here cross-site: the SameSite=Strict cookie is not sent, so the request
-        # is matched to a connection through the random `state` we generated instead.
-        params = dict(request.query_params)
-        if not core.vault.unlocked:
-            return render(request, "callback.html", ok=False, message="Le coffre est verrouillé : déverrouille-le puis colle l'URL de retour dans la page de la connexion.")
-        conn_id = core.find_pending_auth(params)
-        if conn_id is None:
-            return render(request, "callback.html", ok=False, message="Réponse de la banque inconnue ou expirée.")
-        try:
-            await run_in_threadpool(core.finish_auth, conn_id, params)
-        except Exception as exc:
-            return render(request, "callback.html", ok=False, message=str(exc))
-        core.sync_async(conn_id)
-        return render(request, "callback.html", ok=True, message="Banque connectée, première synchronisation en cours.")
-
-    @app.post("/connections/{conn_id}/callback-paste")
-    async def connection_callback_paste(request: Request, conn_id: int):
-        form = await verified_form(request)
-        params = dict(parse_qsl(urlparse(form.get("url", "")).query))
-        try:
-            await run_in_threadpool(core.finish_auth, conn_id, params)
-        except Exception as exc:
-            return redirect(f"/connections/{conn_id}/connect", f"Échec : {exc}")
-        core.sync_async(conn_id)
-        return redirect("/connections", "Banque connectée, synchronisation lancée")
-
-    @app.get("/connections/{conn_id}/login")
-    async def connection_login_page(request: Request, conn_id: int):
-        with core.db.session() as s:
-            conn = s.get(Connection, conn_id)
-        if conn is None:
-            raise HTTPException(404)
-        prompt = core.prompts.get(conn_id)
-        if prompt is None and conn.connector_type == "traderepublic":
-            try:
-                prompt = await run_in_threadpool(core.login, conn_id, None)
-            except Exception as exc:
-                return redirect("/connections", f"Connexion impossible : {exc}")
-        if prompt is None:
-            return redirect("/connections")
-        return render(request, "login_step.html", connection=conn, prompt=prompt)
-
-    @app.post("/connections/{conn_id}/login")
-    async def connection_login(request: Request, conn_id: int):
-        form = await verified_form(request)
-        answers = {k: v for k, v in form.items() if k != "csrf"}
-        try:
-            prompt = await run_in_threadpool(core.login, conn_id, answers)
-        except Exception as exc:
-            core.prompts.pop(conn_id, None)
-            return redirect("/connections", f"Échec de la connexion : {exc}")
-        if prompt is not None:
-            return redirect(f"/connections/{conn_id}/login")
-        core.sync_async(conn_id)
-        return redirect("/connections", "Connecté, synchronisation lancée")
-
-    @app.post("/connections/{conn_id}/sync")
-    async def connection_sync(request: Request, conn_id: int):
-        await verified_form(request)
-        core.sync_async(conn_id)
-        return redirect("/connections", "Synchronisation lancée")
-
-    @app.post("/connections/sync-all")
-    async def connections_sync_all(request: Request):
-        await verified_form(request)
-        core.sync_all()
-        return redirect("/connections", "Synchronisation de toutes les connexions lancée")
-
-    @app.get("/connections/{conn_id}/banks")
-    async def connection_banks(request: Request, conn_id: int):
-        with core.db.session() as s:
-            connector = core._connector(s.get(Connection, conn_id))
-        try:
-            banks = await run_in_threadpool(connector.list_banks)
-        except Exception as exc:
-            return redirect(f"/connections/{conn_id}/connect", f"Liste indisponible : {exc}")
-        return render(request, "banks.html", banks=banks, conn_id=conn_id)
-
     # -------------------------------------------------------- documents
     @app.get("/documents")
     async def documents_page(request: Request):
         with core.db.session() as s:
             documents = list(s.scalars(select(Document).order_by(Document.uploaded_at.desc())))
-        return render(request, "documents.html", documents=documents, max_mb=settings.max_upload_mb)
+        return render(request, "documents.html", documents=documents, max_mb=settings.max_upload_mb, catalog=catalog())
 
     @app.post("/documents")
     async def documents_upload(request: Request):
@@ -473,37 +335,92 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = form.get("csrf")
         if not session or not isinstance(token, str) or not hmac.compare_digest(token, session.csrf):
             raise HTTPException(403, "Jeton CSRF invalide")
-        ids = []
+        outcomes: list[tuple[int, str, dict | None]] = []  # (document id, "existing" | "imported" | status, import result)
         for upload in form.getlist("files"):
             if not hasattr(upload, "read"):
                 continue
             data = await upload.read(settings.max_upload_mb * 1024 * 1024 + 1)
             if len(data) > settings.max_upload_mb * 1024 * 1024:
                 return redirect("/documents", f"{upload.filename} dépasse {settings.max_upload_mb} Mo")
-            ids.append(await run_in_threadpool(core.store_document, upload.filename or "document", data))
-        if len(ids) == 1:
-            return redirect(f"/documents/{ids[0]}")
-        return redirect("/documents", f"{len(ids)} document(s) ajouté(s)")
+            doc_id, existing = await run_in_threadpool(core.store_document, upload.filename or "document", data)
+            if existing:
+                outcomes.append((doc_id, "existing", None))
+                continue
+            status = await run_in_threadpool(core.analyze_document, doc_id, None, data)
+            imported = await run_in_threadpool(core.auto_import, doc_id) if status == "parsed" else None
+            outcomes.append((doc_id, "imported" if imported else status, imported))
+        if not outcomes:
+            return redirect("/documents", "Aucun fichier reçu")
+        if len(outcomes) == 1:
+            doc_id, state, imported = outcomes[0]
+            if state == "existing":
+                return redirect(f"/documents/{doc_id}", "Ce fichier a déjà été déposé : il n'est pas ajouté une seconde fois")
+            if imported:
+                return redirect(f"/accounts/{imported['account_id']}", import_message(imported, auto=True))
+            return redirect(f"/documents/{doc_id}")
+        counts = {k: sum(1 for _, state, _ in outcomes if state == k) for k in ("imported", "existing")}
+        review = len(outcomes) - counts["imported"] - counts["existing"]
+        parts = [f"{len(outcomes)} fichier(s)", f"{counts['imported']} importé(s) automatiquement"]
+        if review:
+            parts.append(f"{review} à vérifier")
+        if counts["existing"]:
+            parts.append(f"{counts['existing']} déjà présent(s)")
+        return redirect("/documents", " · ".join(parts))
+
+    def import_message(result: dict, auto: bool = False) -> str:
+        text = f"{result['added']} opération(s) ajoutée(s)"
+        if result["skipped_exact"]:
+            text += f" · {result['skipped_exact']} doublon(s) exact(s) ignoré(s)"
+        if result["skipped_probable"]:
+            text += f" · {result['skipped_probable']} doublon(s) probable(s) ignoré(s)"
+        return ("Importé automatiquement : " if auto else "Import terminé : ") + text
 
     @app.get("/documents/{doc_id}")
     async def document_review(request: Request, doc_id: int):
+        review = await run_in_threadpool(core.review_document, doc_id)
+        if review is None:
+            raise HTTPException(404)
+        doc = review["doc"]
+        result = doc.parse_result or {}
+        candidates = []
+        for c in result.get("candidates", []):
+            try:
+                candidates.append((get_adapter(c["adapter"]), c))
+            except ValueError:
+                continue
         with core.db.session() as s:
-            doc = s.get(Document, doc_id)
-            if doc is None:
-                raise HTTPException(404)
-            accounts = list(s.scalars(select(Account).order_by(Account.institution, Account.name)))
-        statements = [ParsedStatement.from_json(item) for item in (doc.parse_result or {}).get("statements", [])]
-        suggestions = [core.suggest_account(st) for st in statements]
-        return render(request, "document.html", doc=doc, statements=statements, suggestions=suggestions, accounts=accounts)
+            to_identify = contact_service.unresolved(s, document_id=doc_id) if doc.status == "imported" else []
+        return render(
+            request, "document.html", doc=doc, result=result, plans=review["plans"], accounts=review["accounts"],
+            candidates=candidates, adapters=ADAPTERS, to_identify=to_identify,
+        )
+
+    @app.post("/documents/{doc_id}/analyze")
+    async def document_analyze(request: Request, doc_id: int):
+        form = await verified_form(request)
+        adapter_id = form.get("adapter") or None
+        try:
+            if adapter_id:
+                get_adapter(adapter_id)
+            await run_in_threadpool(core.analyze_document, doc_id, adapter_id)
+        except Exception as exc:
+            return redirect(f"/documents/{doc_id}", f"Analyse impossible : {exc}")
+        return redirect(f"/documents/{doc_id}")
 
     @app.post("/documents/{doc_id}/import/{index}")
     async def document_import(request: Request, doc_id: int, index: int):
         form = await verified_form(request)
         try:
-            result = core.import_statement(doc_id, index, form)
+            result = await run_in_threadpool(core.import_statement, doc_id, index, form)
         except Exception as exc:
             return redirect(f"/documents/{doc_id}", f"Import impossible : {exc}")
-        return redirect(f"/accounts/{result['account_id']}", f"Import terminé : {result['transactions']} opération(s) ajoutée(s)")
+        return redirect(f"/accounts/{result['account_id']}", import_message(result))
+
+    @app.post("/documents/{doc_id}/undo")
+    async def document_undo(request: Request, doc_id: int):
+        await verified_form(request)
+        removed = await run_in_threadpool(core.undo_import, doc_id)
+        return redirect(f"/documents/{doc_id}", f"Import annulé : {removed} opération(s) retirée(s)")
 
     @app.get("/documents/{doc_id}/download")
     async def document_download(request: Request, doc_id: int):
@@ -520,6 +437,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await verified_form(request)
         core.delete_document(doc_id)
         return redirect("/documents", "Document supprimé")
+
+    # --------------------------------------------------------- contacts
+    @app.get("/contacts")
+    async def contacts_page(request: Request, all: int = 0):
+        with core.db.session() as s:
+            summaries = contact_service.summaries(s)
+            pending = contact_service.unresolved(s, include_shops=bool(all))
+        return render(request, "contacts.html", summaries=summaries, pending=pending, include_shops=bool(all))
+
+    @app.get("/contacts/identify")
+    async def contact_identify_page(request: Request, name: str = "", iban: str = "", next: str = "/contacts"):
+        with core.db.session() as s:
+            contacts = list(s.scalars(select(Counterparty).order_by(Counterparty.name)))
+        return render(request, "contact_identify.html", printed=name, iban=iban, next=safe_next(next, "/contacts"), contacts=contacts)
+
+    @app.post("/contacts/identify")
+    async def contact_identify(request: Request):
+        form = await verified_form(request)
+        target = safe_next(form.get("next"), "/contacts")
+        try:
+            with core.db.session() as s:
+                cp = contact_service.identify(s, form)
+                name = cp.name
+        except ValueError as exc:
+            return redirect(f"/contacts/identify?name={quote(form.get('printed_name', ''))}&iban={quote(form.get('iban', ''))}&next={quote(target)}", str(exc))
+        return redirect(target, f"« {name} » enregistré : les prochains imports le reconnaîtront")
+
+    @app.get("/contacts/new")
+    async def contact_new(request: Request):
+        return render(request, "contact.html", contact=None, transactions=[], others=[])
+
+    @app.post("/contacts/new")
+    async def contact_create(request: Request):
+        form = await verified_form(request)
+        try:
+            with core.db.session() as s:
+                cp = contact_service.save_contact(s, None, form)
+                contact_service.add_identifier(s, cp, "iban", form.get("iban"))
+                contact_service.add_identifier(s, cp, "name", form.get("printed_name"), form.get("printed_name"))
+                contact_service.relink(s)
+                contact_id = cp.id
+        except ValueError as exc:
+            return render(request, "contact.html", 400, contact=None, transactions=[], others=[], error=str(exc))
+        return redirect(f"/contacts/{contact_id}", "Contact créé")
+
+    @app.get("/contacts/{contact_id}")
+    async def contact_detail(request: Request, contact_id: int):
+        with core.db.session() as s:
+            contact = s.get(Counterparty, contact_id)
+            if contact is None:
+                raise HTTPException(404)
+            _ = contact.identifiers
+            transactions = list(
+                s.scalars(
+                    select(Transaction).where(Transaction.counterparty_id == contact_id)
+                    .order_by(Transaction.date.desc(), Transaction.id.desc()).limit(200)
+                )
+            )
+            account_names = {a.id: a.name for a in s.scalars(select(Account))}
+            others = list(s.scalars(select(Counterparty).where(Counterparty.id != contact_id).order_by(Counterparty.name)))
+        return render(request, "contact.html", contact=contact, transactions=transactions, others=others, account_names=account_names)
+
+    @app.post("/contacts/{contact_id}")
+    async def contact_update(request: Request, contact_id: int):
+        form = await verified_form(request)
+        with core.db.session() as s:
+            contact_service.save_contact(s, contact_id, form)
+        return redirect(f"/contacts/{contact_id}", "Contact enregistré")
+
+    @app.post("/contacts/{contact_id}/identifiers")
+    async def contact_add_identifier(request: Request, contact_id: int):
+        form = await verified_form(request)
+        try:
+            with core.db.session() as s:
+                cp = s.get(Counterparty, contact_id)
+                added = contact_service.add_identifier(s, cp, form.get("kind", "iban"), form.get("value"), form.get("value"))
+                linked = contact_service.relink(s) if added else 0
+        except ValueError as exc:
+            return redirect(f"/contacts/{contact_id}", str(exc))
+        return redirect(f"/contacts/{contact_id}", f"Identifiant ajouté : {linked} opération(s) rattachée(s)" if added else "Rien à ajouter")
+
+    @app.post("/contacts/{contact_id}/identifiers/{identifier_id}/delete")
+    async def contact_remove_identifier(request: Request, contact_id: int, identifier_id: int):
+        await verified_form(request)
+        with core.db.session() as s:
+            contact_service.remove_identifier(s, identifier_id)
+        return redirect(f"/contacts/{contact_id}", "Identifiant retiré")
+
+    @app.post("/contacts/{contact_id}/merge")
+    async def contact_merge(request: Request, contact_id: int):
+        form = await verified_form(request)
+        target = int(form.get("target") or 0)
+        if not target:
+            return redirect(f"/contacts/{contact_id}", "Choisis le contact à conserver")
+        with core.db.session() as s:
+            contact_service.merge(s, contact_id, target)
+        return redirect(f"/contacts/{target}", "Contacts fusionnés")
+
+    @app.post("/contacts/{contact_id}/delete")
+    async def contact_delete(request: Request, contact_id: int):
+        await verified_form(request)
+        with core.db.session() as s:
+            contact_service.delete_contact(s, contact_id)
+        return redirect("/contacts", "Contact supprimé (les opérations gardent le nom imprimé par la banque)")
 
     # --------------------------------------------------------- settings
     @app.get("/settings")
@@ -561,16 +582,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if form.get("clear_coingecko") == "on":
             core.set_setting("coingecko_api_key", "")
         return redirect("/settings", "Paramètres enregistrés")
-
-    @app.post("/settings/woob-update")
-    async def settings_woob(request: Request):
-        await verified_form(request)
-        from ..connectors.woob_connector import update_modules
-
-        try:
-            await run_in_threadpool(update_modules, str(settings.woob_dir))
-        except Exception as exc:
-            return redirect("/settings", f"Mise à jour Woob impossible : {exc}")
-        return redirect("/settings", "Modules Woob mis à jour")
 
     return app
