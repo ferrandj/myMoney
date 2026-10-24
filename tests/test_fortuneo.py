@@ -556,3 +556,33 @@ def test_web_a_period_waiting_for_validation_is_not_reported_missing(client):
     client.post(f"/documents/{oct_id}/delete", data={"csrf": csrf})
     page = client.get(f"/documents/{nov_id}")
     assert "Il manque une période : rien entre le 01/10/2026 et le 31/10/2026" in page.text
+
+
+def test_web_a_waiting_document_is_read_again_when_the_reading_code_changed(client):
+    csrf = login(client)
+    page = upload(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    doc = re.search(r"/documents/(\d+)", str(page.url)).group(1)
+    # Simulate a reading made by an older version of the application, with a wrong warning.
+    with client.core.db.session() as s:
+        row = s.get(Document, int(doc))
+        result = dict(row.parse_result)
+        result["reader"] = "old00000"
+        result["statements"] = [{**result["statements"][0], "warnings": ["Les totaux imprimés par la banque (débits 1.00, crédits 2.00) ne correspondent pas"], "confidence": "medium"}]
+        row.parse_result = result
+    review = client.get(f"/documents/{doc}")
+    assert "débits 1.00" not in review.text and "fiabilité élevée" in review.text
+    with client.core.db.session() as s:
+        assert s.get(Document, int(doc)).parse_result["reader"] != "old00000"
+
+
+def test_web_an_imported_document_read_by_an_older_version_says_so(client):
+    csrf = login(client)
+    doc = import_by_hand(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    assert "version plus ancienne" not in client.get(f"/documents/{doc}").text
+    with client.core.db.session() as s:
+        row = s.get(Document, int(doc))
+        row.parse_result = {**row.parse_result, "reader": "old00000"}
+    review = client.get(f"/documents/{doc}")
+    assert "version plus ancienne" in review.text and "myMoney dev · lecture " in review.text
+    with client.core.db.session() as s:
+        assert s.get(Document, int(doc)).parse_result["reader"] == "old00000"  # an import is never rewritten silently

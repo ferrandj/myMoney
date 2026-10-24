@@ -20,6 +20,9 @@
   </div>
 </section>
 {% endif %}
+{% if not current_reading and doc.status == 'imported' %}
+<p class="card warn">Ce document a été lu par une <strong>version plus ancienne</strong> de l'application : les contrôles ci-dessous peuvent être périmés. <em>Documents → Tout relire depuis les fichiers</em> le relit avec la version actuelle.</p>
+{% endif %}
 {% if result.message %}<p class="card warn">{{ result.message }}</p>{% endif %}
 {% if result.error %}<p class="card warn">Lecture impossible : {{ result.error }}. Le document reste stocké chiffré ; tu peux choisir une autre lecture ci-dessous, ou saisir le solde à la main sur le compte.</p>{% endif %}
 
