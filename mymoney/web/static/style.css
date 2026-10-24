@@ -187,3 +187,8 @@ a.card.chart { display: block; color: inherit; }
 button[disabled] { opacity: .5; cursor: not-allowed; }
 
 [hidden] { display: none !important; }
+
+.card.gaps { border-color: var(--warn); }
+.gap-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.gap-list .gap { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+.gap-acked { margin: 6px 0 0; }

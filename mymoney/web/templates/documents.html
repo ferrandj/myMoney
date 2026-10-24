@@ -2,6 +2,7 @@
 {% block title %}Documents{% endblock %}
 {% block content %}
 <h1>Documents</h1>
+{% if missing %}<p class="flash">Tu cherches le relevé de <strong>{{ missing.account }}</strong> pour <strong>{{ missing.label }}</strong> : dépose-le ci-dessous, l'application le reconnaît toute seule et le trou disparaît.</p>{% endif %}
 <form method="post" action="/documents" enctype="multipart/form-data" class="card stack dropzone" id="dropzone">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label class="drop-target">

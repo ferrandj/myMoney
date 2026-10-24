@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Patrimoine{% endblock %}
+{% from "_macros.html" import gap_row with context %}
 {% block content %}
 <section class="hero">
   <div>
@@ -13,6 +14,14 @@
     <a class="btn" href="/accounts/new">+ Compte manuel</a>
   </div>
 </section>
+
+{% if gaps %}
+<section class="card gaps">
+  <h2>Relevés manquants <span class="tag">{{ gaps|length }}</span></h2>
+  <p class="small muted">Aucun relevé importé ne couvre ces périodes. Dépose le relevé manquant, ou dis que c'est normal (compte sans mouvement, relevé jamais émis…).</p>
+  <ul class="gap-list">{% for g in gaps %}{{ gap_row(g, '/') }}{% endfor %}</ul>
+</section>
+{% endif %}
 
 {% if chart %}<a class="card chart" href="/analytics" aria-label="Voir les analyses">{{ chart|safe }}</a>{% endif %}
 

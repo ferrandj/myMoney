@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import unresolved_table with context %}
+{% from "_macros.html" import unresolved_table, gap_row with context %}
 {% block title %}{{ account.name }}{% endblock %}
 {% block content %}
 <p><a href="/">← Patrimoine</a></p>
@@ -41,10 +41,17 @@
   </div>
 </section>
 
-{% if statements %}
+{% if statements or open_gaps or acked_gaps %}
 <section class="card">
   <h2>Relevés importés</h2>
-  {% for g in gaps %}<p class="warn small">⚠ {{ g }}</p>{% endfor %}
+  {% for g in chain_issues %}<p class="warn small">⚠ {{ g }}</p>{% endfor %}
+  {% if open_gaps %}<ul class="gap-list">{% for g in open_gaps %}{{ gap_row(g, '/accounts/' ~ account.id) }}{% endfor %}</ul>{% endif %}
+  {% for g in acked_gaps %}
+  <form method="post" action="/gaps/{{ g.ack_id }}/restore" class="gap-acked small muted">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/accounts/{{ account.id }}">
+    ✓ {{ g.label }} : marqué comme normal <button class="btn ghost small">Remettre en alerte</button>
+  </form>
+  {% endfor %}
   <div class="table-wrap"><table>
     <thead><tr><th>Période</th><th class="num">Solde initial</th><th class="num">Solde final</th><th class="num">Opérations</th><th>Importé</th></tr></thead>
     {% for st in statements|reverse %}

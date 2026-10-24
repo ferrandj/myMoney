@@ -229,6 +229,19 @@ class Statement(Base):
     account: Mapped[Account] = relationship(back_populates="statements")
 
 
+class GapAck(Base):
+    """A stretch of days without statement that the user said is normal: it is not reported any more."""
+
+    __tablename__ = "gap_acks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Counterparty(Base):
     """Someone or something money goes to or comes from, remembered by IBAN and by name for the next import."""
 
