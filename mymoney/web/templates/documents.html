@@ -20,7 +20,7 @@
   <form method="post" action="/documents/validate-all"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="actions"><button class="btn primary">Tout valider ({{ pending|length }})</button>
     <a class="btn" href="/documents/review">Passer en revue un par un</a></div></form>
   <ul class="small">
-    {% for d in pending %}{% set rel = reliability(d) %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · <a href="/documents/{{ d.id }}">ouvrir et valider</a></li>{% endfor %}
+    {% for d in pending %}{% set rel = reliability(d) %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · <a href="/documents/{{ d.id }}">ouvrir et valider</a>{% if reasons.get(d.id) %}<div class="muted">À regarder : {{ reasons[d.id] }}</div>{% endif %}</li>{% endfor %}
   </ul>
 </section>
 {% endif %}
@@ -82,6 +82,16 @@
     {% endfor %}
   </form>
 </section>
+{% endif %}
+{% if imported_count %}
+<details class="card">
+  <summary>Tout relire depuis les fichiers</summary>
+  <p class="small muted">Après une mise à jour de l'application (nouvelles lectures, corrections), cette action <strong>annule tous les imports</strong> puis <strong>relit chaque fichier</strong> déjà importé avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents. Tout ce qui est évident est revalidé ; ce qui ne passe plus les contrôles reste <strong>à valider</strong>, avec la raison, pour que tu décides.</p>
+  <form method="post" action="/documents/rebuild" data-confirm="Annuler les {{ imported_count }} import(s) puis relire tous les fichiers ? Tes fichiers sont conservés. Les opérations saisies à la main restent en place.">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn danger">Annuler tous les imports et tout relire ({{ imported_count }})</button>
+  </form>
+</details>
 {% endif %}
 <details class="card">
   <summary>Documents pris en charge</summary>

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from .adapters import ParsedStatement, SourceDocument, get_adapter, identify, parse_with
 from .config import Settings
 from .db import Database
-from .models import ACCOUNT_TYPES, CATEGORIES, Account, Document, Holding, PriceCache, Setting, Snapshot, Transaction, User, utcnow
+from .models import ACCOUNT_TYPES, CATEGORIES, Account, Document, Holding, PriceCache, Setting, Snapshot, Statement, Transaction, User, utcnow
 from .security.keystore import InvalidPassword, Keystore
 from .security.vault import Vault, VaultLocked
 from .services import access, ledger
@@ -595,29 +595,122 @@ class MyMoney:
         return {"imported": done, "left": len(todo)}
 
     def _validate_if_obvious(self, doc_id: int) -> bool:
+        return self._check_obvious(doc_id, apply=True) is None
+
+    def pending_reasons(self) -> dict[int, str]:
+        """For each document waiting for validation, what stops it from being validated in one click."""
+        reasons = {}
+        for d in self.pending_documents():
+            try:
+                reasons[d.id] = self._check_obvious(d.id, apply=False) or ""
+            except Exception as exc:  # a document that cannot even be planned still deserves a line
+                reasons[d.id] = f"Analyse impossible : {exc}"
+        return reasons
+
+    def _check_obvious(self, doc_id: int, apply: bool) -> str | None:
+        """None when the document can be validated without asking anything (and is, with `apply`); otherwise why not."""
         with self.db.session() as s:
             doc = self._doc(s, doc_id)
             result = doc.parse_result or {}
             if doc.status != "parsed" or len(result.get("statements", [])) != 1:
-                return False
+                return "Le fichier contient plusieurs documents ou n'a pas été lu"
             st = ParsedStatement.from_json(result["statements"][0])
             if st.document_kind == "info":
-                statement_service.import_statement(s, doc, st, {})
-                return True
+                if apply:
+                    statement_service.import_statement(s, doc, st, {})
+                return None
             found = statement_service.find_accounts(s, st)
             if len(found) > 1:
-                return False
+                return "Plusieurs comptes pourraient correspondre : choisis le bon"
             plan = statement_service.plan_import(s, st, found[0] if found else None)
-            if plan.dedup is not None or plan.ask_holder:
-                return False
+            if plan.dedup is not None:
+                return "Ce relevé existe déjà mais le fichier diffère : à trancher"
+            if plan.ask_holder:
+                return "Le nom du titulaire est coupé par la banque : à compléter une fois"
             if plan.account is None:
-                creating = st.document_kind not in statement_service.DOCUMENT_ONLY_KINDS
-                if not (creating and st.confidence == "high" and not st.warnings and not plan.issues):
-                    return False
+                creating = st.document_kind not in statement_service.DOCUMENT_ONLY_KINDS or st.document_kind == "loan_offer"
+                if not creating:
+                    return "Aucun compte ne correspond encore : valide d'abord le relevé du compte"
+                if st.confidence != "high" or st.warnings or plan.issues:
+                    return (st.warnings or plan.issues or ["Lecture à vérifier"])[0]
             elif not plan.clean:
-                return False
-            statement_service.import_statement(s, doc, st, statement_service.default_import_form(plan))
-            return True
+                return (
+                    next(iter(st.warnings or plan.issues), None)
+                    or ("Relevé déjà importé pour cette période" if plan.already_imported else None)
+                    or ("Chevauche un relevé déjà importé" if plan.overlaps else None)
+                    or ("Des opérations ressemblent à des doublons" if plan.classified.probable else None)
+                    or "Lecture à vérifier"
+                )
+            if apply:
+                statement_service.import_statement(s, doc, st, statement_service.default_import_form(plan))
+            return None
+
+    def rebuild_imports(self) -> dict:
+        """Cancel every import, then read the files again with the current adapters and validate what is clearly fine.
+        Files are kept; accounts keep their names, holders and sharing but lose what the documents brought. Whatever
+        does not pass the checks any more is left waiting for a decision, with its reason: nothing is validated in silence."""
+        with self.db.session() as s:
+            docs = [d for d in access.visible_documents(s) if d.status == "imported"]
+            for d in docs:
+                access.check_document(s, d, edit=True)
+            ordered = sorted(docs, key=lambda d: (_kind_rank(d), _period_key(d), d.id))
+            ids = [d.id for d in ordered]
+            touched: set[int] = set()
+            with_holdings: set[int] = set()
+            for d in ordered:
+                mine = {d.account_id} if d.account_id else set()
+                mine |= set(s.scalars(select(Statement.account_id).where(Statement.document_id == d.id)))
+                mine |= set(s.scalars(select(Transaction.account_id).where(Transaction.document_id == d.id)))
+                touched |= mine
+                if any(st.get("holdings") for st in (d.parse_result or {}).get("statements", [])):
+                    with_holdings |= mine
+            for d in ordered:
+                statement_service.undo_import(s, d)
+            s.flush()
+            for account_id in touched:
+                account = s.get(Account, account_id)
+                if account is None:
+                    continue
+                if account_id in with_holdings:
+                    for h in list(account.holdings):
+                        s.delete(h)
+                remaining = s.scalar(select(Transaction.id).where(Transaction.account_id == account_id).limit(1))
+                if remaining is None:  # nothing but documents ever fed this account: its balance was theirs too
+                    account.balance, account.balance_date = Decimal(0), None
+        for doc_id in ids:
+            self.analyze_document(doc_id)
+        done_total = 0
+        todo = [i for i in ids]
+        for _ in range(3):
+            progress, remaining_ids = False, []
+            for doc_id in todo:
+                try:
+                    ok = self._check_obvious(doc_id, apply=True) is None
+                except Exception:
+                    ok = False
+                if ok:
+                    done_total += 1
+                    progress = True
+                else:
+                    remaining_ids.append(doc_id)
+            todo = remaining_ids
+            if not progress or not todo:
+                break
+        left = []
+        with self.db.session() as s:
+            for doc_id in todo:
+                doc = s.get(Document, doc_id)
+                if doc.status == "parsed":
+                    try:
+                        why = self._check_obvious(doc_id, apply=False) or "Lecture à vérifier"
+                    except Exception as exc:
+                        why = f"Analyse impossible : {exc}"
+                elif doc.status == "needs_choice":
+                    why = "Le type de document est à préciser"
+                else:
+                    why = (doc.parse_result or {}).get("error") or "Document non reconnu par les lectures actuelles"
+                left.append({"id": doc.id, "filename": doc.filename, "status": doc.status, "reason": why})
+        return {"total": len(ids), "validated": done_total, "left": left}
 
     def undo_import(self, doc_id: int) -> int:
         with self.db.session() as s:
@@ -631,3 +724,8 @@ class MyMoney:
 def _period_key(doc: Document):
     statements = (doc.parse_result or {}).get("statements") or [{}]
     return str(statements[0].get("period_end") or statements[0].get("period_start") or "")
+
+
+def _kind_rank(doc: Document) -> int:
+    """Statements first: fees recaps and loan notices wait for the account a statement creates."""
+    return {"statement": 0, "savings_statement": 0, "loan_offer": 1}.get(doc.kind, 2 if doc.kind in ("fees_summary", "loan_event", "loan_schedule") else 0)

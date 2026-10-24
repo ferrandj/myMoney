@@ -162,7 +162,7 @@
   {% else %}<p class="flash">✓ Rattaché {% if doc.account_id %}à <a href="/accounts/{{ doc.account_id }}">ce prêt</a>{% endif %}.</p>
   <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Retirer du prêt ce que ce document a apporté ?">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn">Annuler cet import</button>
+    <button class="btn">Invalider l'import</button>
   </form>{% endif %}
 </section>
 {% elif st.document_kind == 'fees_summary' %}
@@ -239,11 +239,15 @@
     </dl>
   </div>
 
+  {% set done = doc.status == 'imported' %}
   <h3>Contrôles</h3>
   <ul class="checks small">
     {% if st.opening_balance is not none and st.balance is not none and st.confidence == 'high' %}<li class="ok">✓ Solde initial + opérations = solde final : les {{ st.transactions|length }} opérations lues sont complètes.</li>{% endif %}
     {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
     {% for i in plan.issues %}<li class="bad">⚠ {{ i }}</li>{% endfor %}
+    {% if done %}
+    <li class="ok">✓ Importé{% if plan.already_imported %} le {{ plan.already_imported.imported_at|frdate }}{% endif %}{% if doc.account_id %} dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>{% endif %}. Pour le relire ou le réimporter, invalide-le d'abord (bouton plus bas).</li>
+    {% else %}
     {% if plan.already_imported %}<li class="bad">⚠ <strong>Relevé déjà importé</strong> : ce compte a déjà un relevé pour la même période, importé le {{ plan.already_imported.imported_at|frdate }}.</li>{% endif %}
     {% for o in plan.overlaps %}<li class="bad">⚠ Chevauche un relevé déjà importé ({{ o.period_start|frdate }} → {{ o.period_end|frdate }}) : les opérations en double seront ignorées.</li>{% endfor %}
     {% if plan.classified.exact %}<li class="bad">⚠ <strong>{{ plan.classified.exact|length }} doublon(s) exact(s)</strong> : opérations déjà présentes dans le compte, elles seront ignorées.</li>{% endif %}
@@ -251,6 +255,7 @@
     {% if plan.ask_holder %}<li class="bad">⚠ <strong>Nom du titulaire coupé par la banque</strong> (« {{ st.holder_name }} ») : indique les noms complets ci-dessous, une seule fois.</li>{% endif %}
     {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre à ce relevé : choisis le bon ci-dessous.</li>{% endif %}
     {% if not st.warnings and not plan.issues and not plan.already_imported and not plan.overlaps and not plan.classified.exact and not plan.classified.probable %}<li class="ok">✓ Aucun doublon, aucune incohérence détectée avec les relevés déjà importés.</li>{% endif %}
+    {% endif %}
   </ul>
 
   {% if plan.dedup and doc.status == 'parsed' %}
@@ -300,6 +305,7 @@
   </div>
   {% endif %}
 
+  {% if not done %}
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Compte de destination
@@ -336,6 +342,7 @@
     {% if plan.already_imported %}<label class="check"><input type="checkbox" name="force"> Importer quand même (ce relevé existe déjà)</label>{% endif %}
     <button class="btn primary">Valider l'import</button>
   </form>
+  {% endif %}
 
   {% if st.holdings %}
   <h3>Positions</h3>
@@ -350,12 +357,12 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Date</th><th>Libellé</th><th>Interlocuteur</th><th class="num">Montant</th><th></th></tr></thead>
       {% for t in st.transactions %}
-      <tr class="tx-{{ statuses[loop.index0] }}">
+      <tr class="{{ '' if done else 'tx-' ~ statuses[loop.index0] }}">
         <td class="nowrap">{{ t.date|frdate }}{% if t.value_date and t.value_date != t.date %}<div class="muted small">valeur {{ t.value_date|frdate }}</div>{% endif %}</td>
         <td><span class="sensitive">{{ t.label }}</span><div class="muted small">{{ KIND_LABELS.get(t.kind, '') }}{% if t.details and t.details.get('internal') %} · virement interne{% endif %}{% if t.reference %} · réf. {{ t.reference }}{% endif %}</div></td>
         <td class="small"><span class="sensitive">{{ t.counterparty or '' }}</span>{% if t.counterparty_iban %}<div><code>{{ t.counterparty_iban }}</code></div>{% endif %}</td>
         <td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td>
-        <td>{% if statuses[loop.index0] == 'exact' %}<span class="tag conf-low">doublon</span>{% elif statuses[loop.index0] == 'probable' %}<span class="tag conf-medium">doublon probable</span>{% endif %}</td>
+        <td>{% if done %}{% elif statuses[loop.index0] == 'exact' %}<span class="tag conf-low">doublon</span>{% elif statuses[loop.index0] == 'probable' %}<span class="tag conf-medium">doublon probable</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table></div>
@@ -368,10 +375,10 @@
 {% if doc.status == 'imported' and not plans|selectattr('statement.document_kind', 'in', ['info', 'fees_summary', 'loan_offer', 'loan_event', 'loan_schedule'])|list %}
 <section class="card">
   <h2>Importé</h2>
-  <p>{% if doc.account_id %}Les opérations de ce document sont dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>. {% endif %}Un nouvel import ignore les opérations déjà présentes.</p>
-  <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Retirer du compte toutes les opérations apportées par ce document ?">
+  <p>{% if doc.account_id %}Les opérations de ce document sont dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>. {% endif %}Pour le relire ou le réimporter, invalide-le : ses opérations sont retirées du compte et le fichier reste conservé.</p>
+  <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Invalider cet import ? Les opérations apportées par ce document sont retirées du compte (le fichier reste conservé).">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn">Annuler cet import</button>
+    <button class="btn">Invalider l'import</button>
   </form>
 </section>
 {% if to_identify %}

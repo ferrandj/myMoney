@@ -796,6 +796,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return render(
             request, "documents.html", documents=documents, aside=aside, missing=missing, max_mb=settings.max_upload_mb, catalog=catalog(),
             tree=document_tree(documents), pending=[d for d in documents if d.status == "parsed"],
+            reasons=await run_in_threadpool(core.pending_reasons) if any(d.status == "parsed" for d in documents) else {},
+            imported_count=sum(1 for d in documents if d.status == "imported"),
         )
 
     @app.post("/documents/validate-all")
@@ -903,6 +905,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if result["skipped_probable"]:
             text += f" · {result['skipped_probable']} doublon(s) probable(s) ignoré(s)"
         return ("Importé automatiquement : " if auto else "Import terminé : ") + text
+
+    @app.post("/documents/rebuild")
+    async def documents_rebuild(request: Request):
+        """Cancel every import and read all the files again; what no longer passes is shown, never validated silently."""
+        await verified_form(request)
+        outcome = await run_in_threadpool(core.rebuild_imports)
+        return render(request, "rebuild.html", outcome=outcome)
 
     @app.get("/documents/review")
     async def documents_review(request: Request, after: int | None = None):
