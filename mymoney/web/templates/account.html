@@ -41,6 +41,8 @@
   </div>
 </section>
 
+{% if loan %}{% include "_loan.html" %}{% endif %}
+
 {% if statements or open_gaps or acked_gaps %}
 <section class="card">
   <h2>Relevés importés</h2>

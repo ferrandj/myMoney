@@ -21,6 +21,7 @@ from .models import ACCOUNT_TYPES, CATEGORIES, Account, Document, Holding, Price
 from .security.keystore import InvalidPassword, Keystore
 from .security.vault import Vault, VaultLocked
 from .services import ledger
+from .services import loans as loan_service
 from .services import statements as statement_service
 from .services.prices import PriceService
 from .services.valuation import AccountValue, Valuator
@@ -152,6 +153,7 @@ class MyMoney:
     # ----------------------------------------------------------- portfolio
     def portfolio(self, with_history: bool = True) -> Portfolio:
         with self.db.session() as s:
+            loan_service.refresh_all(s)  # the capital owed moves with every instalment
             accounts = list(s.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.institution, Account.name)))
             for a in accounts:
                 _ = a.holdings

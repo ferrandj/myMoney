@@ -16,12 +16,12 @@ from sqlalchemy.orm import Session
 
 from ..adapters.base import ParsedStatement, TransactionData
 from ..models import ACCOUNT_TYPES, Account, Document, FeeSummary, Holding, Statement, Transaction
-from . import counterparties, ledger
+from . import counterparties, ledger, loans
 from . import coverage as coverage_service
 
 
 # Documents worth keeping and reading, with no operation in them: they are attached to an account or filed.
-DOCUMENT_ONLY_KINDS = ("fees_summary", "info")
+DOCUMENT_ONLY_KINDS = ("fees_summary", "info", *loans.LOAN_KINDS)
 
 
 @dataclass
@@ -61,6 +61,8 @@ class ImportPlan:
     ask_holder: bool = False
     dedup: DedupReport | None = None  # set when this statement repeats one already imported
     fee_existing: FeeSummary | None = None  # a fees recap for this account and period is already there
+    loan_existing: str | None = None  # this loan already has this very document: what it says
+    loan_unverified: str | None = None  # a repayment notice that cannot be checked against the loan's table yet
 
     def statuses(self) -> list[str]:
         """For each line of the statement: new | exact (already stored) | probable (same day and amount as a stored line)."""
@@ -78,6 +80,10 @@ class ImportPlan:
             return (
                 self.account is not None and len(self.candidates) == 1 and st.confidence == "high" and not st.warnings and self.fee_existing is None
             )
+        if st.document_kind in loans.LOAN_KINDS:
+            return (
+                self.account is not None and len(self.candidates) == 1 and st.confidence == "high" and not st.warnings and self.loan_existing is None and self.loan_unverified is None
+            )
         return (
             self.account is not None
             and len(self.candidates) == 1
@@ -93,6 +99,8 @@ class ImportPlan:
 
 def find_accounts(session: Session, st: ParsedStatement) -> list[Account]:
     """Accounts this statement can belong to, best match first. Identity comes from the document, not the label."""
+    if st.document_kind in loans.LOAN_KINDS:
+        return loans.find_accounts(session, st)
     accounts = list(session.scalars(select(Account)))
     scored: list[tuple[int, Account]] = []
     iban = (st.iban or "").replace(" ", "")
@@ -118,6 +126,9 @@ def plan_import(session: Session, st: ParsedStatement, account: Account | None) 
     candidates = find_accounts(session, st)
     if st.document_kind in DOCUMENT_ONLY_KINDS:
         plan = ImportPlan(st, account, candidates, ledger.Classified(), None)
+        if st.document_kind in loans.LOAN_KINDS:
+            plan.loan_existing = loans.existing_for(session, st, account)
+            plan.loan_unverified = loans.unverified(session, st, account)
         if account is not None and st.document_kind == "fees_summary":
             plan.fee_existing = session.scalar(
                 select(FeeSummary).where(
@@ -279,6 +290,8 @@ def import_statement(session: Session, doc: Document, st: ParsedStatement, form:
             raise ValueError("Compte introuvable")
     if st.document_kind == "fees_summary":
         return _attach_fee_summary(session, doc, st, account, form)
+    if st.document_kind in loans.LOAN_KINDS:
+        return loans.attach(session, doc, st, account, form)
     plan = plan_import(session, st, account)
     if plan.already_imported is not None and form.get("force") != "on":
         raise ValueError("Ce relevé a déjà été importé dans ce compte (même période)")
@@ -335,6 +348,7 @@ def undo_import(session: Session, doc: Document) -> int:
     removed = session.execute(delete(Transaction).where(Transaction.document_id == doc.id)).rowcount or 0
     session.execute(delete(Statement).where(Statement.document_id == doc.id))
     session.execute(delete(FeeSummary).where(FeeSummary.document_id == doc.id))
+    loans.detach(session, doc)
     doc.status = "parsed" if (doc.parse_result or {}).get("statements") else "uploaded"
     doc.account_id = None
     session.flush()

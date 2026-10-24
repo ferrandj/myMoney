@@ -25,6 +25,7 @@ from ..security.vault import VaultLocked
 from ..services import analytics
 from ..services import counterparties as contact_service
 from ..services import coverage as coverage_service
+from ..services import loans as loan_service
 from ..services import statements as statement_service
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
@@ -103,7 +104,7 @@ def safe_next(value: str | None, default: str) -> str:
 
 DOC_KINDS = {
     "statement": "Relevé de compte", "savings_statement": "Relevé d'épargne", "fees_summary": "Récapitulatif des frais",
-    "info": "Information", "pdf": "Relevé (lecture générique)", "csv": "Relevé (CSV)", "ofx": "Relevé (OFX)", "qif": "Relevé (QIF)",
+    "info": "Information", "loan_offer": "Offre de prêt", "loan_event": "Remboursement anticipé", "loan_schedule": "Tableau d'amortissement", "pdf": "Relevé (lecture générique)", "csv": "Relevé (CSV)", "ofx": "Relevé (OFX)", "qif": "Relevé (QIF)",
 }
 
 
@@ -135,7 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.filters.update(money=money, qty=quantity, frdate=frdate)
     templates.env.globals.update(
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
-        DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS,
+        DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS, LOAN_KINDS=loan_service.LOAN_KINDS,
     )
     templates.env.globals.update(QUARANTINE_HOURS=QUARANTINE_HOURS)
     templates.env.filters.update(pct=lambda v: "—" if v is None else f"{Decimal(v):+.1f} %".replace(".", ","))
@@ -402,18 +403,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             )
             fee_rows = fee_summaries(s, account)
+            loan, loan_plan = account.loan, None
+            if loan is not None:
+                loan_plan = loan_service.rebuild(s, loan)
+                _ = (loan.events, loan.installments)
+                loan_docs = {d.id: d for d in s.scalars(select(Document).where(Document.id.in_(
+                    [x for x in [loan.offer_document_id, loan.schedule_document_id, *[e.document_id for e in loan.events]] if x])))}
+            else:
+                loan_docs = {}
             statements, chain_issues = statement_service.coverage(s, account_id)
             all_gaps = coverage_service.account_gaps(s, account, include_acknowledged=True)
             to_identify = contact_service.unresolved(s, account_id=account_id)
         valuator = Valuator(core.prices)
         value = await run_in_threadpool(lambda: (valuator.prefetch([account]), valuator.account_value(account))[1])
         rate, rate_source = effective_rate(account.account_type, account.interest_rate)
+        if loan is not None and loan.rate is not None:
+            rate, rate_source = loan.rate, "lu dans les documents du prêt"
         return render(
             request, "account.html", account=account, value=value, transactions=transactions, rate=rate, rate_source=rate_source,
             page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, chain_issues=chain_issues, fee_rows=fee_rows,
             open_gaps=[g for g in all_gaps if not g.acknowledged], acked_gaps=[g for g in all_gaps if g.acknowledged],
-            to_identify=to_identify,
+            to_identify=to_identify, loan=loan, loan_plan=loan_plan, loan_docs=loan_docs,
         )
+
+    @app.post("/accounts/{account_id}/loan/first-due")
+    async def loan_first_due(request: Request, account_id: int):
+        """The offer only numbers the instalments: the user gives the date of the first one when no document does."""
+        form = await verified_form(request)
+        try:
+            day = date.fromisoformat(form.get("first_due", ""))
+        except ValueError:
+            return redirect(f"/accounts/{account_id}", "Date invalide")
+        with core.db.session() as s:
+            account = s.get(Account, account_id)
+            if account is None or account.loan is None:
+                raise HTTPException(404)
+            loan_service.set_first_due(s, account.loan, day)
+        return redirect(f"/accounts/{account_id}", "Date de la première échéance enregistrée")
 
     @app.get("/accounts/{account_id}/edit")
     async def account_edit(request: Request, account_id: int):
@@ -529,6 +555,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def import_message(result: dict, auto: bool = False) -> str:
         if result.get("kind") == "info":
             return "Document classé avec tes papiers : il ne contient aucune opération"
+        if result.get("kind") in loan_service.LOAN_KINDS:
+            return ("Classé automatiquement : " if auto else "") + {
+                "loan_offer": "offre de prêt enregistrée (montant, taux, coût et échéances du contrat)",
+                "loan_event": "remboursement anticipé enregistré, plan du prêt mis à jour",
+                "loan_schedule": "tableau d'amortissement enregistré, plan du prêt mis à jour",
+            }[result["kind"]]
         if result.get("kind") == "fees_summary":
             return ("Classé automatiquement : " if auto else "") + f"récapitulatif des frais {result['year']} rattaché au compte"
         text = f"{result['added']} opération(s) ajoutée(s)"

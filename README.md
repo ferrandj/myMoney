@@ -37,9 +37,14 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 | Fortuneo | `fortuneo.statement_pdf` | PDF « Relevé de Compte » mensuel (compte courant) : RIB, IBAN, BIC, titulaires, soldes, opérations ; contrôlé aussi avec les totaux débit / crédit imprimés par la banque |
 | Fortuneo | `fortuneo.fees_pdf` | PDF « Relevé de frais » annuel : frais et intérêts de l'année, service par service. Aucune opération : il est **rattaché au compte** (retrouvé par l'IBAN) et comparé aux lignes de frais des relevés importés |
 | Fortuneo | `fortuneo.deposit_guarantee_pdf` | lettre annuelle sur la garantie des dépôts (FGDR) : aucune opération, elle est **classée automatiquement** avec tes papiers (chiffrée, téléchargeable) |
+| Fortuneo | `fortuneo.loan_offer_pdf` | **offre de prêt immobilier** : montant, durée, taux, TAEG, coût du crédit et tableau d'amortissement d'origine (numéroté) |
+| Fortuneo | `fortuneo.loan_prepayment_pdf` | courrier de **remboursement anticipé partiel** : capital restant dû, échéance et date de fin avant / après |
+| Fortuneo | `fortuneo.loan_schedule_pdf` | **tableau d'amortissement daté** de l'espace client (échéance par échéance, du jour à la fin) |
 | Revolut | `revolut.statement_csv` | export CSV d'un compte |
 | tous | `generic.ofx`, `generic.qif` | fichiers OFX / QFX et QIF |
 | tous | `generic.csv`, `generic.pdf` | lecture « devinée » (colonnes date / montant / débit / crédit) : jamais importée sans que tu voies ce qui a été compris |
+
+**Un prêt se reconstitue à partir de ses documents**, déposés dans n'importe quel ordre : le contrat, un remboursement anticipé, le tableau daté. L'application les rejoue (le contrat jusqu'au remboursement, un pont calculé jusqu'au tableau daté, puis le tableau) et contrôle chaque jonction : le capital restant dû avant le remboursement doit être celui que le contrat donne à ce moment-là, le plan recalculé doit retomber sur le tableau daté, les dates de fin doivent concorder, les intérêts doivent se recalculer avec le taux, les prélèvements de tes relevés doivent correspondre aux échéances, et le capital doit finir à zéro. La fiche du prêt (compte de type « Crédit immobilier ») montre le taux, les dates, le capital restant dû aujourd'hui, la prochaine échéance, ce qu'il reste à payer (intérêts et assurance), ce que le remboursement anticipé fait économiser, et toutes les échéances ; son solde alimente le patrimoine (dettes) et se met à jour chaque mois. S'il manque un document (par exemple le courrier d'un remboursement anticipé), l'écart est signalé.
 
 Certains documents ne contiennent aucune opération (récapitulatif des frais, lettres d'information) : ils sont reconnus, datés et conservés comme les autres fichiers, et leur contenu utile (frais, plafond de garantie) est gardé. Dans la bibliothèque, chaque document affiche son type et son établissement.
 
@@ -121,10 +126,11 @@ mymoney/
     base.py        contrat (Adapter, Detection, SourceDocument, ParsedStatement)
     registry.py    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
     boursobank/    _table.py (tableau des mouvements commun), statement_pdf.py (compte courant), savings_pdf.py (PEL, épargne)
-    fortuneo/      statement_pdf.py (relevé mensuel), fees_pdf.py (récapitulatif des frais), deposit_guarantee_pdf.py (lettre FGDR)
+    fortuneo/      statement_pdf.py (relevé mensuel), fees_pdf.py (récapitulatif des frais), deposit_guarantee_pdf.py (lettre FGDR),
+                   loan_offer_pdf.py, loan_prepayment_pdf.py, loan_schedule_pdf.py (prêt)
     revolut/       statement_csv.py : export CSV
     generic/       OFX, QIF, CSV et PDF « devinés »
-  services/    import (doublons, cohérence), contacts, prix, valorisation, taux réglementés
+  services/    import (doublons, cohérence), prêts (reconstitution et contrôles), contacts, prix, valorisation, taux réglementés
   web/         interface (FastAPI + Jinja, sans JavaScript externe)
 ```
 
@@ -134,6 +140,6 @@ mymoney/
 2. `detect(doc)` note de 0 à 1 à quel point le document est bien de ce type, d'après ce qui le distingue des autres documents du même établissement (titre, en-têtes de colonnes, mentions) ; il ne lit rien de personnel.
 3. `parse(doc)` renvoie des `ParsedStatement` : identité du compte (titulaire, adresse, IBAN, RIB), période, soldes initial et final, et des `TransactionData` structurées (date, date de valeur, type, interlocuteur, IBAN de l'interlocuteur, référence, libellé complet dans `raw`). Les soldes servent au contrôle : opérations lues = solde initial → solde final.
 4. Ajoute la classe à `ADAPTERS` dans `registry.py`.
-5. **Écris le test avec un document fictif** (voir `tests/fixtures.py` et `tests/fixtures_fortuneo.py`, qui dessinent de faux documents à la mise en page réelle). Ne commite jamais un vrai relevé.
+5. **Écris le test avec un document fictif** (voir `tests/fixtures.py`, `tests/fixtures_fortuneo.py` et `tests/fixtures_loan.py`, qui dessinent de faux documents à la mise en page réelle). Ne commite jamais un vrai relevé.
 
 Les taux réglementés se mettent à jour dans `mymoney/services/rates.py` (une ligne par changement, les 1er février et 1er août).

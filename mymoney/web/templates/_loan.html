@@ -1,0 +1,74 @@
+{# The loan of an account: what its documents say, the plan rebuilt from them and every check made on the way. #}
+{% set sm = loan_plan.summary if loan_plan else {} %}
+<section class="card" id="pret">
+  <h2>Prêt {% if loan.reference %}<span class="muted small">n° {{ loan.reference }}</span>{% endif %}
+    {% if loan_plan and loan_plan.problems %}<span class="tag conf-low">{{ loan_plan.problems|length }} incohérence(s)</span>
+    {% elif loan_plan and loan_plan.rows %}<span class="tag conf-high">tout est cohérent</span>{% endif %}</h2>
+  <div class="grid">
+    <dl class="kv">
+      {% if loan.product %}<dt>Produit</dt><dd>{{ loan.product }}</dd>{% endif %}
+      {% if loan.borrower %}<dt>Emprunteur</dt><dd>{{ loan.borrower }}</dd>{% endif %}
+      {% if loan.purpose %}<dt>Objet</dt><dd>{{ loan.purpose }}</dd>{% endif %}
+      {% if loan.project_reference %}<dt>Projet</dt><dd>{{ loan.project_reference }}</dd>{% endif %}
+      {% if loan.principal is not none %}<dt>Montant emprunté</dt><dd>{{ loan.principal|money }}</dd>{% endif %}
+      {% if loan.rate is not none %}<dt>Taux</dt><dd><strong>{{ '%.2f'|format(loan.rate)|replace('.', ',') }} %</strong> fixe{% if loan.taeg is not none %} <span class="muted small">· TAEG {{ '%.2f'|format(loan.taeg)|replace('.', ',') }} %</span>{% endif %}</dd>{% endif %}
+      {% if loan.duration_months %}<dt>Durée du contrat</dt><dd>{{ loan.duration_months }} mois ({{ loan.duration_months // 12 }} ans{% if loan.duration_months % 12 %} {{ loan.duration_months % 12 }} mois{% endif %})</dd>{% endif %}
+      {% if loan.first_due_date %}<dt>Première échéance</dt><dd>{{ loan.first_due_date|frdate }}</dd>{% endif %}
+      {% if sm.end_date %}<dt>Fin prévue</dt><dd><strong>{{ sm.end_date|frdate }}</strong>{% if sm.remaining_count is defined %} <span class="muted small">· {{ sm.remaining_count }} échéance(s) restante(s)</span>{% endif %}</dd>{% endif %}
+      {% if loan.total_cost is not none %}<dt>Coût du crédit (contrat)</dt><dd>{{ loan.total_cost|money }} <span class="muted small">intérêts {{ loan.interest_total|money }} · assurance obligatoire {{ loan.insurance_mandatory|money }} · garantie {{ loan.guarantee_fees|money }}</span></dd>{% endif %}
+    </dl>
+    {% if sm %}
+    <dl class="kv">
+      <dt>Capital restant dû</dt><dd><strong>{{ sm.owed|money }}</strong> <span class="muted small">au {{ sm.as_of|frdate }}</span></dd>
+      {% if loan.principal and sm.owed is not none and loan.principal > 0 %}<dt>Remboursé</dt><dd><progress max="100" value="{{ ((1 - sm.owed / loan.principal) * 100)|round(0)|int }}"></progress> <span class="small">{{ ((1 - sm.owed / loan.principal) * 100)|round(1) }} % du capital</span></dd>{% endif %}
+      {% if sm.next %}<dt>Prochaine échéance</dt><dd>{{ sm.next.date|frdate }} · <strong>{{ sm.next.total|money }}</strong> <span class="muted small">dont intérêts {{ sm.next.interest|money }}, assurance {{ sm.next.insurance|money }}</span></dd>{% endif %}
+      <dt>Reste à payer</dt><dd>{{ sm.future_total|money }} <span class="muted small">dont intérêts {{ sm.future_interest|money }} et assurance {{ sm.future_insurance|money }}</span></dd>
+      <dt>Déjà payé</dt><dd>{{ sm.paid_total|money }} <span class="muted small">en {{ sm.paid_count }} échéance(s), dont intérêts {{ sm.paid_interest|money }}</span></dd>
+      <dt>Intérêts sur toute la vie du prêt</dt><dd>{{ sm.lifetime_interest|money }}</dd>
+      {% if sm.repaid_early %}<dt>Remboursé par anticipation</dt><dd>{{ sm.repaid_early|money }}{% if sm.saved_interest is defined %} <span class="muted small">· économise {{ sm.saved_interest|money }} d'intérêts et {{ sm.saved_insurance|money }} d'assurance, soit {{ sm.saved_months }} mois en moins</span>{% endif %}</dd>{% endif %}
+    </dl>
+    {% endif %}
+  </div>
+
+  {% if loan_plan and loan_plan.checks %}
+  <h3>Contrôles</h3>
+  <ul class="checks small">
+    {% for c in loan_plan.checks %}<li class="{{ 'ok' if c.status == 'ok' else 'bad' if c.status == 'warn' else 'muted' }}">{{ '✓' if c.status == 'ok' else '⚠' if c.status == 'warn' else 'ⓘ' }} {{ c.text }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if not loan.first_due_date and loan.installments %}
+  <form method="post" action="/accounts/{{ account.id }}/loan/first-due" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Date de la première échéance <input type="date" name="first_due" required></label>
+    <button class="btn">Dater les échéances du contrat</button>
+  </form>
+  {% endif %}
+
+  <p class="small muted">Documents :
+    {% if loan.offer_document_id and loan.offer_document_id in loan_docs %}<a href="/documents/{{ loan.offer_document_id }}">offre</a>{% else %}offre manquante{% endif %}
+    · {% for e in loan.events %}<a href="/documents/{{ e.document_id }}">remboursement anticipé du {{ e.on_date|frdate }}</a>{% if not loop.last %}, {% endif %}{% else %}aucun remboursement anticipé{% endfor %}
+    · {% if loan.schedule_document_id and loan.schedule_document_id in loan_docs %}<a href="/documents/{{ loan.schedule_document_id }}">tableau d'amortissement daté</a>{% else %}pas de tableau daté{% endif %}</p>
+
+  {% if loan_plan and loan_plan.rows %}
+  <details>
+    <summary>Voir toutes les échéances ({{ sm.total_count if sm else loan_plan.rows|length }})</summary>
+    <div class="table-wrap"><table class="loan-table">
+      <thead><tr><th>Date</th><th>N°</th><th class="num">Capital</th><th class="num">Intérêts</th><th class="num">Assurance</th><th class="num">Total</th><th class="num">Restant dû</th><th>Origine</th><th></th></tr></thead>
+      {% for r in loan_plan.rows %}
+      {% if r.kind == 'prepayment' %}
+      <tr class="loan-event"><td class="nowrap">{{ r.date|frdate }}</td><td colspan="8"><strong>Remboursement anticipé</strong> {{ r.capital|money }} · capital restant dû <strong>{{ r.remaining|money }}</strong></td></tr>
+      {% else %}
+      <tr class="{% if r.status == 'paid' %}loan-paid{% elif r.status == 'next' %}loan-next{% endif %}">
+        <td class="nowrap">{{ r.date|frdate if r.date else '—' }}</td><td>{{ r.number or '' }}</td>
+        <td class="num">{{ r.capital|money }}</td><td class="num">{{ r.interest|money }}</td><td class="num">{{ r.insurance|money }}</td>
+        <td class="num"><strong>{{ r.total|money }}</strong></td><td class="num">{{ r.remaining|money }}</td>
+        <td class="small muted">{{ r.source }}</td>
+        <td class="small">{% if r.confirmed is not none %}<span class="pos" title="Retrouvé dans un relevé : {{ r.confirmed|money }}">✓ prélevé</span>{% elif r.status == 'next' %}prochaine{% endif %}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </table></div>
+  </details>
+  {% endif %}
+</section>

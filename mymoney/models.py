@@ -111,6 +111,7 @@ class Account(Base):
     holdings: Mapped[list["Holding"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     statements: Mapped[list["Statement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    loan: Mapped["Loan | None"] = relationship(back_populates="account", cascade="all, delete-orphan", uselist=False)
 
     @property
     def rib(self) -> str | None:
@@ -245,6 +246,85 @@ class FeeSummary(Base):
     # [{"category", "name", "used", "unit_price", "billed", "total"}]
     services: Mapped[list | None] = mapped_column(JSON)
     imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Loan(Base):
+    """What the documents of a loan say about it. The account (type "mortgage" or "loan") holds the balance."""
+
+    __tablename__ = "loans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), unique=True)
+    reference: Mapped[str | None] = mapped_column(String(60), index=True)  # the loan's number
+    project_reference: Mapped[str | None] = mapped_column(String(60))
+    product: Mapped[str | None] = mapped_column(String(120))
+    borrower: Mapped[str | None] = mapped_column(String(300))
+    purpose: Mapped[str | None] = mapped_column(String(200))  # "Achat ancien · Résidence principale"
+    # From the offer.
+    principal: Mapped[Decimal | None] = mapped_column()
+    duration_months: Mapped[int | None] = mapped_column(Integer)
+    rate: Mapped[Decimal | None] = mapped_column()  # % per year, fixed
+    taeg: Mapped[Decimal | None] = mapped_column()
+    interest_total: Mapped[Decimal | None] = mapped_column()
+    insurance_mandatory: Mapped[Decimal | None] = mapped_column()
+    insurance_optional: Mapped[Decimal | None] = mapped_column()
+    guarantee_fees: Mapped[Decimal | None] = mapped_column()
+    total_cost: Mapped[Decimal | None] = mapped_column()
+    offer_date: Mapped[date | None] = mapped_column(Date)
+    # Date of the first instalment: the offer only numbers them, a later document (or the user) gives the dates.
+    first_due_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)  # as stated by the latest document
+    offer_document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    schedule_document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    account: Mapped[Account] = relationship(back_populates="loan")
+    installments: Mapped[list["LoanInstallment"]] = relationship(back_populates="loan", cascade="all, delete-orphan", order_by="LoanInstallment.id")
+    events: Mapped[list["LoanEvent"]] = relationship(back_populates="loan", cascade="all, delete-orphan", order_by="LoanEvent.on_date")
+
+
+class LoanInstallment(Base):
+    """One line of an amortization table: the original one in the offer (numbered) or the current one (dated)."""
+
+    __tablename__ = "loan_installments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    loan_id: Mapped[int] = mapped_column(ForeignKey("loans.id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), index=True)
+    source: Mapped[str] = mapped_column(String(10))  # offer | schedule
+    number: Mapped[int | None] = mapped_column(Integer)
+    due_date: Mapped[date | None] = mapped_column(Date)
+    capital: Mapped[Decimal] = mapped_column()
+    interest: Mapped[Decimal] = mapped_column()
+    deferred_interest: Mapped[Decimal] = mapped_column(default=Decimal(0))
+    insurance: Mapped[Decimal] = mapped_column(default=Decimal(0))
+    total: Mapped[Decimal] = mapped_column()
+    remaining: Mapped[Decimal] = mapped_column()  # capital still owed after this instalment
+
+    loan: Mapped[Loan] = relationship(back_populates="installments")
+
+
+class LoanEvent(Base):
+    """Something that changed the loan: a partial early repayment, as the bank's notice states it."""
+
+    __tablename__ = "loan_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    loan_id: Mapped[int] = mapped_column(ForeignKey("loans.id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="prepayment")
+    on_date: Mapped[date] = mapped_column(Date)  # the day the repayment is accounted for
+    issued_on: Mapped[date | None] = mapped_column(Date)
+    capital_before: Mapped[Decimal] = mapped_column()
+    capital_after: Mapped[Decimal] = mapped_column()
+    last_due_date: Mapped[date | None] = mapped_column(Date)  # last instalment paid before the event
+    last_payment: Mapped[Decimal | None] = mapped_column()
+    first_due_date: Mapped[date | None] = mapped_column(Date)  # first instalment of the new plan
+    first_payment: Mapped[Decimal | None] = mapped_column()
+    end_before: Mapped[date | None] = mapped_column(Date)
+    end_after: Mapped[date | None] = mapped_column(Date)
+
+    loan: Mapped[Loan] = relationship(back_populates="events")
 
 
 class GapAck(Base):
