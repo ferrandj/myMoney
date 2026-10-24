@@ -356,7 +356,7 @@ def test_a_savings_statement_with_an_operation_the_balances_do_not_explain_is_fl
     assert st.confidence == "low" and any("ne tombent pas juste" in w for w in st.warnings)
 
 
-def import_by_hand(client, csrf, name, data, account="new"):
+def import_by_hand(client, csrf, name, data, account="new", balance=None):
     page = upload(client, csrf, name, data)
     found = re.search(r"/documents/(\d+)", str(page.url))
     if found is None:  # the account was known and the document clean: it was imported on arrival
@@ -365,6 +365,8 @@ def import_by_hand(client, csrf, name, data, account="new"):
     form = {"csrf": csrf, "account_id": account, "import_transactions": "on"}
     if account == "new":
         form["name"] = "Compte"
+    if balance is not None:  # the account then has a balance date, which is what its history is drawn from
+        form.update(update_balance="on", balance=str(balance))
     client.post(f"/documents/{doc}/import/0", data=form)
     return doc
 
@@ -616,3 +618,26 @@ def test_fees_summary_with_a_refund_whose_name_wraps_around_its_figures():
     assert [(s["name"], s["total"]) for s in st.extra["services"]] == [("INACTIVITE CARTE EXEMPLE", "18.00"), ("REMBOURSEMENT(S) EXCEPTIONNEL(S)", "-9.00")]
     assert st.extra["fees_total"] == "9.00" and not st.warnings and st.confidence == "high"
     assert [s["category"] for s in st.extra["services"]] == ["Cartes et espèces"] * 2
+
+
+def test_web_the_bank_fees_are_shown_next_to_the_spending(client):
+    csrf = login(client)
+    D = Decimal
+    entries = fortuneo_entries() + [FEntry(date(2026, 9, 28), ["FRAIS TENUE DE COMPTE"], D("-9.00"))]
+    spec = FSpec(entries)
+    import_by_hand(client, csrf, "septembre.pdf", fortuneo_statement_pdf(spec), balance=spec.closing)
+    recap = FeesSpec(
+        year=2026, total=D("9.00"),
+        services=[
+            ("Cartes et espèces", "INACTIVITE CARTE EXEMPLE", 2, "9,00", 2, "18,00"),
+            ("Cartes et espèces", "REMBOURSEMENT(S) EXCEPTIONNEL(S)", 1, "9,00", 1, "-9,00"),
+        ],
+    )
+    import_by_hand(client, csrf, "frais.pdf", fortuneo_fees_pdf(recap), account="1")
+    page = client.get("/analytics?vue=depenses&periode=tout")
+    assert 'id="frais"' in page.text and "Frais bancaires" in page.text
+    assert "Frais d'après les récapitulatifs" in page.text and "Frais dans les opérations" in page.text
+    assert "1 opération(s)" in page.text  # the fee line of the statement
+    assert "Détail des services (2)" in page.text and "INACTIVITE CARTE EXEMPLE" in page.text
+    # No fees to show for another direction or inside one category.
+    assert 'id="frais"' not in client.get("/analytics?vue=depenses&periode=tout&sens=entrees").text

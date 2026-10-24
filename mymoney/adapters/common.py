@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
 
+# Pure functions of a string, called again and again on the same labels when thousands of operations are classified.
+@lru_cache(maxsize=65536)
 def strip_accents(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
 
 
+@lru_cache(maxsize=65536)
 def norm(text: str) -> str:
     return re.sub(r"\s+", " ", strip_accents(text).lower()).strip()
 
@@ -162,6 +166,7 @@ def find_institution(text: str) -> str | None:
 _NAME_NOISE = {"m", "mr", "mme", "mlle", "monsieur", "madame", "mademoiselle", "ou", "et", "or", "and", "sas", "sarl", "sa", "sasu", "eurl"}
 
 
+@lru_cache(maxsize=65536)
 def name_key(name: str) -> str:
     """Order- and civility-insensitive key: "M DUPONT Jean" and "Jean Dupont" are the same person."""
     tokens = set(re.findall(r"[a-z0-9]+", strip_accents(name).lower())) - _NAME_NOISE
