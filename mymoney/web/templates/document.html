@@ -75,6 +75,76 @@
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>
   {% endif %}
 </section>
+{% elif st.document_kind in LOAN_KINDS %}
+{% set ln = st.extra.get('loan', {}) %}
+<section class="card">
+  <h2>{{ st.account_label or 'Prêt' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
+  <p class="muted small">{{ DOC_KINDS[st.document_kind] }}</p>
+  <div class="grid">
+    <dl class="kv">
+      {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+      {% if st.holder_name %}<dt>Emprunteur</dt><dd>{{ st.holder_name }}</dd>{% endif %}
+      {% if ln.get('reference') %}<dt>N° du prêt</dt><dd><code>{{ ln.reference }}</code></dd>{% endif %}
+      {% if ln.get('project') %}<dt>Projet</dt><dd><code>{{ ln.project }}</code></dd>{% endif %}
+      {% if ln.get('object') %}<dt>Objet</dt><dd>{{ ln.object }}{% if ln.get('destination') %} · {{ ln.destination }}{% endif %}</dd>{% endif %}
+    </dl>
+    {% if st.document_kind == 'loan_offer' %}
+    <dl class="kv">
+      <dt>Montant</dt><dd><strong>{{ ln.get('principal')|money }}</strong> sur {{ ln.get('duration') }} mois</dd>
+      <dt>Taux</dt><dd>{{ ln.get('rate') }} % fixe · TAEG {{ ln.get('taeg') }} %</dd>
+      <dt>Coût total</dt><dd>{{ ln.get('total_cost')|money }} <span class="muted small">dont intérêts {{ ln.get('interest_total')|money }}</span></dd>
+      <dt>Tableau</dt><dd>{{ ln.rows|length }} échéances{% if ln.rows %} de {{ ln.rows[0].total|money }}{% endif %}</dd>
+    </dl>
+    {% elif st.document_kind == 'loan_schedule' %}
+    <dl class="kv">
+      <dt>Capital restant dû au départ</dt><dd><strong>{{ ln.get('balance')|money }}</strong></dd>
+      <dt>Taux</dt><dd>{{ ln.get('rate') }} % fixe</dd>
+      <dt>Échéances</dt><dd>{{ ln.rows|length }}{% if st.period_start %} · du {{ st.period_start|frdate }} au {{ st.period_end|frdate }}{% endif %}</dd>
+      {% if ln.rows %}<dt>Échéance</dt><dd>{{ ln.rows[0].total|money }} <span class="muted small">dont assurance {{ ln.rows[0].insurance|money }}</span></dd>{% endif %}
+    </dl>
+    {% else %}
+    {% set ev = ln.get('event', {}) %}
+    <dl class="kv">
+      <dt>Décompte arrêté au</dt><dd>{{ st.balance_date|frdate }}</dd>
+      <dt>Avant</dt><dd>{{ ev.before.get('capital')|money }} <span class="muted small">· fin {{ ev.before.get('end') }}</span></dd>
+      <dt>Après</dt><dd><strong>{{ ev.after.get('capital')|money }}</strong> <span class="muted small">· fin {{ ev.after.get('end') }}</span></dd>
+      <dt>Nouvelle échéance</dt><dd>{{ ev.after.get('payment')|money }} <span class="muted small">dès le {{ ev.after.get('due') }}</span></dd>
+    </dl>
+    {% endif %}
+  </div>
+  <h3>Contrôles</h3>
+  <ul class="checks small">
+    {% if st.confidence == 'high' %}<li class="ok">✓ Contrôles du document réussis{% if st.document_kind != 'loan_event' %} : chaque échéance s'additionne, le capital restant dû s'enchaîne jusqu'à zéro{% else %} : le capital a diminué et la fin du prêt est avancée{% endif %}.</li>{% endif %}
+    {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
+    {% if plan.loan_existing and doc.status != 'imported' %}<li class="bad">⚠ <strong>Déjà importé</strong> : {{ plan.loan_existing }}.</li>{% endif %}
+    {% if plan.loan_unverified and doc.status != 'imported' %}<li class="bad">⚠ {{ plan.loan_unverified }}</li>{% endif %}
+    {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs prêts pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
+    {% if plan.account and plan.candidates|length == 1 and not plan.loan_existing and not plan.loan_unverified %}<li class="ok">✓ Rattaché au prêt « {{ plan.account.name }} ».</li>{% endif %}
+  </ul>
+  {% if doc.status != 'imported' %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Prêt auquel le rattacher
+      <select name="account_id" data-toggle-new>
+        <option value="new" {% if not plan.account %}selected{% endif %}>➕ Créer le prêt à partir de ce document</option>
+        {% for a in accounts if a.account_type in ('mortgage', 'loan') %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset class="new-account">
+      <legend>Nouveau prêt</legend>
+      <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
+      <label>Établissement <input name="institution" value="{{ st.institution or '' }}"></label>
+      <label>Type <select name="account_type"><option value="mortgage" selected>{{ ACCOUNT_TYPES['mortgage'][0] }}</option><option value="loan">{{ ACCOUNT_TYPES['loan'][0] }}</option></select></label>
+    </fieldset>
+    {% if plan.loan_existing %}<label class="check"><input type="checkbox" name="force"> Remplacer ce qui est déjà enregistré</label>{% endif %}
+    <button class="btn primary">Rattacher au prêt</button>
+  </form>
+  {% else %}<p class="flash">✓ Rattaché {% if doc.account_id %}à <a href="/accounts/{{ doc.account_id }}">ce prêt</a>{% endif %}.</p>
+  <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Retirer du prêt ce que ce document a apporté ?">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn">Annuler cet import</button>
+  </form>{% endif %}
+</section>
 {% elif st.document_kind == 'fees_summary' %}
 <section class="card">
   <h2>{{ st.account_label or 'Récapitulatif des frais' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
@@ -275,7 +345,7 @@
 {% endif %}
 {% endfor %}
 
-{% if doc.status == 'imported' and not plans|selectattr('statement.document_kind', 'in', ['info', 'fees_summary'])|list %}
+{% if doc.status == 'imported' and not plans|selectattr('statement.document_kind', 'in', ['info', 'fees_summary', 'loan_offer', 'loan_event', 'loan_schedule'])|list %}
 <section class="card">
   <h2>Importé</h2>
   <p>{% if doc.account_id %}Les opérations de ce document sont dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>. {% endif %}Un nouvel import ignore les opérations déjà présentes.</p>
