@@ -191,7 +191,7 @@
     {% for t in transactions %}
       <tr><td class="nowrap">{{ t.date|frdate }}</td>
       <td class="sensitive-cell"><span class="sensitive">{{ t.label }}</span>
-        <div class="muted small">{{ [KIND_LABELS.get(t.kind, ''), 'virement interne' if t.internal else '', ('valeur ' ~ (t.value_date|frdate)) if t.value_date and t.value_date != t.date else '']|select|join(' · ') }}
+        <div class="muted small">{{ [tx_categories.get(t.id, ''), KIND_LABELS.get(t.kind, ''), 'virement interne' if t.internal else '', ('valeur ' ~ (t.value_date|frdate)) if t.value_date and t.value_date != t.date else '']|select|join(' · ') }}
           {% if t.counterparty %}{% if t.kind %} · {% endif %}<a href="/contacts/{{ t.counterparty.id }}">{{ t.counterparty.name }}</a>
           {% elif (t.counterparty_name or t.counterparty_iban) and not t.internal and t.kind != 'card' %}{% if t.kind %} · {% endif %}<a href="/contacts/identify?name={{ (t.counterparty_name or '')|urlencode }}&iban={{ (t.counterparty_iban or '')|urlencode }}&next={{ ('/accounts/' ~ account.id)|urlencode }}">identifier {{ t.counterparty_name or t.counterparty_iban }}</a>{% endif %}
         </div></td>

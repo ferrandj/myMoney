@@ -30,25 +30,45 @@
   </table></div>
 </section>
 {% endif %}
-{% if documents %}
-<section class="card">
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Fichier</th><th>Type</th><th>Établissement</th><th>Ajouté</th><th>État</th><th></th></tr></thead>
-    <tbody>
-    {% for d in documents %}
-    <tr>
-      <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
-      <td class="small">{{ DOC_KINDS.get(d.kind, 'Document') if d.adapter_id else '—' }}</td>
-      <td class="small">{{ (d.parse_result or {}).get('institution') or '—' }}</td>
-      <td class="nowrap">{{ d.uploaded_at|frdate }}</td>
-      <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
-      <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
-    </tr>
+{% if tree %}
+<section class="card" id="bibliotheque">
+  <h2>Mes documents <span class="tag">{{ documents|length }}</span></h2>
+  <p class="small muted">Clique sur l'établissement, puis sur le type de document. Coche les fichiers voulus (ou toute une catégorie) pour les télécharger d'un coup.</p>
+  <form method="post" action="/documents/download" id="download-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="doc-toolbar">
+      <button class="btn primary" id="download-selected" disabled>Télécharger la sélection <span id="download-count"></span></button>
+      <button type="button" class="btn ghost small" data-expand="all">Tout déplier</button>
+      <button type="button" class="btn ghost small" data-expand="none">Tout replier</button>
+    </div>
+    {% for bank in tree %}
+    <details class="doc-bank" {% if tree|length == 1 or loop.first %}open{% endif %}>
+      <summary><strong>{{ bank.label }}</strong> <span class="tag">{{ bank.count }}</span></summary>
+      {% for kind in bank.kinds %}
+      <details class="doc-kind" {% if bank.kinds|length == 1 %}open{% endif %}>
+        <summary>{{ kind.label }} <span class="tag">{{ kind.count }}</span>
+          <label class="check doc-all" title="Cocher tout ce groupe"><input type="checkbox" data-check-group aria-label="Tout cocher : {{ bank.label }}, {{ kind.label }}"> tout</label></summary>
+        <div class="table-wrap"><table class="doc-table">
+          <tbody>
+          {% for year, docs in kind.years %}
+            <tr class="doc-year"><th colspan="5">{{ year }}</th></tr>
+            {% for d, day in docs %}
+            <tr>
+              <td class="doc-check"><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Cocher pour télécharger"></td>
+              <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
+              <td class="nowrap small" title="Période ou date du document">{{ day|frdate }}</td>
+              <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
+              <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+          </tbody>
+        </table></div>
+      </details>
+      {% endfor %}
+    </details>
     {% endfor %}
-    </tbody>
-  </table>
-  </div>
+  </form>
 </section>
 {% endif %}
 <details class="card">

@@ -45,6 +45,7 @@
     {% if vue in ('flux', 'depenses') %}
     <form method="get" action="/analytics" class="inline" data-autosubmit>
       <input type="hidden" name="vue" value="{{ vue }}"><input type="hidden" name="periode" value="{{ periode }}">
+      {% if vue == 'depenses' %}{% if sens != 'sorties' %}<input type="hidden" name="sens" value="{{ sens }}">{% endif %}{% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}{% if mois %}<input type="hidden" name="mois" value="{{ mois }}">{% endif %}{% endif %}
       {% if not everything %}{% for a in accounts if a.id in selected %}<input type="hidden" name="c" value="{{ a.id }}">{% endfor %}{% endif %}
       <label class="check"><input type="checkbox" name="interne" value="1" {% if interne %}checked{% endif %}> Compter les virements entre mes comptes</label>
     </form>
@@ -81,11 +82,12 @@
     {% if chart %}
     {{ chart|safe }}
     <p class="legend inline-legend"><span class="s-pos"><span class="swatch"></span> Entrées</span> <span class="s-neg"><span class="swatch"></span> Sorties</span></p>
+    <p class="muted small">Clique sur un mois pour voir où est parti l'argent, catégorie par catégorie.</p>
     <div class="table-wrap"><table data-sortable>
       <thead><tr><th>Mois</th><th class="num">Entrées</th><th class="num">Sorties</th><th class="num">Solde</th></tr></thead>
       <tbody>
         {% for f in flows|reverse %}
-        <tr><td data-sort="{{ f.month.isoformat() }}">{{ f.month.strftime('%m/%Y') }}</td><td class="num pos" data-sort="{{ f.income }}">{{ f.income|money }}</td>
+        <tr><td data-sort="{{ f.month.isoformat() }}"><a href="{{ flow_links[f.month] }}" title="Voir où est parti l'argent ce mois-là">{{ f.month.strftime('%m/%Y') }}</a></td><td class="num pos" data-sort="{{ f.income }}">{{ f.income|money }}</td>
           <td class="num" data-sort="{{ f.expense }}">{{ f.expense|money }}</td><td class="num {{ 'pos' if f.net > 0 else '' }}" data-sort="{{ f.net }}">{{ f.net|money }}</td></tr>
         {% endfor %}
       </tbody>
@@ -94,12 +96,92 @@
     {% else %}<p class="muted">Aucune opération sur cette période.</p>{% endif %}
 
   {% else %}
-    <div class="grid">
-      <div><h2>Dépenses par type <span class="muted small">{{ spent.total_out|money }}</span></h2>{{ ranking(spent.by_kind, 'out') }}</div>
-      <div><h2>Où part l'argent <span class="muted small">{{ spent.total_out|money }}</span></h2>{{ ranking(spent.top_out, 'out') }}</div>
-      <div><h2>D'où il vient <span class="muted small">{{ spent.total_in|money }}</span></h2>{{ ranking(spent.top_in, 'in') }}</div>
+    <div class="toolbar">
+      <div class="seg" aria-label="Sens">{% for code, label, href in sens_links %}<a href="{{ href }}" {% if code == sens %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}</div>
+      {% if mois %}<span class="tag">Mois : {{ month_label }} <a href="{{ month_off_link }}" aria-label="Revenir à toute la période">✕</a></span>{% endif %}
     </div>
-    <p class="muted small">Les noms rattachés à un contact sont regroupés ; <a href="/contacts">nomme les autres</a> pour des totaux plus parlants.</p>
+
+    {% set word = 'dépensé' if sens == 'sorties' else 'reçu' %}
+    {% if report.total %}
+    {% if cat and report.category %}
+      <p><a href="{{ all_link }}">← Toutes les catégories</a></p>
+      <h2>{{ report.category.label }}
+        <span class="muted small">{{ report.category.total|money }} · {{ '%.1f'|format(report.category.share)|replace('.', ',') }} % de ce que tu as {{ word }} · {{ report.category.count }} opération(s)</span></h2>
+      {% if month_chart %}{{ month_chart|safe }}{% endif %}
+
+      <h3>Par bénéficiaire <span class="muted small">le même nom regroupe toutes ses opérations ; change la catégorie ici, elle s'applique à toutes, y compris les prochaines</span></h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Qui</th><th class="num">Opérations</th><th class="num">Total</th><th class="num">Part</th><th>Catégorie</th></tr></thead>
+        <tbody>
+        {% for m in report.merchants %}
+        <tr>
+          <td>{% if m.contact_id %}<a href="/contacts/{{ m.contact_id }}" class="sensitive">{{ m.label }}</a>{% else %}<span class="sensitive">{{ m.label }}</span>{% endif %}</td>
+          <td class="num">{{ m.count }}</td><td class="num">{{ m.total|money }}</td>
+          <td class="num small">{{ '%.0f'|format(m.total / report.category.total * 100)|replace('.', ',') }} %</td>
+          <td>
+            <form method="post" action="/analytics/categorize" class="inline-identify">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ this_url }}">
+              <input type="hidden" name="key" value="{{ m.key }}"><input type="hidden" name="label" value="{{ m.label }}">
+              <select name="category" aria-label="Catégorie de {{ m.label }}">
+                {% if m.ruled %}<option value="auto">↺ Automatique</option>{% endif %}
+                {% for o in options %}<option value="{{ o.id }}" {% if o.id == m.category %}selected{% endif %}>{{ o.label }}</option>{% endfor %}
+              </select>
+              <button class="btn small">Changer</button>{% if m.ruled %} <span class="tag" title="Choisi par toi">à ta façon</span>{% endif %}
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+
+      <h3>Opérations <span class="muted small">{{ report.operations|length }}{% if report.category.count > report.operations|length %} sur {{ report.category.count }} (les plus récentes){% endif %}</span></h3>
+      <div class="table-wrap"><table data-sortable>
+        <thead><tr><th>Date</th><th>Libellé</th><th>Compte</th><th class="num">Montant</th></tr></thead>
+        <tbody>
+        {% for t, account_name in report.operations %}
+        <tr><td class="nowrap" data-sort="{{ t.date.isoformat() }}">{{ t.date|frdate }}</td><td class="sensitive-cell"><span class="sensitive">{{ t.label }}</span></td>
+          <td class="small">{{ account_name }}</td><td class="num" data-sort="{{ t.amount }}">{{ t.amount|money(t.currency) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    {% else %}
+      <section class="tiles kpis">
+        <div class="tile"><span class="muted small">{{ 'Dépensé' if sens == 'sorties' else 'Reçu' }}{% if mois %} en {{ month_label }}{% endif %}</span><span class="kpi">{{ report.total|money }}</span></div>
+        <div class="tile"><span class="muted small">{{ 'Reçu' if sens == 'sorties' else 'Dépensé' }}</span><span class="kpi">{{ (report.total_in if sens == 'sorties' else report.total_out)|money }}</span></div>
+        <div class="tile"><span class="muted small">Solde de la période</span><span class="kpi {{ 'pos' if report.saved > 0 else 'neg' if report.saved < 0 else '' }}">{{ report.saved|money }}</span>
+          {% if report.total_in %}<span class="muted small">{{ '%.0f'|format(report.saved / report.total_in * 100)|replace('.', ',') }} % de ce qui est entré</span>{% endif %}</div>
+      </section>
+
+      <h2>{{ 'Où est parti l\'argent' if sens == 'sorties' else 'D\'où il vient' }}, par catégorie</h2>
+      <div class="split">
+        {% if donut %}<div class="donut-box">{{ donut|safe }}</div>{% endif %}
+        <ul class="bars ranking category-list">
+          {% for c in report.categories %}
+          <li>
+            <span class="bar-label"><a href="{{ category_links[c.id] }}">{{ c.label }}</a></span>
+            <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect class="fill s{{ [loop.index0, palette - 1]|min }}" width="{{ '%.2f'|format(c.total / report.categories[0].total * 100) }}" height="10" rx="2"/></svg>
+            <span class="bar-value">{{ c.total|money }} <small class="muted">{{ '%.0f'|format(c.share)|replace('.', ',') }} % · {{ c.count }} op.</small></span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      <p class="muted small">Clique sur une catégorie pour voir chez qui et quand. « Autres dépenses » regroupe ce que l'application n'a pas su classer : ouvre-la et choisis la catégorie de chaque bénéficiaire, ce sera retenu.</p>
+
+      {% if month_chart and not mois %}<h2>{{ 'Dépenses' if sens == 'sorties' else 'Revenus' }} par mois</h2>{{ month_chart|safe }}{% endif %}
+
+      <h2>{{ 'Plus gros bénéficiaires' if sens == 'sorties' else 'Plus grosses sources' }}</h2>
+      <ul class="bars ranking">
+        {% set top = report.top_merchants[0].total %}
+        {% for m in report.top_merchants %}
+        <li>
+          <span class="bar-label">{% if m.contact_id %}<a href="/contacts/{{ m.contact_id }}" class="sensitive">{{ m.label }}</a>{% else %}<span class="sensitive">{{ m.label }}</span>{% endif %}</span>
+          <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect class="fill {{ 'out' if sens == 'sorties' else 'in' }}" width="{{ '%.2f'|format(m.total / top * 100) }}" height="10" rx="2"/></svg>
+          <span class="bar-value">{{ m.total|money }} <small class="muted">{{ m.count }} op. · <a href="{{ category_links.get(m.category, '#') }}">{{ options|selectattr('id', 'equalto', m.category)|map(attribute='label')|first or '' }}</a></small></span>
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% else %}<p class="muted">Aucune opération {{ 'sortante' if sens == 'sorties' else 'entrante' }} sur cette période{% if not interne %} (les virements entre tes comptes ne comptent pas){% endif %}.</p>{% endif %}
   {% endif %}
 </section>
 
@@ -131,6 +213,7 @@
     <form method="get" action="/analytics" class="stack" data-autosubmit>
       <input type="hidden" name="vue" value="{{ vue }}"><input type="hidden" name="periode" value="{{ periode }}">
       <input type="hidden" name="par" value="{{ par }}">{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
+      {% if vue == 'depenses' %}{% if sens != 'sorties' %}<input type="hidden" name="sens" value="{{ sens }}">{% endif %}{% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}{% if mois %}<input type="hidden" name="mois" value="{{ mois }}">{% endif %}{% endif %}
       <div class="actions"><button type="button" class="btn small" data-check="all">Tout cocher</button><button type="button" class="btn small" data-check="none">Tout décocher</button></div>
       <div class="columns">
         {% for a in accounts %}<label class="check"><input type="checkbox" name="c" value="{{ a.id }}" {% if a.id in selected %}checked{% endif %}> {{ a.name }} <span class="muted small">{{ a.institution or '' }}</span></label>{% endfor %}

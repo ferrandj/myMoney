@@ -4,16 +4,25 @@
 {%- endmacro %}
 {# Inline form to name an unknown counterparty: remembered by IBAN and by the name as the bank prints it. #}
 {% macro identify_form(g, next) %}
+{% set known = contact_choices() %}
 <form method="post" action="/contacts/identify" class="inline-identify">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="next" value="{{ next }}">
   <input type="hidden" name="iban" value="{{ g.iban or '' }}">
   <input type="hidden" name="printed_name" value="{{ g.name or '' }}">
-  <input name="name" placeholder="Qui est-ce ?" value="" required aria-label="Nom du contact">
-  <input name="phone" placeholder="Téléphone (facultatif)" inputmode="tel" aria-label="Téléphone">
-  <select name="kind" aria-label="Type">
-    {% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+  {% if known %}
+  <select name="contact_id" aria-label="Contact déjà enregistré" data-inline-contact>
+    <option value="">Nouveau contact…</option>
+    {% for id, name in known %}<option value="{{ id }}">{{ name }}</option>{% endfor %}
   </select>
+  {% endif %}
+  <span class="new-contact-fields">
+    <input name="name" placeholder="Qui est-ce ?" value="" aria-label="Nom du contact" {% if not known %}required{% endif %}>
+    <input name="phone" placeholder="Téléphone (facultatif)" inputmode="tel" aria-label="Téléphone">
+    <select name="kind" aria-label="Type">
+      {% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+    </select>
+  </span>
   <button class="btn small primary">Retenir</button>
 </form>
 {% endmacro %}

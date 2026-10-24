@@ -231,7 +231,8 @@ def test_removing_a_user_hands_their_accounts_to_the_administrator(core):
         alice, bob = s.scalar(select(User).where(User.email == ADMIN_EMAIL)), s.scalar(select(User).where(User.email == BOB))
         assert user_service.remove(s, core.vault, bob, alice) == 1
     with core.db.session() as s:
-        assert s.get(Account, a).owner_id == alice.id and s.get(Account, a).shares == [] or True
+        carol = s.scalar(select(User).where(User.email == CAROL))
+        assert s.get(Account, a).owner_id == alice.id and [sh.user_id for sh in s.get(Account, a).shares] == [carol.id]  # Carol keeps her share
         assert s.scalar(select(User).where(User.email == BOB)) is None
     with pytest.raises(InvalidPassword):
         core._failed_logins, core._next_login_at = 0, 0.0

@@ -168,6 +168,33 @@ def flow_chart(flows: list[MonthFlow], label: str = "Entrées et sorties par moi
     return _frame("".join(out), label)
 
 
+def month_bars(points: list[tuple[date, Decimal]], label: str = "Par mois", css: str = "neg") -> str:
+    """One bar per month (spending, or income), with the month and the amount in a tooltip."""
+    if not points or not any(v for _, v in points):
+        return ""
+    ticks = _nice_ticks(0, max(float(v) for _, v in points) or 1)
+    high = ticks[-1]
+
+    def y(value: float) -> float:
+        return TOP + (high - value) / high * (H - TOP - BOTTOM)
+
+    group = (W - LEFT - RIGHT) / len(points)
+    width = min(34, group * 0.7)
+    out = [_grid(ticks, y)]
+    hovers = []
+    for i, (month, value) in enumerate(points):
+        centre = LEFT + group * (i + 0.5)
+        top = y(float(value))
+        out.append(f'<rect class="bar-{css}" x="{centre - width / 2:.1f}" y="{top:.1f}" width="{width:.1f}" height="{max((H - BOTTOM) - top, 0):.1f}"/>')
+        hovers.append(
+            f'<rect class="hit" x="{centre - group / 2:.1f}" y="{TOP}" width="{group:.1f}" height="{H - TOP - BOTTOM}"/>'
+            f'<g class="pop">{_tip(centre, month.strftime("%m/%Y"), [(euro(value), None)])}</g>'
+        )
+        if len(points) <= 14 or i % math.ceil(len(points) / 12) == 0:
+            out.append(f'<text class="axis" x="{centre:.1f}" y="{H - 8}" text-anchor="middle">{month.strftime("%m/%y")}</text>')
+    return _frame("".join(out) + "".join(hovers), label)
+
+
 def donut(items: list[tuple[str, str, Decimal]], label: str = "Répartition") -> str:
     """Ring chart: one arc per item, in the order given (the same order gives the same colours as the legend)."""
     total = sum((float(v) for _, _, v in items), 0.0)

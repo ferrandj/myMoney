@@ -263,3 +263,18 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .user-table td form { display: inline; margin: 0; }
 /* The bar got busier (tools, name): below this width the menu takes a row of its own instead of being cut off. */
 @media (max-width: 1150px) { .topbar nav { order: 3; flex: 1 1 100%; } }
+.new-contact-fields { display: contents; }
+.new-contact-fields[hidden] { display: none; }
+
+/* Documents tree */
+.doc-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.doc-bank { border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; padding: 4px 10px; }
+.doc-bank > summary { padding: 8px 0; font-size: 1.05rem; }
+.doc-kind { margin: 4px 0 6px 12px; border-left: 3px solid var(--border); padding-left: 10px; }
+.doc-kind > summary { padding: 4px 0; display: flex; align-items: center; gap: 8px; }
+.doc-all { margin-left: auto; font-size: .8rem; color: var(--muted); }
+.doc-table th.doc-year, .doc-table .doc-year th { text-align: left; font-size: .8rem; color: var(--muted); padding-top: 10px; }
+.doc-check { width: 1%; }
+.doc-check input { width: 18px; height: 18px; }
+.fill.s0 { fill: var(--s0); } .fill.s1 { fill: var(--s1); } .fill.s2 { fill: var(--s2); } .fill.s3 { fill: var(--s3); }
+.fill.s4 { fill: var(--s4); } .fill.s5 { fill: var(--s5); } .fill.s6 { fill: var(--s6); } .fill.s7 { fill: var(--s7); }

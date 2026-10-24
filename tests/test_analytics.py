@@ -201,7 +201,7 @@ def test_web_views_filters_and_totals(client):
     assert with_internal.status_code == 200 and "checked" in with_internal.text
 
     depenses = client.get("/analytics?vue=depenses&periode=tout")
-    assert depenses.status_code == 200 and "Dépenses par type" in depenses.text and "Prélèvements" in depenses.text and "Cartes" in depenses.text
+    assert depenses.status_code == 200 and "par catégorie" in depenses.text and "Courses" in depenses.text and "Impôts et taxes" in depenses.text
 
     # Nonsense parameters fall back to defaults instead of failing.
     weird = client.get("/analytics?vue=nope&periode=zzz&par=zzz&c=999")
