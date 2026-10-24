@@ -9,7 +9,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -26,6 +26,7 @@ from .services.prices import PriceService
 from .services.valuation import AccountValue, Valuator
 
 log = logging.getLogger(__name__)
+QUARANTINE_HOURS = 24  # how long a duplicate set aside waits for the user's decision
 
 
 @dataclass
@@ -305,12 +306,92 @@ class MyMoney:
             path = self.settings.documents_dir / doc.blob_name
             s.execute(Transaction.__table__.update().where(Transaction.document_id == doc_id).values(document_id=None))
             s.delete(doc)
+        self._wipe(path)
+
+    @staticmethod
+    def _wipe(path) -> None:
         if path.exists():
             # Overwrite before unlinking (best effort: SSDs and copy-on-write filesystems may keep old blocks).
             size = path.stat().st_size
             with open(path, "r+b") as fh:
                 fh.write(os.urandom(size))
             path.unlink()
+
+    # ------------------------------------------------------------- duplicate files
+    def check_duplicate(self, doc_id: int) -> str | None:
+        """Does this file repeat one already imported (same account, same period)? Returns "identical" when it changes
+        nothing (the file is set aside), "differs" when it has extra or missing lines or other balances, None otherwise."""
+        with self.db.session() as s:
+            doc = s.get(Document, doc_id)
+            result = doc.parse_result or {}
+            if doc.status != "parsed" or len(result.get("statements", [])) != 1:
+                return None
+            st = ParsedStatement.from_json(result["statements"][0])
+            found = statement_service.find_accounts(s, st)
+            if len(found) != 1:
+                return None
+            dedup = statement_service.plan_import(s, st, found[0]).dedup
+            if dedup is None:
+                return None
+            doc.duplicate_of = dedup.document.id if dedup.document else None
+            if dedup.identical:
+                doc.status = "duplicate"
+                return "identical"
+            return "differs"
+
+    def keep_duplicate(self, doc_id: int) -> None:
+        """Keep a duplicate that was set aside, as a copy next to the original (nothing is imported from it)."""
+        with self.db.session() as s:
+            doc = s.get(Document, doc_id)
+            if doc is not None and doc.status in ("duplicate", "parsed"):
+                doc.status = "copy"
+
+    def purge_quarantine(self) -> int:
+        """Delete the duplicates that were set aside and not kept within a day."""
+        limit = utcnow() - timedelta(hours=QUARANTINE_HOURS)
+        with self.db.session() as s:
+            old = list(s.scalars(select(Document.id).where(Document.status == "duplicate", Document.uploaded_at < limit)))
+        for doc_id in old:
+            self.delete_document(doc_id)
+        return len(old)
+
+    def import_default(self, doc_id: int, index: int, force: bool = False) -> dict:
+        """The one-click import (matching account, new lines, balance if newer), even if the period was imported before."""
+        with self.db.session() as s:
+            doc = s.get(Document, doc_id)
+            st = ParsedStatement.from_json(doc.parse_result["statements"][index])
+            found = statement_service.find_accounts(s, st)
+            if len(found) != 1:
+                raise ValueError("Compte introuvable ou ambigu : choisis-le dans le formulaire d'import")
+            form = statement_service.default_import_form(statement_service.plan_import(s, st, found[0]))
+            return statement_service.import_statement(s, doc, st, {**form, "force": "on" if force else ""})
+
+    def replace_document(self, doc_id: int, index: int) -> dict:
+        """Replace the file already imported for this period by this one: the old file and what it brought are removed,
+        this one is imported in full."""
+        with self.db.session() as s:
+            doc = s.get(Document, doc_id)
+            st = ParsedStatement.from_json(doc.parse_result["statements"][index])
+            found = statement_service.find_accounts(s, st)
+            if len(found) != 1:
+                raise ValueError("Compte introuvable ou ambigu")
+            dedup = statement_service.plan_import(s, st, found[0]).dedup
+            if dedup is None:
+                raise ValueError("Ce relevé ne remplace rien : aucune période identique n'a été importée")
+            if dedup.document is None:
+                raise ValueError("L'ancien fichier n'existe plus : impossible de le remplacer (garde les deux)")
+            old = dedup.document
+            old_name, old_path = old.filename, self.settings.documents_dir / old.blob_name
+            removed = statement_service.undo_import(s, old)
+            s.delete(old)
+            s.flush()
+            form = statement_service.default_import_form(statement_service.plan_import(s, st, found[0]))
+            result = statement_service.import_statement(s, doc, st, form)
+            doc.duplicate_of = None
+            doc.parse_result = {**doc.parse_result, "replaced": {"filename": old_name, "removed": removed}}
+            result["replaced"], result["removed"] = old_name, removed
+        self._wipe(old_path)
+        return result
 
     def review_document(self, doc_id: int) -> dict | None:
         """Everything the review page shows: what was understood, and what importing it would do."""

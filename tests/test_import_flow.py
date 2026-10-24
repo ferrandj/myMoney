@@ -1,7 +1,7 @@
 """The drop-a-document flow end to end, on synthetic statements only (see fixtures.py)."""
 
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from mymoney.adapters import Adapter, Detection, SourceDocument, identify
 from mymoney.core import MyMoney
-from mymoney.models import Account, Counterparty, Document, Statement, Transaction
+from mymoney.models import Account, Counterparty, Document, Statement, Transaction, utcnow
 from mymoney.services import counterparties
 from mymoney.web.app import create_app
 
@@ -420,7 +420,7 @@ def test_web_same_file_twice_and_download(client):
     first = upload(client, csrf, data)
     doc_id = int(re.search(r"/documents/(\d+)/import/0", first.text).group(1))
     second = upload(client, csrf, data, "autre-nom.pdf")
-    assert "déjà été déposé" in second.text and f"/documents/{doc_id}/import/0" in second.text
+    assert "strictement identique" in second.text and f"/documents/{doc_id}/import/0" in second.text
     download = client.get(f"/documents/{doc_id}/download")
     assert download.content == data and "attachment" in download.headers["content-disposition"]
 
@@ -598,3 +598,188 @@ def test_web_review_asks_for_the_full_names_of_a_joint_account(client):
     assert 'name="holder_name"' in page.text and "Compte joint BoursoBank" in page.text
     sole = upload(client, csrf, boursobank_statement_pdf(Spec(sample_entries()[:3], account="00099999999")))
     assert 'name="holder_name"' not in sole.text  # a name that is not cut is not asked
+
+
+# ---------------------------------------------------------------------------------- duplicate files
+def blobs(settings) -> list:
+    return sorted(settings.documents_dir.iterdir())
+
+
+def with_extra_line(**kw) -> Spec:
+    return Spec(sample_entries() + [Entry(date(2026, 9, 20), ["CARTE 18/09/26 LIBRAIRIE DU COIN CB*1234"], D("-12.50"))], **kw)
+
+
+def test_a_file_with_no_difference_is_set_aside_and_can_be_kept_or_dropped(core, settings):
+    doc1, _ = first_import(core)
+    doc2, existing, status = drop(core, september(title="downloaded again"))
+    assert (existing, status) == (False, "parsed")  # another file (another hash), the same statement
+    assert core.check_duplicate(doc2) == "identical"
+    with core.db.session() as s:
+        d = s.get(Document, doc2)
+        assert d.status == "duplicate" and d.duplicate_of == doc1
+    assert core.auto_import(doc2) is None
+    assert len(transactions(core)) == len(sample_entries())
+
+    core.keep_duplicate(doc2)  # "keep it anyway": a copy next to the original, nothing imported
+    with core.db.session() as s:
+        assert s.get(Document, doc2).status == "copy"
+    assert len(transactions(core)) == len(sample_entries())
+
+    doc3, _, _ = drop(core, september(title="and again"))
+    assert core.check_duplicate(doc3) == "identical"
+    before = len(blobs(settings))
+    core.delete_document(doc3)  # dropped
+    with core.db.session() as s:
+        assert s.get(Document, doc3) is None
+    assert len(blobs(settings)) == before - 1
+
+
+def test_duplicates_set_aside_are_deleted_after_a_day_unless_kept(core, settings):
+    first_import(core)
+    old, _, _ = drop(core, september(title="old"))
+    recent, _, _ = drop(core, september(title="recent"))
+    kept, _, _ = drop(core, september(title="kept"))
+    for doc_id in (old, recent, kept):
+        assert core.check_duplicate(doc_id) == "identical"
+    core.keep_duplicate(kept)
+    with core.db.session() as s:
+        for doc_id in (old, kept):
+            s.get(Document, doc_id).uploaded_at = utcnow() - timedelta(hours=25)
+    files = len(blobs(settings))
+    assert core.purge_quarantine() == 1  # only the old one that nobody kept
+    with core.db.session() as s:
+        assert s.get(Document, old) is None and s.get(Document, recent).status == "duplicate" and s.get(Document, kept).status == "copy"
+    assert len(blobs(settings)) == files - 1
+
+
+def test_a_file_with_extra_lines_is_reported_and_can_be_stored_with_the_old_one(core):
+    first, account_id = first_import(core)
+    n = len(sample_entries())
+    new_spec = with_extra_line()
+    doc2, _, _ = drop(core, new_spec)
+    assert core.check_duplicate(doc2) == "differs"
+    [plan] = core.review_document(doc2)["plans"]
+    dd = plan.dedup
+    assert dd.document.id == first and dd.can_replace and not dd.identical
+    assert [t.label for t in dd.extra] == ["LIBRAIRIE DU COIN"] and dd.new_count == 1 and dd.probable_count == 0
+    assert dd.missing == [] and dd.opening is None and dd.closing == (september().closing, new_spec.closing)
+    assert core.auto_import(doc2) is None
+    with core.db.session() as s:
+        assert s.get(Document, doc2).status == "parsed" and s.get(Document, doc2).duplicate_of == first  # kept for the user's decision
+
+    result = core.import_default(doc2, 0, force=True)  # "store with the old one": both files stay, only the new line is imported
+    assert (result["added"], result["skipped_exact"]) == (1, n)
+    with core.db.session() as s:
+        assert s.get(Document, first) is not None and s.get(Document, doc2) is not None
+        assert len(s.scalars(select(Statement)).all()) == 1  # still one statement for the period
+        assert s.get(Account, account_id).balance == new_spec.closing
+    assert len(transactions(core)) == n + 1
+
+
+def test_replacing_the_old_file_swaps_it_and_what_it_brought(core, settings):
+    first, account_id = first_import(core)
+    n = len(sample_entries())
+    new_spec = with_extra_line()
+    doc2, _, _ = drop(core, new_spec)
+    core.check_duplicate(doc2)
+    files = len(blobs(settings))
+    result = core.replace_document(doc2, 0)
+    assert (result["replaced"], result["removed"], result["added"]) == ("releve.pdf", n, n + 1)
+    with core.db.session() as s:
+        assert s.get(Document, first) is None  # the old file is gone...
+        assert s.get(Document, doc2).status == "imported" and s.get(Document, doc2).duplicate_of is None
+        assert [st.document_id for st in s.scalars(select(Statement))] == [doc2]  # ...and so is its statement record
+        assert s.get(Account, account_id).balance == new_spec.closing
+    assert len(blobs(settings)) == files - 1
+    assert len(transactions(core)) == n + 1 and all(t.document_id == doc2 for t in transactions(core))
+
+
+def test_a_corrected_file_that_lost_a_line_shows_it_as_missing_and_replacing_drops_it(core):
+    first_import(core)
+    n = len(sample_entries())
+    corrected = Spec(sample_entries()[:-1])  # the bank removed the last line
+    doc2, _, _ = drop(core, corrected)
+    assert core.check_duplicate(doc2) == "differs"
+    [plan] = core.review_document(doc2)["plans"]
+    assert [t.label for t in plan.dedup.missing] == ["CARREFOUR CITY"] and plan.dedup.extra == []
+    core.replace_document(doc2, 0)
+    assert len(transactions(core)) == n - 1 and not any(t.label == "CARREFOUR CITY" for t in transactions(core))
+
+
+def test_nothing_to_replace_when_the_old_file_was_deleted_but_both_can_still_be_kept(core):
+    first, _ = first_import(core)
+    core.delete_document(first)  # the statement record stays, its file does not
+    doc2, _, _ = drop(core, with_extra_line())
+    assert core.check_duplicate(doc2) == "differs"
+    [plan] = core.review_document(doc2)["plans"]
+    assert plan.dedup.document is None and not plan.dedup.can_replace
+    with pytest.raises(ValueError, match="n'existe plus"):
+        core.replace_document(doc2, 0)
+    assert core.import_default(doc2, 0, force=True)["added"] == 1
+
+
+def test_a_new_period_or_another_account_is_not_a_duplicate(core):
+    spec = september()
+    first_import(core, spec)
+    nxt, _, _ = drop(core, october(spec))
+    assert core.check_duplicate(nxt) is None
+    other_account = Spec(sample_entries(), bank=BANK, branch="80999", account="00077777777")
+    doc, _, _ = drop(core, other_account)
+    assert core.check_duplicate(doc) is None  # same period but another account: nothing to compare with
+
+
+def test_web_identical_download_is_set_aside_and_listed(client):
+    csrf = login(client)
+    spec = september()
+    page = upload(client, csrf, boursobank_statement_pdf(spec))
+    doc_id = int(re.search(r"/documents/(\d+)/import/0", page.text).group(1))
+    client.post(f"/documents/{doc_id}/import/0", data={"csrf": csrf, "account_id": "new", "name": "CC", "import_transactions": "on"})
+
+    again = upload(client, csrf, boursobank_statement_pdf(september(title="second download")), "copie.pdf")
+    assert "Doublon : aucune différence" in again.text and "Le garder quand même" in again.text and "Valider l'import" not in again.text
+    dup_id = int(re.search(r"/documents/(\d+)/keep", again.text).group(1))
+    listing = client.get("/documents")
+    assert "Doublons écartés" in listing.text and "copie.pdf" in listing.text
+    assert listing.text.count("copie.pdf") == 1  # shown in the set-aside section, not in the library table
+
+    kept = client.post(f"/documents/{dup_id}/keep", data={"csrf": csrf})
+    assert "Copie conservée" in kept.text
+    assert "Doublons écartés" not in client.get("/documents").text
+    third = upload(client, csrf, boursobank_statement_pdf(september(title="third download")), "troisieme.pdf")
+    dropped = client.post(f"/documents/{re.search(r'/documents/(\d+)/keep', third.text).group(1)}/delete", data={"csrf": csrf})
+    assert "troisieme.pdf" not in dropped.text
+
+
+def test_web_file_with_differences_offers_replace_keep_or_discard(client):
+    csrf = login(client)
+    page = upload(client, csrf, boursobank_statement_pdf(september()))
+    doc_id = int(re.search(r"/documents/(\d+)/import/0", page.text).group(1))
+    client.post(f"/documents/{doc_id}/import/0", data={"csrf": csrf, "account_id": "new", "name": "CC", "import_transactions": "on"})
+
+    diff = upload(client, csrf, boursobank_statement_pdf(with_extra_line()))
+    for expected in ("diffère", "1 opération(s) en plus", "LIBRAIRIE DU COIN", "Remplacer l'ancien", "Stocker avec l'ancien", "Écarter ce fichier", "Solde final"):
+        assert expected in diff.text, expected
+    new_id = int(re.search(r"/documents/(\d+)/dedup/0", diff.text).group(1))
+
+    replaced = client.post(f"/documents/{new_id}/dedup/0", data={"csrf": csrf, "action": "replace"})
+    assert "remplacé" in replaced.text and "LIBRAIRIE DU COIN" in replaced.text
+    names = client.get("/documents").text
+    assert names.count("releve.pdf") == 1  # one file left: the new one took the old one's place
+
+    # Discarding a differing file leaves the old one untouched.
+    other = upload(client, csrf, boursobank_statement_pdf(Spec(sample_entries()[:-1])))
+    discard_id = int(re.search(r"/documents/(\d+)/dedup/0", other.text).group(1))
+    out = client.post(f"/documents/{discard_id}/dedup/0", data={"csrf": csrf, "action": "discard"})
+    assert "Nouveau fichier écarté" in out.text and "LIBRAIRIE DU COIN" in client.get(f"/accounts/{re.search(r'/accounts/(\d+)', str(replaced.url)).group(1)}").text
+
+
+def test_web_upload_summary_counts_duplicates(client):
+    csrf = login(client)
+    page = upload(client, csrf, boursobank_statement_pdf(september()))
+    doc_id = int(re.search(r"/documents/(\d+)/import/0", page.text).group(1))
+    client.post(f"/documents/{doc_id}/import/0", data={"csrf": csrf, "account_id": "new", "name": "CC", "import_transactions": "on"})
+    r = client.post("/documents", data={"csrf": csrf}, files=[
+        ("files", ("a.pdf", boursobank_statement_pdf(september(title="a")), "application/pdf")),
+        ("files", ("b.pdf", boursobank_statement_pdf(with_extra_line(title="b")), "application/pdf")),
+    ])
+    assert "1 doublon(s) sans différence écarté(s)" in r.text and "1 déjà importé(s) mais différent(s)" in r.text

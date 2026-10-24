@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from ..adapters import ADAPTERS, catalog, get_adapter
 from ..config import Settings, settings as default_settings
-from ..core import MyMoney
+from ..core import QUARANTINE_HOURS, MyMoney
 from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, Transaction
 from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
@@ -42,7 +42,10 @@ ANALYTICS_GROUPS = {
     "evolution": {"total": "Total", "compte": "Par compte", "categorie": "Par catégorie"},
     "repartition": {"categorie": "Par catégorie", "compte": "Par compte"},
 }
-DOCUMENT_STATUS = {"uploaded": "stocké", "needs_choice": "à préciser", "parsed": "à valider", "imported": "importé", "failed": "non reconnu"}
+DOCUMENT_STATUS = {
+    "uploaded": "stocké", "needs_choice": "à préciser", "parsed": "à valider", "imported": "importé", "failed": "non reconnu",
+    "duplicate": "doublon écarté", "copy": "copie",
+}
 
 
 # ----------------------------------------------------------------- formatting
@@ -108,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
         DOCUMENT_STATUS=DOCUMENT_STATUS,
     )
+    templates.env.globals.update(QUARANTINE_HOURS=QUARANTINE_HOURS)
     templates.env.filters.update(pct=lambda v: "—" if v is None else f"{Decimal(v):+.1f} %".replace(".", ","))
 
     @asynccontextmanager
@@ -400,9 +404,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # -------------------------------------------------------- documents
     @app.get("/documents")
     async def documents_page(request: Request):
+        await run_in_threadpool(core.purge_quarantine)
         with core.db.session() as s:
-            documents = list(s.scalars(select(Document).order_by(Document.uploaded_at.desc())))
-        return render(request, "documents.html", documents=documents, max_mb=settings.max_upload_mb, catalog=catalog())
+            everything = list(s.scalars(select(Document).order_by(Document.uploaded_at.desc())))
+            names = {d.id: d.filename for d in everything}
+        documents = [d for d in everything if d.status != "duplicate"]
+        aside = [(d, names.get(d.duplicate_of)) for d in everything if d.status == "duplicate"]
+        return render(request, "documents.html", documents=documents, aside=aside, max_mb=settings.max_upload_mb, catalog=catalog())
 
     @app.post("/documents")
     async def documents_upload(request: Request):
@@ -411,7 +419,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = form.get("csrf")
         if not session or not isinstance(token, str) or not hmac.compare_digest(token, session.csrf):
             raise HTTPException(403, "Jeton CSRF invalide")
-        outcomes: list[tuple[int, str, dict | None]] = []  # (document id, "existing" | "imported" | status, import result)
+        await run_in_threadpool(core.purge_quarantine)
+        outcomes: list[tuple[int, str, dict | None]] = []  # (document id, "existing" | "duplicate" | "differs" | "imported" | status, result)
         for upload in form.getlist("files"):
             if not hasattr(upload, "read"):
                 continue
@@ -423,24 +432,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 outcomes.append((doc_id, "existing", None))
                 continue
             status = await run_in_threadpool(core.analyze_document, doc_id, None, data)
-            imported = await run_in_threadpool(core.auto_import, doc_id) if status == "parsed" else None
-            outcomes.append((doc_id, "imported" if imported else status, imported))
+            verdict = await run_in_threadpool(core.check_duplicate, doc_id) if status == "parsed" else None
+            imported = await run_in_threadpool(core.auto_import, doc_id) if status == "parsed" and verdict is None else None
+            state = "duplicate" if verdict == "identical" else "differs" if verdict else "imported" if imported else status
+            outcomes.append((doc_id, state, imported))
         if not outcomes:
             return redirect("/documents", "Aucun fichier reçu")
         if len(outcomes) == 1:
             doc_id, state, imported = outcomes[0]
             if state == "existing":
-                return redirect(f"/documents/{doc_id}", "Ce fichier a déjà été déposé : il n'est pas ajouté une seconde fois")
+                return redirect(f"/documents/{doc_id}", "Ce fichier est strictement identique à un document déjà déposé : rien n'est ajouté")
+            if state == "duplicate":
+                return redirect(f"/documents/{doc_id}", "Doublon : aucune différence avec le fichier déjà importé")
+            if state == "differs":
+                return redirect(f"/documents/{doc_id}", "Ce relevé existe déjà mais le fichier diffère : choisis quoi en faire")
             if imported:
                 return redirect(f"/accounts/{imported['account_id']}", import_message(imported, auto=True))
             return redirect(f"/documents/{doc_id}")
-        counts = {k: sum(1 for _, state, _ in outcomes if state == k) for k in ("imported", "existing")}
-        review = len(outcomes) - counts["imported"] - counts["existing"]
+        counts = {k: sum(1 for _, state, _ in outcomes if state == k) for k in ("imported", "existing", "duplicate", "differs")}
+        review = len(outcomes) - sum(counts.values())
         parts = [f"{len(outcomes)} fichier(s)", f"{counts['imported']} importé(s) automatiquement"]
         if review:
             parts.append(f"{review} à vérifier")
+        if counts["duplicate"]:
+            parts.append(f"{counts['duplicate']} doublon(s) sans différence écarté(s)")
+        if counts["differs"]:
+            parts.append(f"{counts['differs']} déjà importé(s) mais différent(s) : à trancher")
         if counts["existing"]:
-            parts.append(f"{counts['existing']} déjà présent(s)")
+            parts.append(f"{counts['existing']} strictement identique(s) à un fichier déjà déposé")
         return redirect("/documents", " · ".join(parts))
 
     def import_message(result: dict, auto: bool = False) -> str:
@@ -466,9 +485,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 continue
         with core.db.session() as s:
             to_identify = contact_service.unresolved(s, document_id=doc_id) if doc.status == "imported" else []
+            original = s.get(Document, doc.duplicate_of) if doc.duplicate_of else None
         return render(
             request, "document.html", doc=doc, result=result, plans=review["plans"], accounts=review["accounts"],
-            candidates=candidates, adapters=ADAPTERS, to_identify=to_identify,
+            candidates=candidates, adapters=ADAPTERS, to_identify=to_identify, original=original,
         )
 
     @app.post("/documents/{doc_id}/analyze")
@@ -478,7 +498,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             if adapter_id:
                 get_adapter(adapter_id)
-            await run_in_threadpool(core.analyze_document, doc_id, adapter_id)
+            if await run_in_threadpool(core.analyze_document, doc_id, adapter_id) == "parsed":
+                await run_in_threadpool(core.check_duplicate, doc_id)
         except Exception as exc:
             return redirect(f"/documents/{doc_id}", f"Analyse impossible : {exc}")
         return redirect(f"/documents/{doc_id}")
@@ -491,6 +512,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:
             return redirect(f"/documents/{doc_id}", f"Import impossible : {exc}")
         return redirect(f"/accounts/{result['account_id']}", import_message(result))
+
+    @app.post("/documents/{doc_id}/dedup/{index}")
+    async def document_dedup(request: Request, doc_id: int, index: int):
+        """What to do with a file for a period that was already imported and that differs from what is stored."""
+        form = await verified_form(request)
+        action = form.get("action")
+        try:
+            if action == "replace":
+                result = await run_in_threadpool(core.replace_document, doc_id, index)
+                return redirect(
+                    f"/accounts/{result['account_id']}",
+                    f"« {result['replaced']} » remplacé : {result['removed']} opération(s) retirée(s), {result['added']} ajoutée(s) depuis le nouveau fichier",
+                )
+            if action == "keep":
+                result = await run_in_threadpool(core.import_default, doc_id, index, True)
+                return redirect(f"/accounts/{result['account_id']}", "Les deux fichiers sont gardés. " + import_message(result))
+            if action == "copy":
+                await run_in_threadpool(core.keep_duplicate, doc_id)
+                return redirect(f"/documents/{doc_id}", "Copie conservée à côté de l'original (rien n'est importé)")
+            if action == "discard":
+                await run_in_threadpool(core.delete_document, doc_id)
+                return redirect("/documents", "Nouveau fichier écarté : l'ancien reste en place")
+        except Exception as exc:
+            return redirect(f"/documents/{doc_id}", f"Impossible : {exc}")
+        return redirect(f"/documents/{doc_id}", "Action inconnue")
+
+    @app.post("/documents/{doc_id}/keep")
+    async def document_keep(request: Request, doc_id: int):
+        await verified_form(request)
+        await run_in_threadpool(core.keep_duplicate, doc_id)
+        return redirect(f"/documents/{doc_id}", "Copie conservée à côté de l'original (rien n'est importé)")
 
     @app.post("/documents/{doc_id}/undo")
     async def document_undo(request: Request, doc_id: int):
