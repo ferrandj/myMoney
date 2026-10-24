@@ -145,9 +145,10 @@ def test_charts_are_plain_svg_with_tooltips():
     svg = charts.line_chart(series)
     assert svg.startswith("<svg") and "<polyline" in svg and "<polygon" in svg and "Compte &lt;A&gt;" in svg and "<script" not in svg
     assert 'class="line s0"' in svg and "style=" not in svg  # colours come from classes: the CSP forbids inline styles
+    assert 'class="pop"' in svg and "01/09/2026" in svg and "<title" not in svg  # an instant tooltip, not the delayed native one
     assert charts.line_chart([]) == "" and charts.line_chart([analytics.Series("a", "A", [(date(2026, 9, 1), D(1))])]) == ""
     flows = [analytics.MonthFlow(date(2026, 8, 1), D(100), D(40)), analytics.MonthFlow(date(2026, 9, 1), D(0), D(0))]
-    assert charts.flow_chart(flows).count("<rect") == 4 and charts.flow_chart([]) == ""
+    assert charts.flow_chart(flows).count("bar-") == 4 and charts.flow_chart([]) == ""
     ring = charts.donut([("a", "Épargne", D(300)), ("b", "Liquidités", D(100))])
     assert "75.000 25.000" in ring and "Épargne" in ring and charts.donut([]) == ""
     assert charts.euro(D("-1234.5"), 2) == "−1 234,50 €"

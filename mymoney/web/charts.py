@@ -1,7 +1,8 @@
 """Charts as server-side SVG: no JavaScript library, nothing leaves the NAS.
 
 Colours come from the CSS classes s0..s7 (the page's Content-Security-Policy forbids inline styles); hovering a point
-shows its values through the native SVG <title> tooltip.
+shows a tooltip right away (date and amounts): it is part of the SVG and shown by a CSS :hover rule, since the native <title>
+tooltip appears after a long delay and a script is not allowed.
 """
 
 from __future__ import annotations
@@ -60,6 +61,29 @@ def _grid(ticks: list[float], y) -> str:
     )
 
 
+CHAR_W, LINE_H, PAD = 6.6, 16, 9
+
+
+def _tip(cx: float, head: str, rows: list[tuple[str, str | None]]) -> str:
+    """The tooltip box: a header line (the date) then one line per value, with the colour of its series when it has one.
+    It sits on the right of the pointer, or on its left near the right edge. Hidden until its group is hovered."""
+    chars = max([len(head)] + [len(text) + (2 if css else 0) for text, css in rows])
+    width = chars * CHAR_W + 2 * PAD
+    height = (len(rows) + 1) * LINE_H + PAD
+    left = cx + 14 if cx + 14 + width <= W - 4 else max(cx - 14 - width, 4)
+    top = TOP + 6
+    out = [f'<rect class="tip-box" x="{left:.1f}" y="{top}" width="{width:.1f}" height="{height:.1f}" rx="6"/>']
+    out.append(f'<text class="tip-head" x="{left + PAD:.1f}" y="{top + PAD + 6:.1f}">{escape(head)}</text>')
+    for i, (text, css) in enumerate(rows, 1):
+        y = top + PAD + 6 + i * LINE_H
+        shift = 0
+        if css:
+            out.append(f'<circle class="dot {css}" cx="{left + PAD + 4:.1f}" cy="{y - 4:.1f}" r="4"/>')
+            shift = 14
+        out.append(f'<text class="tip-row" x="{left + PAD + shift:.1f}" y="{y:.1f}">{escape(text)}</text>')
+    return "".join(out)
+
+
 def line_chart(series: list[Series], label: str = "Évolution") -> str:
     """One line per series over a shared time axis, with a hover band per date."""
     points = [p for s in series for p in s.points]
@@ -94,17 +118,21 @@ def line_chart(series: list[Series], label: str = "Évolution") -> str:
             out.append(f'<polygon class="area {css}" points="{area}"/>')
         if len(s.points) == 1:  # an account known on a single day: a dot, since there is no line to draw
             d, v = s.points[0]
-            out.append(f'<circle class="dot {css}" cx="{x(d):.1f}" cy="{y(float(v)):.1f}" r="4"><title>{escape(s.label)} : {euro(v)}</title></circle>')
+            out.append(f'<circle class="dot {css}" cx="{x(d):.1f}" cy="{y(float(v)):.1f}" r="4"/>')
         else:
             out.append(f'<polyline class="line {css}" points="{coords}"/>')
-    # Hover: one band per date, whose tooltip lists the value of every line that day.
+    # Hover: one band per date; it shows a guide, a dot on every line and a box with the date and each value.
     lookup = [{d: v for d, v in s.points} for s in series]
     step = (W - LEFT - RIGHT) / max(len(days) - 1, 1)
     for d in days:
-        rows = [f"{s.label} : {euro(look[d])}" for s, look in zip(series, lookup) if d in look]
+        shown = [(i, s, look[d]) for i, (s, look) in enumerate(zip(series, lookup)) if d in look]
+        rows = [(f"{s.label} : {euro(v)}", f"s{i % PALETTE_SIZE}") for i, s, v in shown]
+        if len(shown) > 1:
+            rows.append((f"Total : {euro(sum((v for _, _, v in shown), Decimal(0)))}", None))
+        marks = "".join(f'<circle class="dot s{i % PALETTE_SIZE}" cx="{x(d):.1f}" cy="{y(float(v)):.1f}" r="4"/>' for i, _, v in shown)
         out.append(
-            f'<rect class="hit" x="{x(d) - step / 2:.1f}" y="{TOP}" width="{step:.1f}" height="{H - TOP - BOTTOM}">'
-            f"<title>{escape(_fr(d))}\n{escape(chr(10).join(rows))}</title></rect>"
+            f'<rect class="hit" x="{x(d) - step / 2:.1f}" y="{TOP}" width="{step:.1f}" height="{H - TOP - BOTTOM}"/>'
+            f'<g class="pop"><line class="guide" x1="{x(d):.1f}" x2="{x(d):.1f}" y1="{TOP}" y2="{H - BOTTOM}"/>{marks}{_tip(x(d), _fr(d), rows)}</g>'
         )
     return _frame("".join(out), label)
 
@@ -123,17 +151,20 @@ def flow_chart(flows: list[MonthFlow], label: str = "Entrées et sorties par moi
     group = (W - LEFT - RIGHT) / len(flows)
     width = min(26, group / 2.6)
     out = [_grid(ticks, y)]
+    hovers = []  # drawn after every bar, so a tooltip is never hidden behind the next month's bars
     for i, f in enumerate(flows):
         centre = LEFT + group * (i + 0.5)
-        tip = f"{f.month.strftime('%m/%Y')}\nEntrées : {euro(f.income)}\nSorties : {euro(f.expense)}\nSolde : {euro(f.net)}"
+        rows = [(f"Entrées : {euro(f.income)}", None), (f"Sorties : {euro(f.expense)}", None), (f"Solde : {euro(f.net)}", None)]
         for offset, value, css in ((-width, f.income, "pos"), (0, f.expense, "neg")):
             height = (H - BOTTOM) - y(float(value))
-            out.append(
-                f'<rect class="bar-{css}" x="{centre + offset:.1f}" y="{y(float(value)):.1f}" width="{width:.1f}" height="{max(height, 0):.1f}">'
-                f"<title>{escape(tip)}</title></rect>"
-            )
+            out.append(f'<rect class="bar-{css}" x="{centre + offset:.1f}" y="{y(float(value)):.1f}" width="{width:.1f}" height="{max(height, 0):.1f}"/>')
+        hovers.append(
+            f'<rect class="hit" x="{centre - group / 2:.1f}" y="{TOP}" width="{group:.1f}" height="{H - TOP - BOTTOM}"/>'
+            f'<g class="pop">{_tip(centre, f.month.strftime("%m/%Y"), rows)}</g>'
+        )
         if len(flows) <= 14 or i % math.ceil(len(flows) / 12) == 0:
             out.append(f'<text class="axis" x="{centre:.1f}" y="{H - 8}" text-anchor="middle">{f.month.strftime("%m/%y")}</text>')
+    out += hovers
     return _frame("".join(out), label)
 
 

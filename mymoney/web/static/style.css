@@ -145,6 +145,12 @@ fieldset[hidden].new-contact { display: none; }
 .chart-svg .zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .chart-svg .axis { fill: var(--muted); font-size: 11px; }
 .chart-svg .hit { fill: transparent; }
+.chart-svg .pop { display: none; pointer-events: none; }
+.chart-svg .hit:hover + .pop { display: block; }
+.chart-svg .guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-svg .tip-box { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+.chart-svg .tip-head { fill: var(--text); font-size: 12px; font-weight: 600; }
+.chart-svg .tip-row { fill: var(--text); font-size: 12px; }
 .chart-svg .hit:hover { fill: color-mix(in srgb, var(--text) 7%, transparent); }
 .chart-svg .bar-pos { fill: var(--pos); } .chart-svg .bar-neg { fill: var(--neg); }
 .donut-box { width: 240px; max-width: 100%; flex: none; }
