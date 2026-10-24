@@ -102,6 +102,7 @@ def test_pages_load_the_themes_and_the_scripts_without_anything_inline(client):
     for theme in themes.THEMES:
         assert f'data-set-theme="{theme.id}"' in home.text and theme.label in home.text
     assert 'data-set-theme="auto"' in home.text and 'id="privacy-toggle"' in home.text and csrf
+    assert 'class="dots"' not in home.text and "<i></i>" not in home.text  # swatches are plain: no decorative dots
 
 
 def test_app_js_keeps_the_choices_on_the_device(client):

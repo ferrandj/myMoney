@@ -34,7 +34,7 @@
           {% for title, items in THEME_GROUPS %}
           <h4>{{ title }}</h4>
           <div class="chips">
-            {% for t in items %}<button type="button" class="theme-chip" data-theme="{{ t.id }}" data-set-theme="{{ t.id }}" aria-pressed="false" title="{{ t.label }}"><span class="dots"><i></i><i></i><i></i><i></i></span><span class="chip-label">{{ t.label }}</span></button>{% endfor %}
+            {% for t in items %}<button type="button" class="theme-chip" data-theme="{{ t.id }}" data-set-theme="{{ t.id }}" aria-pressed="false" title="{{ t.label }}"><span class="chip-label">{{ t.label }}</span></button>{% endfor %}
           </div>
           {% endfor %}
         </div>
