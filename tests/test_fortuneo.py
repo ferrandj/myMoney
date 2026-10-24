@@ -502,3 +502,28 @@ def test_web_rebuild_cancels_every_import_and_reads_the_files_again(client):
         october_doc = s.scalar(select(Document).where(Document.filename == "octobre.pdf"))
         assert october_doc.status == "parsed"
     assert "octobre.pdf" in client.get("/documents").text and "À regarder" in client.get("/documents").text
+
+
+def test_web_a_period_waiting_for_validation_is_not_reported_missing(client):
+    csrf = login(client)
+    D = Decimal
+    sep = fortuneo_september()
+    october = FSpec([FEntry(date(2026, 10, 5), ["VIR M MARTIN PAUL"], D("10.00"))], opening=sep.closing, period_end=date(2026, 10, 31), number="10 - 2026", title="octobre")
+    november = FSpec([FEntry(date(2026, 11, 5), ["VIR M MARTIN PAUL"], D("20.00"))], opening=october.closing, period_end=date(2026, 11, 30), number="11 - 2026", title="novembre")
+    first = upload(client, csrf, "septembre.pdf", fortuneo_statement_pdf(sep))
+    upload(client, csrf, "octobre.pdf", fortuneo_statement_pdf(october))
+    nov = upload(client, csrf, "novembre.pdf", fortuneo_statement_pdf(november))
+    sep_id = re.search(r"/documents/(\d+)", str(first.url)).group(1)
+    nov_id = re.search(r"/documents/(\d+)", str(nov.url)).group(1)
+    client.post(f"/documents/{sep_id}/import/0", data={"csrf": csrf, "account_id": "new", "name": "Compte", "import_transactions": "on"})
+
+    # October is read but not validated: it is waiting, not missing.
+    assert "Il manque une période" not in client.get(f"/documents/{nov_id}").text
+
+    # Without it, the hole is real and is reported.
+    with client.core.db.session() as s:
+        oct_doc = s.scalar(select(Document).where(Document.filename == "octobre.pdf"))
+        oct_id = oct_doc.id
+    client.post(f"/documents/{oct_id}/delete", data={"csrf": csrf})
+    page = client.get(f"/documents/{nov_id}")
+    assert "Il manque une période : rien entre le 01/10/2026 et le 31/10/2026" in page.text
