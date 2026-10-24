@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
+from ..services.access import Identity
+
 COOKIE = "mm_session"
 
 CSP = (
@@ -32,6 +34,7 @@ SECURITY_HEADERS = {
 class WebSession:
     csrf: str
     last_seen: float
+    identity: Identity | None = None  # who is signed in (None only in the short step where a pre-users vault creates its first user)
 
 
 class Sessions:
@@ -40,11 +43,23 @@ class Sessions:
         self._items: dict[str, WebSession] = {}
         self._lock = threading.Lock()
 
-    def create(self) -> str:
+    def create(self, identity: Identity | None = None) -> str:
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._items[token] = WebSession(csrf=secrets.token_urlsafe(32), last_seen=time.monotonic())
+            self._items[token] = WebSession(csrf=secrets.token_urlsafe(32), last_seen=time.monotonic(), identity=identity)
         return token
+
+    def drop_user(self, user_id: int) -> None:
+        """Sign a user out everywhere (their account was removed or changed)."""
+        with self._lock:
+            for token in [t for t, s in self._items.items() if s.identity and s.identity.id == user_id]:
+                del self._items[token]
+
+    def update_identity(self, identity: Identity) -> None:
+        with self._lock:
+            for session in self._items.values():
+                if session.identity and session.identity.id == identity.id:
+                    session.identity = identity
 
     def get(self, token: str | None) -> WebSession | None:
         if not token:

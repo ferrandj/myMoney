@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Accès refusé{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<div class="hero-logo"><img class="logo" src="/static/logo.svg" alt="" width="72" height="72"><h1>Introuvable</h1></div>
+<p class="card">{{ message }}</p>
+<p><a class="btn" href="/">Retour à l'accueil</a>{% if cf_email %} <a class="btn ghost" href="/cdn-cgi/access/logout">Changer de compte Cloudflare</a>{% endif %}</p>
+{% endblock %}

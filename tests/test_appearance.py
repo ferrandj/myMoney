@@ -11,7 +11,7 @@ from mymoney.web import themes
 from mymoney.web.app import create_app, iban, identity_text, money, money_text, quantity
 from mymoney.web.pwa import render_icon
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures import IBAN, Spec, boursobank_statement_pdf, sample_entries
 
 D = Decimal
@@ -30,7 +30,7 @@ def csrf_of(html):
 
 
 def login(client):
-    client.post("/setup", data={"setup_token": client.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": client.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     return csrf_of(client.get("/documents").text)
 
 

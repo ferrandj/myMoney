@@ -14,7 +14,7 @@ from mymoney.models import Account, Counterparty, Document, Statement, Transacti
 from mymoney.services import counterparties
 from mymoney.web.app import create_app
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures import ACCOUNT, BANK, BRANCH, IBAN, JOINT_ADDRESS, JOINT_HOLDER, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, fake_iban, sample_entries
 
 D = Decimal
@@ -381,7 +381,7 @@ def csrf_of(html: str) -> str:
 
 
 def login(client) -> str:
-    client.post("/setup", data={"setup_token": client.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": client.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     return csrf_of(client.get("/documents").text)
 
 

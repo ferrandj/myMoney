@@ -4,7 +4,7 @@
 # Le dossier data est préparé tout seul (service mymoney-init): rien à créer ni à chmod à la main.
 #
 # Premier démarrage (dossier data vide): récupère le code d'installation avec  docker logs mymoney
-# puis ouvre http://<adresse-du-nas>:10458, crée ton mot de passe maître et NOTE LE CODE DE SECOURS.
+# puis ouvre http://<adresse-du-nas>:10458, crée ton compte administrateur (e-mail + mot de passe) et NOTE LE CODE DE SECOURS.
 # Ensuite, dépose tes relevés (PDF, CSV, OFX) dans l'onglet Documents: aucune connexion à une banque.
 # Ensuite, le dossier data est la seule source de vérité: mettre à jour ou recréer le conteneur n'y touche jamais.
 services:
@@ -45,7 +45,13 @@ services:
       TZ: Europe/Paris
       # Mets "true" dès que l'app est servie en HTTPS (reverse proxy du NAS).
       MYMONEY_COOKIE_SECURE: "false"
+      # Minutes d'inactivité avant de refermer le coffre pour tout le monde ("0" = jamais: pratique avec Cloudflare Access,
+      # la clé reste alors en mémoire jusqu'au redémarrage).
       MYMONEY_AUTO_LOCK_MINUTES: "15"
+      # --- Connexion automatique par Cloudflare Access (voir README, "Plusieurs utilisateurs") -----------------
+      # MYMONEY_CF_TEAM_DOMAIN: "mon-equipe"                     # ton équipe Zero Trust (mon-equipe.cloudflareaccess.com)
+      # MYMONEY_CF_AUD: "<Application Audience (AUD) Tag>"     # Access -> ton application -> Overview
+      # MYMONEY_TRUSTED_ORIGINS: "https://mymoney.ton-domaine.xyz" # adresse publique, pour accepter les formulaires
       # Si un reverse proxy est devant, son adresse, pour qu'il soit cru sur l'IP du client:
       # MYMONEY_TRUSTED_PROXIES: "172.17.0.1"
     # Durcissement
@@ -70,6 +76,7 @@ services:
     # le mot de passe est alors stocké sur le NAS). Décommente aussi le bloc "secrets:" en bas.
     # secrets: [mymoney_password]
     # (ajoute dans environment:)  MYMONEY_UNLOCK_PASSWORD_FILE: /run/secrets/mymoney_password
+    #                             MYMONEY_UNLOCK_EMAIL: "toi@exemple.fr"   # l'utilisateur dont c'est le mot de passe
 
 # secrets:
 #   mymoney_password:

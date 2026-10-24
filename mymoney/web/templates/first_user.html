@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Premier utilisateur{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<div class="hero-logo"><img class="logo" src="/static/logo.svg" alt="" width="72" height="72"><h1>Bienvenue dans la version multi-utilisateurs</h1></div>
+<p class="muted">Ton coffre existe déjà : il est protégé par ton mot de passe actuel. Dis-moi qui tu es : tu deviens l'administrateur, tes comptes et tes documents actuels sont à toi, et tu pourras ensuite ajouter d'autres personnes et leur partager des comptes un par un.</p>
+<form method="post" class="card stack">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Ton adresse e-mail <small>La même que celle autorisée dans Cloudflare Access : c'est elle qui te reconnaît.</small>
+    <input type="email" name="email" required autocomplete="email" value="{{ cf_email }}"></label>
+  <label>Ton nom <input name="name" autocomplete="name"></label>
+  <button class="btn primary">Continuer</button>
+</form>
+{% endblock %}

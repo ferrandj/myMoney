@@ -14,7 +14,7 @@ from mymoney.models import Account, Loan, LoanEvent, LoanInstallment
 from mymoney.services import loans
 from mymoney.web.app import create_app
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures_fortuneo import FEntry, FSpec, fortuneo_statement_pdf
 from .fixtures_loan import L_BORROWER, L_REF, LoanSpec, offer_pdf, prepayment_pdf, schedule_pdf
 
@@ -304,7 +304,7 @@ def csrf_of(html):
 
 
 def login(client):
-    client.post("/setup", data={"setup_token": client.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": client.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     return csrf_of(client.get("/documents").text)
 
 

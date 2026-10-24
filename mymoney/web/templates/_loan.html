@@ -37,7 +37,7 @@
   </ul>
   {% endif %}
 
-  {% if not loan.first_due_date and loan.installments %}
+  {% if not loan.first_due_date and loan.installments and role != 'read' %}
   <form method="post" action="/accounts/{{ account.id }}/loan/first-due" class="stack">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Date de la première échéance <input type="date" name="first_due" required></label>

@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Account, GapAck, Statement
+from . import access
 
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
 
@@ -95,8 +96,9 @@ def covers(session: Session, account_id: int, start: date, end: date) -> bool:
 
 
 def all_gaps(session: Session, include_acknowledged: bool = False) -> list[Gap]:
-    """Gaps of every account that is still followed (archived accounts are left alone)."""
-    accounts = session.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.institution, Account.name))
+    """Gaps of every account that is still followed (archived accounts are left alone): the ones the user can fix, that is
+    the accounts they can edit (someone who only reads an account has no statement to upload for it)."""
+    accounts = access.only_editable(session, list(session.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.institution, Account.name))))
     return [g for a in accounts for g in account_gaps(session, a, include_acknowledged)]
 
 
@@ -106,6 +108,7 @@ def acknowledged_ranges(session: Session, account_id: int) -> list[tuple[date, d
 
 def acknowledge(session: Session, account_id: int, start: date, end: date, note: str | None = None) -> None:
     """Mark a gap as normal. Only a gap that exists can be marked: a stale form changes nothing."""
+    access.check_edit(session, account_id)
     account = session.get(Account, account_id)
     if account is None or end < start:
         raise ValueError("Compte ou période invalide")
@@ -119,5 +122,6 @@ def restore(session: Session, ack_id: int) -> None:
     """Report the gap again (the user changed their mind)."""
     ack = session.get(GapAck, ack_id)
     if ack is not None:
+        access.check_edit(session, ack.account_id)
         session.delete(ack)
         session.flush()

@@ -8,7 +8,7 @@ from mymoney.models import Account
 from mymoney.services.valuation import Valuator
 from mymoney.web.app import create_app
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 
 
 class FakePrices:
@@ -53,9 +53,9 @@ def _csrf(html: str) -> str:
 def test_web_setup_requires_token_and_sets_secure_headers(client):
     r = client.get("/", follow_redirects=False)
     assert r.headers["location"] == "/setup"
-    r = client.post("/setup", data={"setup_token": "nope", "password": PASSWORD, "confirm": PASSWORD})
+    r = client.post("/setup", data={"setup_token": "nope", "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     assert r.status_code == 403
-    r = client.post("/setup", data={"setup_token": client.app_state.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    r = client.post("/setup", data={"setup_token": client.app_state.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     assert r.status_code == 200 and "code de secours" in r.text.lower()
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=strict" in cookie
@@ -66,7 +66,7 @@ def test_web_setup_requires_token_and_sets_secure_headers(client):
 
 def test_web_requires_login_and_csrf(client):
     core = client.app_state.core
-    client.post("/setup", data={"setup_token": core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     page = client.get("/accounts/new")
     # Missing / wrong CSRF token
     assert client.post("/accounts/new", data={"name": "X", "account_type": "checking"}).status_code == 403
@@ -81,6 +81,6 @@ def test_web_requires_login_and_csrf(client):
     client.post("/logout", data={"csrf": _csrf(r.text), "lock": "1"})
     assert not core.vault.unlocked
     assert client.get("/", follow_redirects=False).headers["location"] == "/login"
-    assert client.post("/login", data={"password": "Wrong-Password-1!"}).status_code == 401
-    assert client.post("/login", data={"password": PASSWORD}).status_code == 200
+    assert client.post("/login", data={"email": ADMIN_EMAIL, "password": "Wrong-Password-1!"}).status_code == 401
+    assert client.post("/login", data={"email": ADMIN_EMAIL, "password": PASSWORD}).status_code == 200
     assert core.vault.unlocked

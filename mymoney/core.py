@@ -17,10 +17,11 @@ from sqlalchemy import select
 from .adapters import ParsedStatement, SourceDocument, get_adapter, identify, parse_with
 from .config import Settings
 from .db import Database
-from .models import ACCOUNT_TYPES, CATEGORIES, Account, Document, Holding, PriceCache, Setting, Snapshot, Transaction, utcnow
+from .models import ACCOUNT_TYPES, CATEGORIES, Account, Document, Holding, PriceCache, Setting, Snapshot, Transaction, User, utcnow
 from .security.keystore import InvalidPassword, Keystore
 from .security.vault import Vault, VaultLocked
-from .services import ledger
+from .services import access, ledger
+from .services import users as user_service
 from .services import loans as loan_service
 from .services import statements as statement_service
 from .services.prices import PriceService
@@ -59,29 +60,123 @@ class MyMoney:
     def _on_lock(self) -> None:
         self._prices = None
 
-    def check_password(self, password: str) -> None:
-        """Verify the master password, with an exponential delay after failures (brute force)."""
+    def _throttle(self) -> None:
         now = time.monotonic()
         if now < self._next_login_at:
             raise PermissionError(f"Trop d'essais : réessaie dans {int(self._next_login_at - now) + 1} s")
+
+    def _failed(self) -> None:
+        self._failed_logins += 1
+        if self._failed_logins >= 3:
+            self._next_login_at = time.monotonic() + min(300, 2 ** (self._failed_logins - 2))
+
+    def check_password(self, password: str, email: str | None = None) -> None:
+        """Verify a password (a user's, or the legacy master password before users exist), with an exponential delay after
+        failures (brute force). Opens the vault when it is locked: everyone's data is behind the same key."""
+        self._throttle()
+        try:
+            slot = user_service.slot_id(email) if email else None
+        except ValueError:
+            self._failed()
+            raise InvalidPassword()
         try:
             if self.vault.unlocked:
-                if self.keystore.unlock(password) != self.vault._master():
+                if self.keystore.unlock(password, slot) != self.vault._master():
                     raise InvalidPassword()
             else:
-                self.vault.unlock(password)
+                self.vault.unlock(password, slot)
         except InvalidPassword:
-            self._failed_logins += 1
-            if self._failed_logins >= 3:
-                self._next_login_at = time.monotonic() + min(300, 2 ** (self._failed_logins - 2))
+            self._failed()
             raise
         self._failed_logins = 0
+
+    @property
+    def legacy_login(self) -> bool:
+        """The vault predates users: it still has a single password and nobody has an account yet."""
+        return self.vault.initialized and self.keystore.has_legacy_slot()
+
+    def setup(self, email: str, name: str | None, password: str) -> str:
+        """First installation: the vault, and its first user (the administrator). Returns the recovery code."""
+        email = user_service.normalize_email(email)
+        recovery = self.vault.setup(password, user_service.slot_id(email))
+        with self.db.session() as s:
+            user_service.create(s, email, name, is_admin=True)
+        return recovery
+
+    def authenticate(self, email: str, password: str) -> access.Identity:
+        """Sign a user in with their own password. Raises InvalidPassword for a wrong password or an unknown user."""
+        self.check_password(password, email)
+        with self.db.session() as s:
+            user = user_service.get_by_email(s, email)
+            if user is None:
+                raise InvalidPassword()
+            user.last_login = utcnow()
+            return user_service.identity(user)
+
+    def authenticate_recovery(self, code: str) -> access.Identity | None:
+        """The recovery code opens the vault and signs in the first administrator (None while nobody has an account)."""
+        self._throttle()
+        try:
+            self.vault.unlock_with_recovery(code)
+        except InvalidPassword:
+            self._failed()
+            raise
+        self._failed_logins = 0
+        with self.db.session() as s:
+            admin = user_service.first_admin(s)
+            return user_service.identity(admin) if admin else None
+
+    def identity_for_email(self, email: str | None) -> access.Identity | None:
+        """The user an e-mail address belongs to (the vault must be open)."""
+        with self.db.session() as s:
+            user = user_service.get_by_email(s, email)
+            if user is None:
+                return None
+            user.last_login = utcnow()
+            return user_service.identity(user)
+
+    def identity_by_id(self, user_id: int | None) -> access.Identity | None:
+        if user_id is None:
+            return None
+        with self.db.session() as s:
+            user = s.get(User, user_id)
+            return user_service.identity(user) if user else None
+
+    def has_users(self) -> bool:
+        with self.db.session() as s:
+            return user_service.count(s) > 0
+
+    def create_first_user(self, email: str, name: str | None) -> access.Identity:
+        """A vault from before users existed: its password becomes the administrator's, and the data becomes theirs."""
+        email = user_service.normalize_email(email)
+        with self.db.session() as s:
+            if user_service.count(s):
+                raise ValueError("Il existe déjà des utilisateurs")
+            user = user_service.create(s, email, name, is_admin=True)
+            user_service.claim_legacy_data(s, user)
+            self.keystore.adopt_legacy_slot(user_service.slot_id(email))
+            user.last_login = utcnow()
+            return user_service.identity(user)
 
     def auto_unlock(self) -> None:
         path = self.settings.unlock_password_file
         if path and self.vault.initialized and not self.vault.unlocked:
             with open(path) as fh:
-                self.vault.unlock(fh.read().strip())
+                password = fh.read().strip()
+            email = self.settings.unlock_email
+            if email:
+                self.vault.unlock(password, user_service.slot_id(email))
+            elif self.keystore.has_legacy_slot():
+                self.vault.unlock(password)
+            else:  # no e-mail given: the password belongs to one of the slots
+                for slot in self.keystore.slots():
+                    try:
+                        self.vault.unlock(password, slot)
+                        break
+                    except InvalidPassword:
+                        continue
+                else:
+                    raise InvalidPassword()
             log.warning("Coffre déverrouillé automatiquement depuis %s (voir SECURITY.md)", path)
 
     def start_background(self, web_sessions_active) -> None:
@@ -90,6 +185,7 @@ class MyMoney:
                 try:
                     if (
                         self.vault.unlocked
+                        and self.settings.auto_lock_minutes > 0
                         and not self.settings.unlock_password_file
                         and not web_sessions_active()
                         and self.vault.idle_seconds() > self.settings.auto_lock_minutes * 60
@@ -154,9 +250,9 @@ class MyMoney:
     def portfolio(self, with_history: bool = True) -> Portfolio:
         with self.db.session() as s:
             loan_service.refresh_all(s)  # the capital owed moves with every instalment
-            accounts = list(s.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.institution, Account.name)))
+            accounts = access.only_readable(s, list(s.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.institution, Account.name))))
             for a in accounts:
-                _ = a.holdings
+                _ = (a.holdings, a.owner)
             valuator = Valuator(self.prices)
             valuator.prefetch(accounts)
             values = [valuator.account_value(a) for a in accounts]
@@ -185,8 +281,11 @@ class MyMoney:
     # ------------------------------------------------------------ accounts
     def save_account(self, account_id: int | None, data: dict[str, str]) -> int:
         with self.db.session() as s:
+            if account_id:
+                access.check_edit(s, account_id)
             account = s.get(Account, account_id) if account_id else Account()
             if account_id is None:
+                account.owner_id = access.owner_for_new(s)
                 s.add(account)
             account.name = data.get("name") or account.name or "Compte"
             if data.get("account_type") in ACCOUNT_TYPES:
@@ -212,6 +311,7 @@ class MyMoney:
 
     def delete_account(self, account_id: int) -> None:
         with self.db.session() as s:
+            access.check_owner(s, account_id)
             account = s.get(Account, account_id)
             if account:
                 s.delete(account)
@@ -223,6 +323,7 @@ class MyMoney:
         value = (data.get("value") or "").replace(",", ".").replace(" ", "")
         asset_class = data.get("asset_class") or ("crypto" if symbol and not isin else "stock")
         with self.db.session() as s:
+            access.check_edit(s, account_id)
             s.add(
                 Holding(
                     account_id=account_id, symbol=symbol, isin=isin, name=data.get("name") or symbol or isin,
@@ -236,6 +337,7 @@ class MyMoney:
         with self.db.session() as s:
             h = s.get(Holding, holding_id)
             if h:
+                access.check_edit(s, h.account_id)
                 s.delete(h)
 
     # ----------------------------------------------------------- documents
@@ -245,7 +347,7 @@ class MyMoney:
         with self.db.session() as s:
             existing = s.scalar(select(Document).where(Document.sha256 == digest))
             if existing:
-                return existing.id, True
+                return existing.id, True  # (the web layer checks that the user may open it)
         blob_name = secrets.token_hex(16) + ".bin"
         path = self.settings.documents_dir / blob_name
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -253,7 +355,8 @@ class MyMoney:
             fh.write(self.vault.encrypt_file(data, f"document:{blob_name}"))
         with self.db.session() as s:
             doc = Document(
-                filename=os.path.basename(filename)[:300] or "document", size=len(data), sha256=digest, blob_name=blob_name, status="uploaded"
+                filename=os.path.basename(filename)[:300] or "document", size=len(data), sha256=digest, blob_name=blob_name, status="uploaded",
+                owner_id=access.owner_for_new(s),
             )
             s.add(doc)
             s.flush()
@@ -261,6 +364,8 @@ class MyMoney:
 
     def analyze_document(self, doc_id: int, adapter_id: str | None = None, data: bytes | None = None) -> str:
         """Find the adapter for a stored document (or use the one the user chose) and parse it. Returns its status."""
+        with self.db.session() as s:
+            self._doc(s, doc_id)
         filename, data = (self.read_document(doc_id) if data is None else (self._filename(doc_id), data))
         source = SourceDocument(filename, data)
         found = identify(source)
@@ -290,13 +395,22 @@ class MyMoney:
             doc.status, doc.parse_result, doc.adapter_id, doc.kind = status, result, chosen, kind
         return status
 
+    def _doc(self, s, doc_id: int, edit: bool = True) -> Document:
+        """The document, if the current user may open it (or change it, with `edit`)."""
+        return access.check_document(s, s.get(Document, doc_id), edit=edit)
+
+    def document_visible(self, doc_id: int) -> bool:
+        with self.db.session() as s:
+            doc = s.get(Document, doc_id)
+            return doc is not None and access.document_visible(s, doc)
+
     def _filename(self, doc_id: int) -> str:
         with self.db.session() as s:
             return s.get(Document, doc_id).filename
 
     def read_document(self, doc_id: int) -> tuple[str, bytes]:
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
+            doc = self._doc(s, doc_id, edit=False)
             blob = (self.settings.documents_dir / doc.blob_name).read_bytes()
             return doc.filename, self.vault.decrypt_file(blob, f"document:{doc.blob_name}")
 
@@ -305,6 +419,7 @@ class MyMoney:
             doc = s.get(Document, doc_id)
             if doc is None:
                 return
+            self._doc(s, doc_id)
             path = self.settings.documents_dir / doc.blob_name
             s.execute(Transaction.__table__.update().where(Transaction.document_id == doc_id).values(document_id=None))
             s.delete(doc)
@@ -324,7 +439,7 @@ class MyMoney:
         """Does this file repeat one already imported (same account, same period)? Returns "identical" when it changes
         nothing (the file is set aside), "differs" when it has extra or missing lines or other balances, None otherwise."""
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
+            doc = self._doc(s, doc_id)
             result = doc.parse_result or {}
             if doc.status != "parsed" or len(result.get("statements", [])) != 1:
                 return None
@@ -346,23 +461,24 @@ class MyMoney:
     def keep_duplicate(self, doc_id: int) -> None:
         """Keep a duplicate that was set aside, as a copy next to the original (nothing is imported from it)."""
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
-            if doc is not None and doc.status in ("duplicate", "parsed"):
+            doc = self._doc(s, doc_id)
+            if doc.status in ("duplicate", "parsed"):
                 doc.status = "copy"
 
     def purge_quarantine(self) -> int:
         """Delete the duplicates that were set aside and not kept within a day."""
         limit = utcnow() - timedelta(hours=QUARANTINE_HOURS)
-        with self.db.session() as s:
-            old = list(s.scalars(select(Document.id).where(Document.status == "duplicate", Document.uploaded_at < limit)))
-        for doc_id in old:
-            self.delete_document(doc_id)
+        with access.unrestricted():  # housekeeping for everyone's files
+            with self.db.session() as s:
+                old = list(s.scalars(select(Document.id).where(Document.status == "duplicate", Document.uploaded_at < limit)))
+            for doc_id in old:
+                self.delete_document(doc_id)
         return len(old)
 
     def import_default(self, doc_id: int, index: int, force: bool = False) -> dict:
         """The one-click import (matching account, new lines, balance if newer), even if the period was imported before."""
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
+            doc = self._doc(s, doc_id)
             st = ParsedStatement.from_json(doc.parse_result["statements"][index])
             found = statement_service.find_accounts(s, st)
             if len(found) != 1:
@@ -374,7 +490,7 @@ class MyMoney:
         """Replace the file already imported for this period by this one: the old file and what it brought are removed,
         this one is imported in full."""
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
+            doc = self._doc(s, doc_id)
             st = ParsedStatement.from_json(doc.parse_result["statements"][index])
             found = statement_service.find_accounts(s, st)
             if len(found) != 1:
@@ -401,10 +517,10 @@ class MyMoney:
         """Everything the review page shows: what was understood, and what importing it would do."""
         with self.db.session() as s:
             doc = s.get(Document, doc_id)
-            if doc is None:
+            if doc is None or not access.document_visible(s, doc):
                 return None
             statements = [ParsedStatement.from_json(item) for item in (doc.parse_result or {}).get("statements", [])]
-            accounts = list(s.scalars(select(Account).order_by(Account.institution, Account.name)))
+            accounts = access.only_editable(s, list(s.scalars(select(Account).order_by(Account.institution, Account.name))))
             plans = []
             for st in statements:
                 found = statement_service.find_accounts(s, st)
@@ -413,7 +529,7 @@ class MyMoney:
 
     def import_statement(self, doc_id: int, index: int, form: dict[str, str]) -> dict:
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
+            doc = self._doc(s, doc_id)
             st = ParsedStatement.from_json(doc.parse_result["statements"][index])
             return statement_service.import_statement(s, doc, st, form)
 
@@ -421,7 +537,7 @@ class MyMoney:
         """Import without asking when there is nothing to ask: one clear adapter, one matching account, balances check out,
         nothing suspicious. Anything else is left for the user to review."""
         with self.db.session() as s:
-            doc = s.get(Document, doc_id)
+            doc = self._doc(s, doc_id)
             result = doc.parse_result or {}
             if doc.status != "parsed" or result.get("decision") != "auto" or len(result.get("statements", [])) != 1:
                 return None
@@ -439,4 +555,7 @@ class MyMoney:
     def undo_import(self, doc_id: int) -> int:
         with self.db.session() as s:
             doc = s.get(Document, doc_id)
-            return statement_service.undo_import(s, doc) if doc else 0
+            if doc is None:
+                return 0
+            self._doc(s, doc_id)
+            return statement_service.undo_import(s, doc)

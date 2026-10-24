@@ -10,9 +10,10 @@
     <p class="big">{{ value.total|money }}</p>
     {% if account.currency != 'EUR' %}<p class="muted small">Solde {{ account.balance|money(account.currency) }}</p>{% endif %}
     <p class="muted small">Mis à jour {{ account.balance_date|frdate }}</p>
+    {% if role != 'owner' %}<p class="small"><span class="tag">{{ 'partagé en modification' if role == 'edit' else 'partagé en lecture seule' }}</span> par <span class="sensitive">{{ owner.label if owner else 'un ancien utilisateur' }}</span></p>{% endif %}
   </div>
   <div class="actions">
-    <a class="btn" href="/accounts/{{ account.id }}/edit">Modifier</a>
+    {% if role != 'read' %}<a class="btn" href="/accounts/{{ account.id }}/edit">Modifier</a>{% endif %}
   </div>
 </section>
 
@@ -38,18 +39,55 @@
       {% if account.rib %}<dt>RIB</dt><dd><code>{{ account.rib }}</code> {{ copy(account.rib) }} <span class="muted small">banque · guichet · compte · clé</span></dd>
       {% elif account.account_number %}<dt>N° de compte</dt><dd><code>{{ account.account_number }}</code> {{ copy(account.account_number) }}</dd>{% endif %}
     </dl>
-    {% else %}<p class="muted small">Aucune information lue. Elles viennent des relevés importés, ou de <a href="/accounts/{{ account.id }}/edit">la fiche du compte</a>.</p>{% endif %}
+    {% else %}<p class="muted small">Aucune information lue. Elles viennent des relevés importés{% if role != 'read' %}, ou de <a href="/accounts/{{ account.id }}/edit">la fiche du compte</a>{% endif %}.</p>{% endif %}
   </div>
 </section>
 
 {% if loan %}{% include "_loan.html" %}{% endif %}
 
+{% if role == 'owner' or shares %}
+<section class="card" id="partage">
+  <h2>Partage</h2>
+  {% if role != 'owner' %}
+  <p class="small muted">Ce compte est à <span class="sensitive">{{ owner.label if owner else 'un ancien utilisateur' }}</span>, qui te le partage {{ 'avec le droit de le modifier (déposer des relevés, corriger)' if role == 'edit' else 'en lecture seule' }}.</p>
+  <form method="post" action="/accounts/{{ account.id }}/shares/{{ me.id }}/delete" data-confirm="Quitter ce partage ? Tu ne verras plus ce compte.">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small">Quitter ce partage</button>
+  </form>
+  {% else %}
+  {% if shares %}
+  <ul class="share-list">
+    {% for user, can_edit in shares %}
+    <li>
+      <span><strong class="sensitive">{{ user.label }}</strong> <span class="muted small sensitive">{{ user.email }}</span> <span class="tag">{{ 'modification' if can_edit else 'lecture seule' }}</span></span>
+      <form method="post" action="/accounts/{{ account.id }}/shares/{{ user.id }}/delete" class="inline-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost small" aria-label="Retirer le partage">✕ Retirer</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="muted small">Ce compte n'est partagé avec personne.</p>{% endif %}
+  {% if sharable %}
+  <form method="post" action="/accounts/{{ account.id }}/shares" class="row-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Partager avec
+      <select name="user_id" required>{% for u in sharable %}<option value="{{ u.id }}">{{ u.label }} · {{ u.email }}</option>{% endfor %}</select>
+    </label>
+    <label>Droits
+      <select name="mode"><option value="read">Lecture seule</option><option value="edit">Lecture et modification</option></select>
+    </label>
+    <button class="btn primary">Partager</button>
+  </form>
+  {% elif not shares %}<p class="muted small">Aucun autre utilisateur : ajoutes-en un dans les <a href="/settings#utilisateurs">paramètres</a>.</p>{% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
 {% if statements or open_gaps or acked_gaps %}
 <section class="card">
   <h2>Relevés importés</h2>
   {% for g in chain_issues %}<p class="warn small">⚠ {{ g }}</p>{% endfor %}
-  {% if open_gaps %}<ul class="gap-list">{% for g in open_gaps %}{{ gap_row(g, '/accounts/' ~ account.id) }}{% endfor %}</ul>{% endif %}
-  {% for g in acked_gaps %}
+  {% if open_gaps and role != 'read' %}<ul class="gap-list">{% for g in open_gaps %}{{ gap_row(g, '/accounts/' ~ account.id) }}{% endfor %}</ul>{% endif %}
+  {% for g in (acked_gaps if role != 'read' else []) %}
   <form method="post" action="/gaps/{{ g.ack_id }}/restore" class="gap-acked small muted">
     <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/accounts/{{ account.id }}">
     ✓ {{ g.label }} : marqué comme normal <button class="btn ghost small">Remettre en alerte</button>
@@ -117,7 +155,7 @@
         <td class="num">{{ hv.holding.quantity|qty }}</td>
         <td class="num">{{ hv.unit_price_eur|money }}</td>
         <td class="num">{{ hv.value_eur|money }}</td>
-        <td>{% if hv.holding.manual %}
+        <td>{% if hv.holding.manual and role != 'read' %}
           <form method="post" action="/holdings/{{ hv.holding.id }}/delete" data-confirm="Supprimer cette position ?">
             <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="account_id" value="{{ account.id }}">
             <button class="btn ghost small" aria-label="Supprimer">✕</button></form>{% endif %}</td>
@@ -127,7 +165,7 @@
   </table>
   </div>
   {% else %}<p class="muted">Aucune position.</p>{% endif %}
-  <details>
+  {% if role != 'read' %}<details>
     <summary>Ajouter une position à la main</summary>
     <form method="post" action="/accounts/{{ account.id }}/holdings" class="row-form">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -139,7 +177,7 @@
       <label>Valeur fixe (€) <input name="value" inputmode="decimal" placeholder="si pas de cotation"></label>
       <button class="btn primary">Ajouter</button>
     </form>
-  </details>
+  </details>{% endif %}
 </section>
 {% endif %}
 

@@ -1,13 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Déverrouiller{% endblock %}
+{% block title %}Connexion{% endblock %}
 {% block main_class %}narrow{% endblock %}
 {% block content %}
-<div class="hero-logo"><img class="logo" src="/static/logo.svg" alt="" width="72" height="72"><h1>my<b>Money</b></h1><p class="muted">Coffre verrouillé</p></div>
+<div class="hero-logo"><img class="logo" src="/static/logo.svg" alt="" width="72" height="72"><h1>my<b>Money</b></h1><p class="muted">{{ 'Coffre verrouillé' if locked else 'Connexion' }}</p></div>
+{% if cf_email and locked %}<p class="card small">Cloudflare te reconnaît ({{ cf_email }}), mais le coffre est verrouillé (redémarrage ou verrouillage). Entre ton mot de passe une fois : ensuite chacun entre sans mot de passe par Cloudflare.</p>{% endif %}
 <form method="post" action="/login" class="card stack">
-  <label>Mot de passe maître
-    <input type="password" name="password" autofocus autocomplete="current-password">
+  {% if not legacy %}
+  <label>Adresse e-mail
+    <input type="email" name="email" required autocomplete="username" value="{{ cf_email or '' }}" {% if not cf_email %}autofocus{% endif %}>
   </label>
-  <button class="btn primary" type="submit">Déverrouiller</button>
+  {% endif %}
+  <label>{{ 'Mot de passe maître' if legacy else 'Mot de passe' }}
+    <input type="password" name="password" required {% if legacy or cf_email %}autofocus{% endif %} autocomplete="current-password">
+  </label>
+  <button class="btn primary" type="submit">{{ 'Déverrouiller' if locked else 'Se connecter' }}</button>
 </form>
 <details class="card">
   <summary>Mot de passe oublié ?</summary>
@@ -16,7 +22,7 @@
       <input name="recovery" autocomplete="off" placeholder="XXXX-XXXX-…">
     </label>
     <button class="btn" type="submit">Ouvrir avec le code de secours</button>
-    <small class="muted">Change ensuite ton mot de passe dans les paramètres.</small>
+    <small class="muted">Le code de secours te connecte en administrateur : change ensuite ton mot de passe dans les paramètres. Un autre utilisateur oublié ? Un administrateur lui en redéfinit un.</small>
   </form>
 </details>
 {% endblock %}

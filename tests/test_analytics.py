@@ -11,7 +11,7 @@ from mymoney.services import analytics
 from mymoney.web import charts
 from mymoney.web.app import create_app
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures import Spec, boursobank_statement_pdf, sample_entries
 
 D = Decimal
@@ -174,7 +174,7 @@ def csrf_of(html):
 
 
 def test_web_views_filters_and_totals(client):
-    client.post("/setup", data={"setup_token": client.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": client.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     csrf = csrf_of(client.get("/documents").text)
     spec = Spec(sample_entries())
     page = client.post("/documents", data={"csrf": csrf}, files={"files": ("r.pdf", boursobank_statement_pdf(spec), "application/pdf")})

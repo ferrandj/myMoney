@@ -15,3 +15,4 @@ def settings(tmp_path, monkeypatch):
 
 
 PASSWORD = "Correct-Horse-9!"
+ADMIN_EMAIL = "admin@example.com"
