@@ -572,31 +572,6 @@ class MyMoney:
         later = [d for d in pending if key is None or (_period_key(d), d.id) > key]
         return (later[0].id if later else None), len(pending)
 
-    def validate_pending(self) -> dict[str, int]:
-        """Validate in one go every document whose import needs no decision: the account is the one the document points to,
-        or a new account because nothing matches yet. What needs a person (cut holder names, several possible accounts,
-        a statement that repeats another, inconsistent balances, warnings) is left as it is. Returns counts."""
-        done, left = 0, 0
-        todo = [d.id for d in self.pending_documents()]
-        for _ in range(3):  # a document can wait for the account another one creates (a fees recap, a loan notice)
-            progress, remaining = False, []
-            for doc_id in todo:
-                try:
-                    if self._validate_if_obvious(doc_id):
-                        done += 1
-                        progress = True
-                    else:
-                        remaining.append(doc_id)
-                except Exception:
-                    remaining.append(doc_id)
-            todo = remaining
-            if not progress or not todo:
-                break
-        return {"imported": done, "left": len(todo)}
-
-    def _validate_if_obvious(self, doc_id: int) -> bool:
-        return self._check_obvious(doc_id, apply=True) is None
-
     def pending_reasons(self) -> dict[int, str]:
         """For each document waiting for validation, what stops it from being validated in one click."""
         reasons = {}
@@ -711,6 +686,23 @@ class MyMoney:
                     why = (doc.parse_result or {}).get("error") or "Document non reconnu par les lectures actuelles"
                 left.append({"id": doc.id, "filename": doc.filename, "status": doc.status, "reason": why})
         return {"total": len(ids), "validated": done_total, "left": left}
+
+    def invalidate_documents(self, doc_ids: list[int]) -> int:
+        """Cancel the import of these documents (their operations leave the accounts, the files stay and wait for a new
+        validation). Returns how many were cancelled; documents one may not change are left alone."""
+        done = 0
+        for doc_id in doc_ids:
+            with self.db.session() as s:
+                doc = s.get(Document, doc_id)
+                if doc is None or doc.status != "imported":
+                    continue
+                try:
+                    self._doc(s, doc_id)
+                except access.AccessDenied:
+                    continue
+                statement_service.undo_import(s, doc)
+                done += 1
+        return done
 
     def undo_import(self, doc_id: int) -> int:
         with self.db.session() as s:

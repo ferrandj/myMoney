@@ -16,9 +16,8 @@
 {% if pending %}
 <section class="card warn" id="a-valider">
   <h2>À valider <span class="tag">{{ pending|length }}</span></h2>
-  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). <strong>Tout valider</strong> importe d'un coup tout ce qui est évident ; le reste (nom de titulaire à confirmer, doublon, incohérence) reste ici. <strong>Passer en revue</strong> t'ouvre les documents l'un après l'autre : tu vérifies, tu valides, le suivant s'affiche.</p>
-  <form method="post" action="/documents/validate-all"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="actions"><button class="btn primary">Tout valider ({{ pending|length }})</button>
-    <a class="btn" href="/documents/review">Passer en revue un par un</a></div></form>
+  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). <strong>Passer en revue</strong> t'ouvre les documents l'un après l'autre : tu vérifies, tu valides, le suivant s'affiche.</p>
+  <div class="actions"><a class="btn primary" href="/documents/review">Passer en revue un par un ({{ pending|length }})</a></div>
   <ul class="small">
     {% for d in pending %}{% set rel = reliability(d) %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · <a href="/documents/{{ d.id }}">ouvrir et valider</a>{% if reasons.get(d.id) %}<div class="muted">À regarder : {{ reasons[d.id] }}</div>{% endif %}</li>{% endfor %}
   </ul>
@@ -49,15 +48,21 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="doc-toolbar">
       <button class="btn primary" id="download-selected" disabled>Télécharger la sélection <span id="download-count"></span></button>
+      {% if imported_count %}
+      <button class="btn small" formaction="/documents/invalidate" data-confirm="Invalider les documents cochés ? Leurs opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Invalider la sélection</button>
+      <button class="btn small danger" form="invalidate-form" name="scope" value="all" data-confirm="Invalider les {{ imported_count }} import(s) ? Les opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Tout invalider ({{ imported_count }})</button>
+      {% endif %}
       <button type="button" class="btn ghost small" data-expand="all">Tout déplier</button>
       <button type="button" class="btn ghost small" data-expand="none">Tout replier</button>
     </div>
     {% for bank in tree %}
     <details class="doc-bank" {% if tree|length == 1 or loop.first %}open{% endif %}>
-      <summary><strong>{{ bank.label }}</strong> <span class="tag">{{ bank.count }}</span></summary>
+      <summary><strong>{{ bank.label }}</strong> <span class="tag">{{ bank.count }}</span>
+        {% if bank.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="bank:{{ bank.label }}" data-confirm="Invalider les {{ bank.imported }} import(s) de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ bank.imported }})</button>{% endif %}</summary>
       {% for kind in bank.kinds %}
       <details class="doc-kind" {% if bank.kinds|length == 1 %}open{% endif %}>
         <summary>{{ kind.label }} <span class="tag">{{ kind.count }}</span>
+          {% if kind.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="kind:{{ bank.label }}::{{ kind.label }}" data-confirm="Invalider les {{ kind.imported }} import(s) « {{ kind.label }} » de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ kind.imported }})</button>{% endif %}
           <label class="check doc-all" title="Cocher tout ce groupe"><input type="checkbox" data-check-group aria-label="Tout cocher : {{ bank.label }}, {{ kind.label }}"> tout</label></summary>
         <div class="table-wrap"><table class="doc-table">
           <tbody>
@@ -81,6 +86,7 @@
     </details>
     {% endfor %}
   </form>
+  <form method="post" action="/documents/invalidate" id="invalidate-form"><input type="hidden" name="csrf" value="{{ csrf }}"></form>
 </section>
 {% endif %}
 {% if imported_count %}

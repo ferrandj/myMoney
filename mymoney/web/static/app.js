@@ -1,6 +1,7 @@
 // No inline scripts (strict Content-Security-Policy): behaviours are attached here.
 document.addEventListener("submit", (event) => {
-  const message = event.target.getAttribute("data-confirm");
+  // A button can carry its own question (several buttons submit the same form for different scopes).
+  const message = (event.submitter && event.submitter.getAttribute("data-confirm")) || event.target.getAttribute("data-confirm");
   if (message && !window.confirm(message)) event.preventDefault();
 });
 
