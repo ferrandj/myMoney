@@ -80,7 +80,7 @@ class FortuneoStatementPdf(Adapter):
         closing_seen = False
 
         for page_no, words in enumerate(doc.words(1.0)):
-            rows = pdftools.lines(words)
+            rows = pdftools.lines(words, join_amounts=True)
             texts_by_row = [" ".join(w["text"] for w in row) for row in rows]
             if page_no == 0:
                 self._read_header(st, rows, texts_by_row)

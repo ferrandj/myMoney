@@ -24,6 +24,11 @@ F_IBAN = make_iban(f"{F_BANK}{F_BRANCH}{F_ACCOUNT}{rib_key(F_BANK, F_BRANCH, F_A
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
 
 
+def fr_space(amount: Decimal) -> str:
+    """Fortuneo prints thousands with a space ("1 500,00"), unlike the dots of the other banks."""
+    return fr(amount).replace(".", " ")
+
+
 def long_date(value: date) -> str:
     return f"{value.day} {MONTHS[value.month - 1]} {value.year}"
 
@@ -123,11 +128,11 @@ def fortuneo_statement_pdf(spec: FSpec) -> bytes:
     _text(pdf, 407, 357, "Débit"); _text(pdf, 495, 357, "Crédit")
     y = 375.0
     _text(pdf, 54, y, "ANCIEN SOLDE" if spec.first else f"ANCIEN SOLDE CRÉDITEUR AU {long_date(opening_date).upper()}")
-    _text(pdf, 0, y, fr(spec.opening), right=546 if spec.opening >= 0 else 463)
+    _text(pdf, 0, y, fr_space(spec.opening), right=546 if spec.opening >= 0 else 463)
     y += 22
     for e in spec.entries:
         _text(pdf, 54, y, e.day.strftime("%d/%m")); _text(pdf, 88, y, (e.value_day or e.day).strftime("%d/%m/%Y")); _text(pdf, 136, y, e.lines[0])
-        _text(pdf, 0, y, fr(e.amount), right=546 if e.amount > 0 else 463)
+        _text(pdf, 0, y, fr_space(e.amount), right=546 if e.amount > 0 else 463)
         for extra in e.lines[1:]:
             y += 11
             _text(pdf, 136, y, extra)
@@ -139,13 +144,13 @@ def fortuneo_statement_pdf(spec: FSpec) -> bytes:
     y += 11
     _text(pdf, 55, y, "TOTAL DES OPÉRATIONS DU RELEVÉ")
     if debits:
-        _text(pdf, 0, y, fr(debits), right=463)
+        _text(pdf, 0, y, fr_space(debits), right=463)
     if credits:
-        _text(pdf, 0, y, fr(credits), right=546)
+        _text(pdf, 0, y, fr_space(credits), right=546)
     y += 24
     closing = spec.wrong_closing if spec.wrong_closing is not None else spec.closing
     _text(pdf, 54, y, f"NOUVEAU SOLDE {'CRÉDITEUR' if closing >= 0 else 'DÉBITEUR'} AU {long_date(end).upper()}")
-    _text(pdf, 0, y, fr(closing), right=546 if closing >= 0 else 463)
+    _text(pdf, 0, y, fr_space(closing), right=546 if closing >= 0 else 463)
     _text(pdf, 50, y + 40, "Garantie de vos dépôts")
     _text(pdf, 50, y + 55, "Total de vos services et frais bancaires")
     _text(pdf, 50, y + 68, "Services et frais facturés"); _text(pdf, 439, y + 68, "0,00 €")

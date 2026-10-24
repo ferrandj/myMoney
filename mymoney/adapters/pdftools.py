@@ -43,7 +43,36 @@ def extract_words(data: bytes, x_tolerance: float = 1.0) -> list[list[dict]]:
         return pages
 
 
-def lines(words: list[dict], tolerance: float = 3.0) -> list[list[dict]]:
+_GROUP = re.compile(r"^\d{3}$")
+_LAST_GROUP = re.compile(r"^\d{3},\d{2}$")
+_THOUSANDS_GAP = 4.0  # points: the space inside an amount is narrower than the one between two words
+
+
+def join_thousands(row: list[dict]) -> list[dict]:
+    """Glue "2" + "000,00" back into "2 000,00". Read with a small tolerance, the space that separates the thousands splits
+    an amount in two words, and the first part would otherwise end up in the label (or be lost)."""
+    out: list[dict] = []
+    i = 0
+    while i < len(row):
+        w = row[i]
+        if re.fullmatch(r"\d{1,3}", w["text"]):
+            group, j, end = [w["text"]], i + 1, w
+            while j < len(row) and row[j]["x0"] - end["x1"] < _THOUSANDS_GAP and (_GROUP.match(row[j]["text"]) or _LAST_GROUP.match(row[j]["text"])):
+                group.append(row[j]["text"])
+                end = row[j]
+                j += 1
+                if _LAST_GROUP.match(end["text"]):
+                    break
+            if len(group) > 1 and _LAST_GROUP.match(group[-1]):
+                out.append({**w, "text": " ".join(group), "x1": end["x1"]})
+                i = j
+                continue
+        out.append(w)
+        i += 1
+    return out
+
+
+def lines(words: list[dict], tolerance: float = 3.0, join_amounts: bool = False) -> list[list[dict]]:
     """Group the words of a page into visual lines (top to bottom, left to right)."""
     ordered = sorted(words, key=lambda w: (w["top"], w["x0"]))
     rows: list[list[dict]] = []
@@ -54,4 +83,4 @@ def lines(words: list[dict], tolerance: float = 3.0) -> list[list[dict]]:
             rows.append([w])
     for row in rows:
         row.sort(key=lambda w: w["x0"])
-    return rows
+    return [join_thousands(row) for row in rows] if join_amounts else rows

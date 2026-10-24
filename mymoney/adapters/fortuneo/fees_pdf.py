@@ -54,7 +54,7 @@ class FortuneoFeesPdf(Adapter):
         st = ParsedStatement(source_format="pdf", institution=self.institution, adapter_id=self.id, document_kind=self.kind, account_type="checking")
         rows: list[list[dict]] = []
         for words in doc.words(1.0):
-            rows += pdftools.lines(words)
+            rows += pdftools.lines(words, join_amounts=True)
         texts = [" ".join(w["text"] for w in row) for row in rows]
         read_identity(st, texts)
 
