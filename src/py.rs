@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn json_like_python() {
         let v: Value = serde_json::from_str(r#"{"a": 1, "b": [1.0, 0.85, "é"], "c": null}"#).unwrap();
-        assert_eq!(json_dumps(&v), r#"{"a": 1, "b": [1.0, 0.85, "é"], "c": null}"#);
+        assert_eq!(json_dumps(&v), r#"{"a": 1, "b": [1.0, 0.85, "\u00e9"], "c": null}"#);
     }
 
     #[test]
