@@ -8,7 +8,7 @@ so the adapter is exercised on realistic geometry without a single personal byte
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from fpdf import FPDF
@@ -89,6 +89,7 @@ def boursobank_statement_pdf(spec: Spec) -> bytes:
     pdf = FPDF(unit="pt", format=(595, 842))
     pdf.set_auto_page_break(False)
     pdf.set_title(spec.title)
+    pdf.set_creation_date(datetime(2026, 10, 1))  # same spec, same bytes: only `title` makes another "download" of the statement
     pdf.set_font("Helvetica", size=9)
     key = rib_key(spec.bank, spec.branch, spec.account)
     iban = make_iban(f"{spec.bank}{spec.branch}{spec.account}{key}")
@@ -214,6 +215,7 @@ def boursobank_savings_pdf(spec: SavingsSpec) -> bytes:
     pdf = FPDF(unit="pt", format=(595, 842))
     pdf.set_auto_page_break(False)
     pdf.set_title(spec.title)
+    pdf.set_creation_date(datetime(2026, 10, 1))
     pdf.set_font("Helvetica", size=9)
     pdf.add_page()
     t = pdf.text

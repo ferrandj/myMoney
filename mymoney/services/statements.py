@@ -14,9 +14,32 @@ from decimal import Decimal
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..adapters.base import ParsedStatement
+from ..adapters.base import ParsedStatement, TransactionData
 from ..models import ACCOUNT_TYPES, Account, Document, Holding, Statement, Transaction
 from . import counterparties, ledger
+
+
+@dataclass
+class DedupReport:
+    """A statement for a period that was already imported: does the new file change anything?"""
+
+    previous: Statement  # the statement already imported for this account and period
+    document: Document | None  # the file it came from (None once that file was deleted)
+    extra: list[TransactionData]  # lines the new file has and the account does not (new, or same day and amount but another text)
+    missing: list[Transaction]  # lines the old file brought that the new file no longer has
+    opening: tuple[Decimal, Decimal] | None  # (old, new) when the opening balance differs
+    closing: tuple[Decimal, Decimal] | None
+    new_count: int = 0  # of `extra`: lines nothing like them is stored
+    probable_count: int = 0  # of `extra`: same day and amount as a stored line, another text
+
+    @property
+    def identical(self) -> bool:
+        return not (self.extra or self.missing or self.opening or self.closing)
+
+    @property
+    def can_replace(self) -> bool:
+        """Replacing needs the old file: it is what tells which lines to remove."""
+        return self.document is not None
 
 
 @dataclass
@@ -31,6 +54,7 @@ class ImportPlan:
     newer_balance: bool = True  # this statement ends after the balance currently stored
     # The holder line looks cut by the bank and the full names were never given: ask once, before importing.
     ask_holder: bool = False
+    dedup: DedupReport | None = None  # set when this statement repeats one already imported
 
     def statuses(self) -> list[str]:
         """For each line of the statement: new | exact (already stored) | probable (same day and amount as a stored line)."""
@@ -95,9 +119,25 @@ def plan_import(session: Session, st: ParsedStatement, account: Account | None) 
             elif other.period_start <= st.period_end and other.period_end >= st.period_start:
                 plan.overlaps.append(other)
         plan.issues = _continuity(st, [s for s in existing if s is not plan.already_imported])
+        if plan.already_imported is not None:
+            plan.dedup = _compare(session, st, plan.already_imported, classified)
     if st.balance is not None and account.balance_date is not None and st.balance_date is not None:
         plan.newer_balance = st.balance_date >= account.balance_date.date()
     return plan
+
+
+def _compare(session: Session, st: ParsedStatement, previous: Statement, classified: ledger.Classified) -> DedupReport:
+    """What the new file has that the account lacks, and what the old file had that it lost."""
+    document = session.get(Document, previous.document_id) if previous.document_id else None
+    missing: list[Transaction] = []
+    if document is not None:
+        new_fingerprints = set(ledger.fingerprints(st.transactions))
+        old = session.scalars(select(Transaction).where(Transaction.document_id == document.id))
+        missing = [t for t in old if t.fingerprint not in new_fingerprints]
+    opening = (previous.opening_balance, st.opening_balance) if None not in (previous.opening_balance, st.opening_balance) and previous.opening_balance != st.opening_balance else None
+    closing = (previous.closing_balance, st.balance) if None not in (previous.closing_balance, st.balance) and previous.closing_balance != st.balance else None
+    extra = [t for t, _ in classified.new] + [t for t, _ in classified.probable]
+    return DedupReport(previous, document, extra, missing, opening, closing, len(classified.new), len(classified.probable))
 
 
 def _holder_unconfirmed(st: ParsedStatement, account: Account | None) -> bool:

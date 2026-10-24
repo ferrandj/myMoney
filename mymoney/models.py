@@ -164,7 +164,11 @@ class Document(Base):
     kind: Mapped[str] = mapped_column(String(30), default="statement")
     account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"))
     # uploaded (stored only) | needs_choice (several adapters fit: the user picks) | parsed | imported | failed
+    # | duplicate (nothing new compared with an imported file: set aside, deleted after a day unless kept)
+    # | copy (a duplicate the user chose to keep: nothing to import)
     status: Mapped[str] = mapped_column(String(20), default="uploaded")
+    # The imported document this one repeats (same account, same period), when there is one.
+    duplicate_of: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
     adapter_id: Mapped[str | None] = mapped_column(String(60))
     # {"adapter", "candidates", "decision", "message", "statements": [...], "error"}
     parse_result: Mapped[dict | None] = mapped_column(JSON)

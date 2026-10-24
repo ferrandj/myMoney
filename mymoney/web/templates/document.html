@@ -13,6 +13,21 @@
 {% if result.message %}<p class="card warn">{{ result.message }}</p>{% endif %}
 {% if result.error %}<p class="card warn">Lecture impossible : {{ result.error }}. Le document reste stocké chiffré ; tu peux choisir une autre lecture ci-dessous, ou saisir le solde à la main sur le compte.</p>{% endif %}
 
+{% if doc.status in ('duplicate', 'copy') %}
+<section class="card dedup">
+  <h2>{{ 'Doublon : aucune différence' if doc.status == 'duplicate' else 'Copie conservée' }}</h2>
+  <p>Ce fichier reprend {% if original %}<a href="/documents/{{ original.id }}">« {{ original.filename }} »</a>{% else %}un fichier déjà importé{% endif %} :
+    même compte, même période, mêmes opérations, mêmes soldes.
+    {% if doc.status == 'duplicate' %}Il est <strong>écarté</strong> et sera supprimé automatiquement dans {{ QUARANTINE_HOURS }} h après son dépôt.{% else %}Tu l'as gardé en copie : rien n'est importé depuis lui.{% endif %}</p>
+  {% if doc.status == 'duplicate' %}
+  <div class="actions">
+    <form method="post" action="/documents/{{ doc.id }}/keep"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">Le garder quand même (copie)</button></form>
+    <form method="post" action="/documents/{{ doc.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn danger">Le supprimer maintenant</button></form>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if doc.status in ('needs_choice', 'failed', 'uploaded') or (doc.status == 'parsed' and result.decision != 'auto') %}
 <section class="card">
   <h2>{{ 'Quelle lecture choisir ?' if doc.status == 'needs_choice' else 'Changer de lecture' }}</h2>
@@ -40,7 +55,7 @@
 </section>
 {% endif %}
 
-{% for plan in plans %}
+{% for plan in (plans if doc.status not in ('duplicate', 'copy') else []) %}
 {% set st = plan.statement %}
 {% set idx = loop.index0 %}
 {% set statuses = plan.statuses() %}
@@ -78,7 +93,54 @@
     {% if not st.warnings and not plan.issues and not plan.already_imported and not plan.overlaps and not plan.classified.exact and not plan.classified.probable %}<li class="ok">✓ Aucun doublon, aucune incohérence détectée avec les relevés déjà importés.</li>{% endif %}
   </ul>
 
-  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">
+  {% if plan.dedup and doc.status == 'parsed' %}
+  {% set dd = plan.dedup %}
+  <div class="dedup-panel">
+    <h3>{{ 'Ce relevé est déjà importé : aucune différence' if dd.identical else 'Ce relevé existe déjà, mais ce fichier diffère' }}</h3>
+    <p>Même compte, même période ({{ st.period_start|frdate }} → {{ st.period_end|frdate }}) que
+      {% if dd.document %}<a href="/documents/{{ dd.document.id }}">« {{ dd.document.filename }} »</a>{% else %}un relevé importé{% endif %}, importé le {{ dd.previous.imported_at|frdate }}{% if not dd.document %} (son fichier n'existe plus){% endif %}.</p>
+    {% if dd.identical %}
+      <p>Mêmes opérations et mêmes soldes : ce fichier n'apporte rien.</p>
+    {% else %}
+    <ul class="checks">
+      {% if dd.new_count %}<li class="bad">⚠ <strong>{{ dd.new_count }} opération(s) en plus</strong> dans ce fichier.</li>{% endif %}
+      {% if dd.probable_count %}<li class="bad">⚠ {{ dd.probable_count }} opération(s) probablement déjà présente(s) sous un autre libellé.</li>{% endif %}
+      {% if dd.missing %}<li class="bad">⚠ <strong>{{ dd.missing|length }} opération(s) de l'ancien fichier absente(s)</strong> de celui-ci.</li>{% endif %}
+      {% if dd.opening %}<li class="bad">⚠ Solde initial : {{ dd.opening[0]|money(st.currency) }} avant, {{ dd.opening[1]|money(st.currency) }} maintenant.</li>{% endif %}
+      {% if dd.closing %}<li class="bad">⚠ Solde final : {{ dd.closing[0]|money(st.currency) }} avant, {{ dd.closing[1]|money(st.currency) }} maintenant.</li>{% endif %}
+    </ul>
+    {% if dd.extra or dd.missing %}
+    <details>
+      <summary>Voir les différences</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
+        {% for t in dd.extra %}<tr><td><span class="tag conf-medium">en plus</span></td><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}</td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+        {% for t in dd.missing %}<tr><td><span class="tag conf-low">absente</span></td><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}</td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+      </table></div>
+    </details>
+    {% endif %}
+    {% endif %}
+    <div class="actions">
+      {% if not dd.identical %}
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Remplacer l'ancien fichier ? Il sera supprimé avec les opérations qu'il avait apportées, et celles de ce fichier seront importées à la place.">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="replace">
+        <button class="btn primary" {% if not dd.can_replace %}disabled title="L'ancien fichier n'existe plus"{% endif %}>Remplacer l'ancien</button></form>
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="keep">
+        <button class="btn">Stocker avec l'ancien (garder les deux, importer ce qui est nouveau)</button></form>
+      {% else %}
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="copy">
+        <button class="btn">Le garder en copie</button></form>
+      {% endif %}
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Écarter ce fichier ? L'ancien reste en place.">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="discard">
+        <button class="btn {{ 'danger' if dd.identical else 'ghost' }}">Écarter ce fichier</button></form>
+    </div>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Compte de destination
       <select name="account_id" data-toggle-new>

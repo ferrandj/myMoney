@@ -180,3 +180,10 @@ tfoot th { border-top: 2px solid var(--border); text-transform: none; font-size:
 a.card.chart { display: block; color: inherit; }
 .chart-svg .dot { fill: currentColor; stroke: var(--surface); stroke-width: 1.5; }
 .ranking li { grid-template-columns: minmax(110px, 1.3fr) 1fr auto; }
+
+.dedup-panel { border: 1px solid var(--warn); border-radius: var(--radius); padding: 14px; margin: 0 0 16px; background: color-mix(in srgb, var(--warn) 6%, var(--surface)); }
+.dedup-panel h3 { margin-top: 0; }
+.actions form[data-confirm] { margin: 0; }
+button[disabled] { opacity: .5; cursor: not-allowed; }
+
+[hidden] { display: none !important; }

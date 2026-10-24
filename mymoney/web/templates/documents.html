@@ -12,6 +12,23 @@
   <small class="muted">Chaque fichier est chiffré (AES-256-GCM) dès son arrivée, puis reconnu automatiquement : l'adapter de l'établissement et du type de document est choisi tout seul. En cas de doute, l'application te demande. Les doublons sont signalés.</small>
   <button class="btn primary">Envoyer</button>
 </form>
+{% if aside %}
+<section class="card dedup">
+  <h2>Doublons écartés <span class="tag">{{ aside|length }}</span></h2>
+  <p class="small muted">Ces fichiers n'apportent aucune différence avec un relevé déjà importé. Ils sont supprimés automatiquement {{ QUARANTINE_HOURS }} h après leur dépôt, sauf si tu les gardes en copie.</p>
+  <div class="table-wrap"><table>
+    {% for d, original in aside %}
+    <tr>
+      <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a><div class="muted small">doublon de {{ original or 'un fichier supprimé' }}</div></td>
+      <td class="nowrap actions">
+        <form method="post" action="/documents/{{ d.id }}/keep"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small">Garder en copie</button></form>
+        <form method="post" action="/documents/{{ d.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small danger">Supprimer</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
 {% if documents %}
 <section class="card">
   <div class="table-wrap">
