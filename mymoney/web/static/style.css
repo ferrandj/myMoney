@@ -91,6 +91,7 @@ table.accounts td:first-child { width: 100%; }
 .status-ok, .status-imported, .conf-high { color: var(--pos); }
 .status-error, .status-failed, .conf-low { color: var(--neg); }
 .status-needs_auth, .status-needs_input, .status-parsed, .conf-medium { color: var(--warn); }
+.conf-none { color: var(--muted); }
 .status-running { color: var(--primary); }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
 .kv dt { color: var(--muted); }

@@ -10,6 +10,16 @@
   · stocké chiffré, {{ (doc.size / 1024)|round(0)|int }} Ko
 </p>
 
+{% if queue %}
+<section class="card review-bar">
+  <p><strong>Revue des documents à valider</strong> · {{ queue.waiting }} en attente.
+    Valide celui-ci, ou passe au suivant : tu y reviendras plus tard.</p>
+  <div class="actions">
+    {% if queue.next %}<a class="btn" href="/documents/review?after={{ doc.id }}">Passer au suivant →</a>{% endif %}
+    <a class="btn ghost" href="/documents#a-valider">Arrêter la revue</a>
+  </div>
+</section>
+{% endif %}
 {% if result.message %}<p class="card warn">{{ result.message }}</p>{% endif %}
 {% if result.error %}<p class="card warn">Lecture impossible : {{ result.error }}. Le document reste stocké chiffré ; tu peux choisir une autre lecture ci-dessous, ou saisir le solde à la main sur le compte.</p>{% endif %}
 
@@ -72,7 +82,7 @@
   <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable).</p>
   {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec tes papiers.</p>
   {% else %}
-  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}<input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>
   {% endif %}
 </section>
 {% elif st.document_kind in LOAN_KINDS %}
@@ -122,7 +132,7 @@
     {% if plan.account and plan.candidates|length == 1 and not plan.loan_existing and not plan.loan_unverified %}<li class="ok">✓ Rattaché au prêt « {{ plan.account.name }} ».</li>{% endif %}
   </ul>
   {% if doc.status != 'imported' %}
-  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Prêt auquel le rattacher
       <select name="account_id" data-toggle-new>
@@ -179,7 +189,7 @@
     {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
   </ul>
   {% if doc.status != 'imported' %}
-  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Compte auquel le rattacher
       <select name="account_id" data-toggle-new>
@@ -262,25 +272,25 @@
     {% endif %}
     <div class="actions">
       {% if not dd.identical %}
-      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Remplacer l'ancien fichier ? Il sera supprimé avec les opérations qu'il avait apportées, et celles de ce fichier seront importées à la place.">
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Remplacer l'ancien fichier ? Il sera supprimé avec les opérations qu'il avait apportées, et celles de ce fichier seront importées à la place.">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="replace">
         <button class="btn primary" {% if not dd.can_replace %}disabled title="L'ancien fichier n'existe plus"{% endif %}>Remplacer l'ancien</button></form>
-      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="keep">
         <button class="btn">Stocker avec l'ancien (garder les deux, importer ce qui est nouveau)</button></form>
       {% else %}
-      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="copy">
         <button class="btn">Le garder en copie</button></form>
       {% endif %}
-      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Écarter ce fichier ? L'ancien reste en place.">
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Écarter ce fichier ? L'ancien reste en place.">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="discard">
         <button class="btn {{ 'danger' if dd.identical else 'ghost' }}">Écarter ce fichier</button></form>
     </div>
   </div>
   {% endif %}
 
-  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Compte de destination
       <select name="account_id" data-toggle-new>

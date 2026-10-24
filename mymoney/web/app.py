@@ -57,6 +57,32 @@ DOCUMENT_STATUS = {
 
 
 # ----------------------------------------------------------------- formatting
+RELIABILITY = {"high": "élevée", "medium": "moyenne", "low": "faible", "none": "non lu"}
+
+
+def reliability(doc) -> dict:
+    """How far to trust what was read from a document, for the lists: the weakest statement decides; a document the adapters
+    could not read has no reliability yet."""
+    result = doc.parse_result or {}
+    statements = result.get("statements") or []
+    if doc.status in ("uploaded", "needs_choice", "failed") or not statements:
+        return {"code": "none", "label": RELIABILITY["none"], "detail": "Pas encore lu : ouvre-le pour choisir la lecture"}
+    order = ["low", "medium", "high"]
+    levels = [st.get("confidence") if st.get("confidence") in order else "medium" for st in statements]
+    code = min(levels, key=order.index)
+    warnings = sum(len(st.get("warnings") or []) for st in statements)
+    detail = {
+        "high": "Contrôles réussis (soldes et totaux qui concordent)",
+        "medium": "Lecture plausible mais pas entièrement recoupée",
+        "low": "Lecture douteuse : à vérifier ligne par ligne",
+    }[code]
+    if warnings:
+        detail += f" · {warnings} avertissement(s)"
+    if doc.status == "parsed" and result.get("decision") not in (None, "auto"):
+        detail += " · type de document à confirmer"
+    return {"code": code, "label": RELIABILITY[code], "detail": detail}
+
+
 def money_text(value, currency: str = "EUR", decimals: int = 2) -> str:
     """An amount as plain text (for attributes and messages)."""
     if value is None:
@@ -219,7 +245,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.globals.update(
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
         DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS, LOAN_KINDS=loan_service.LOAN_KINDS,
-        THEME_GROUPS=themes.groups(), identity_text=identity_text,
+        THEME_GROUPS=themes.groups(), identity_text=identity_text, reliability=reliability,
     )
 
     def contact_choices():
@@ -874,8 +900,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             text += f" · {result['skipped_probable']} doublon(s) probable(s) ignoré(s)"
         return ("Importé automatiquement : " if auto else "Import terminé : ") + text
 
+    @app.get("/documents/review")
+    async def documents_review(request: Request, after: int | None = None):
+        """Walk through the unvalidated documents one after the other (oldest period first)."""
+        nxt, waiting = await run_in_threadpool(core.next_pending, after)
+        if nxt is None:
+            done = "Revue terminée" + (f" : {waiting} document(s) restent à valider" if waiting else " : plus rien à valider")
+            return redirect("/documents", done)
+        return redirect(f"/documents/{nxt}?review=1")
+
+    async def after_step(doc_id: int, form, fallback: str, message: str | None = None):
+        """In review mode, the next document follows whatever was just done; otherwise the usual page."""
+        if form.get("review"):
+            nxt, waiting = await run_in_threadpool(core.next_pending, doc_id)
+            if nxt is not None:
+                return redirect(f"/documents/{nxt}?review=1", message)
+            return redirect("/documents", (message + " · " if message else "") + "Revue terminée" + (f" : {waiting} document(s) restent à valider" if waiting else " : plus rien à valider"))
+        return redirect(fallback, message)
+
     @app.get("/documents/{doc_id}")
-    async def document_review(request: Request, doc_id: int):
+    async def document_review(request: Request, doc_id: int, review: int = 0):
         review = await run_in_threadpool(core.review_document, doc_id)
         if review is None:
             raise HTTPException(404)
@@ -890,9 +934,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with core.db.session() as s:
             to_identify = contact_service.unresolved(s, document_id=doc_id) if doc.status == "imported" else []
             original = s.get(Document, doc.duplicate_of) if doc.duplicate_of else None
+        queue = None
+        if review and doc.status == "parsed":
+            nxt, waiting = await run_in_threadpool(core.next_pending, doc_id)
+            queue = {"waiting": waiting, "next": nxt}
         return render(
             request, "document.html", doc=doc, result=result, plans=review["plans"], accounts=review["accounts"],
-            candidates=candidates, adapters=ADAPTERS, to_identify=to_identify, original=original,
+            candidates=candidates, adapters=ADAPTERS, to_identify=to_identify, original=original, queue=queue,
         )
 
     @app.post("/documents/{doc_id}/analyze")
@@ -914,8 +962,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             result = await run_in_threadpool(core.import_statement, doc_id, index, form)
         except Exception as exc:
-            return redirect(f"/documents/{doc_id}", f"Import impossible : {exc}")
-        return redirect(after_import(result, doc_id), import_message(result))
+            return redirect(f"/documents/{doc_id}" + ("?review=1" if form.get("review") else ""), f"Import impossible : {exc}")
+        return await after_step(doc_id, form, after_import(result, doc_id), import_message(result))
 
     @app.post("/documents/{doc_id}/dedup/{index}")
     async def document_dedup(request: Request, doc_id: int, index: int):
@@ -925,19 +973,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             if action == "replace":
                 result = await run_in_threadpool(core.replace_document, doc_id, index)
-                return redirect(
-                    f"/accounts/{result['account_id']}",
+                return await after_step(
+                    doc_id, form, f"/accounts/{result['account_id']}",
                     f"« {result['replaced']} » remplacé : {result['removed']} opération(s) retirée(s), {result['added']} ajoutée(s) depuis le nouveau fichier",
                 )
             if action == "keep":
                 result = await run_in_threadpool(core.import_default, doc_id, index, True)
-                return redirect(f"/accounts/{result['account_id']}", "Les deux fichiers sont gardés. " + import_message(result))
+                return await after_step(doc_id, form, f"/accounts/{result['account_id']}", "Les deux fichiers sont gardés. " + import_message(result))
             if action == "copy":
                 await run_in_threadpool(core.keep_duplicate, doc_id)
-                return redirect(f"/documents/{doc_id}", "Copie conservée à côté de l'original (rien n'est importé)")
+                return await after_step(doc_id, form, f"/documents/{doc_id}", "Copie conservée à côté de l'original (rien n'est importé)")
             if action == "discard":
                 await run_in_threadpool(core.delete_document, doc_id)
-                return redirect("/documents", "Nouveau fichier écarté : l'ancien reste en place")
+                return await after_step(doc_id, form, "/documents", "Nouveau fichier écarté : l'ancien reste en place")
         except Exception as exc:
             return redirect(f"/documents/{doc_id}", f"Impossible : {exc}")
         return redirect(f"/documents/{doc_id}", "Action inconnue")

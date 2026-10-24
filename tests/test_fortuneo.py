@@ -381,3 +381,25 @@ def test_web_validate_all_leaves_a_cut_joint_holder_name_to_the_user(client):
     assert "0 document(s) validé(s)" in done.text and "1 à regarder un par un" in done.text
     with client.core.db.session() as s:
         assert s.scalar(select(Account)) is None
+
+
+def test_web_the_documents_show_their_reliability_and_can_be_reviewed_one_after_the_other(client):
+    csrf = login(client)
+    upload(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    upload(client, csrf, "joint.pdf", fortuneo_statement_pdf(fortuneo_september(holder="M PRENOMLONG NOMDEFAMILLE OU MME AUTRE NOM", account="0001234500", title="b")))
+    page = client.get("/documents")
+    assert page.text.count("fiabilité élevée") >= 2 and "Passer en revue un par un" in page.text
+
+    first = client.get("/documents/review")
+    assert str(first.url).endswith("?review=1") or "review=1" in str(first.url)
+    assert "Revue des documents à valider" in first.text and "2 en attente" in first.text
+    doc = re.search(r"/documents/(\d+)", str(first.url)).group(1)
+
+    skipped = client.get(f"/documents/review?after={doc}")
+    other = re.search(r"/documents/(\d+)", str(skipped.url)).group(1)
+    assert other != doc and "Revue des documents à valider" in skipped.text
+
+    # Validating inside the review leads to the next waiting document, not to the account page.
+    done = client.post(f"/documents/{other}/import/0", data={"csrf": csrf, "review": "1", "account_id": "new", "name": "Compte", "holder_name": "M A OU MME B", "import_transactions": "on"})
+    assert "/accounts/" not in str(done.url)
+    assert "Revue des documents à valider" in done.text or "Revue terminée" in done.text
