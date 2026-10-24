@@ -14,6 +14,9 @@ from .base import Adapter, ParsedStatement, SourceDocument
 from .boursobank.savings_pdf import BoursoBankSavingsPdf
 from .boursobank.statement_pdf import BoursoBankStatementPdf
 from .common import find_iban, find_institution
+from .fortuneo.deposit_guarantee_pdf import FortuneoDepositGuaranteePdf
+from .fortuneo.fees_pdf import FortuneoFeesPdf
+from .fortuneo.statement_pdf import FortuneoStatementPdf
 from .generic import GenericCsv, GenericOfx, GenericPdf, GenericQif
 from .revolut.statement_csv import RevolutStatementCsv
 
@@ -23,6 +26,9 @@ log = logging.getLogger(__name__)
 ADAPTERS: list[type[Adapter]] = [
     BoursoBankStatementPdf,
     BoursoBankSavingsPdf,
+    FortuneoStatementPdf,
+    FortuneoFeesPdf,
+    FortuneoDepositGuaranteePdf,
     RevolutStatementCsv,
     GenericOfx,
     GenericQif,

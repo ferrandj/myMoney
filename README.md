@@ -34,9 +34,14 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 |---|---|---|
 | BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » : compte courant, compte joint, LDDS et autres livrets (même mise en page, avec RIB et IBAN ; le type du compte est lu sur la ligne « Compte d'épargne : … ») |
 | BoursoBank | `boursobank.savings_pdf` | PDF « Extrait de votre Plan Epargne Logement » (épargne : numéro de compte, sans RIB ni IBAN ; validé sur un PEL) |
+| Fortuneo | `fortuneo.statement_pdf` | PDF « Relevé de Compte » mensuel (compte courant) : RIB, IBAN, BIC, titulaires, soldes, opérations ; contrôlé aussi avec les totaux débit / crédit imprimés par la banque |
+| Fortuneo | `fortuneo.fees_pdf` | PDF « Relevé de frais » annuel : frais et intérêts de l'année, service par service. Aucune opération : il est **rattaché au compte** (retrouvé par l'IBAN) et comparé aux lignes de frais des relevés importés |
+| Fortuneo | `fortuneo.deposit_guarantee_pdf` | lettre annuelle sur la garantie des dépôts (FGDR) : aucune opération, elle est **classée automatiquement** avec tes papiers (chiffrée, téléchargeable) |
 | Revolut | `revolut.statement_csv` | export CSV d'un compte |
 | tous | `generic.ofx`, `generic.qif` | fichiers OFX / QFX et QIF |
 | tous | `generic.csv`, `generic.pdf` | lecture « devinée » (colonnes date / montant / débit / crédit) : jamais importée sans que tu voies ce qui a été compris |
+
+Certains documents ne contiennent aucune opération (récapitulatif des frais, lettres d'information) : ils sont reconnus, datés et conservés comme les autres fichiers, et leur contenu utile (frais, plafond de garantie) est gardé. Dans la bibliothèque, chaque document affiche son type et son établissement.
 
 Pour ajouter un adapter (un autre établissement, ou un autre type de document d'un établissement déjà géré), il suffit d'un document d'exemple : voir « Développement ».
 
@@ -116,6 +121,7 @@ mymoney/
     base.py        contrat (Adapter, Detection, SourceDocument, ParsedStatement)
     registry.py    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
     boursobank/    _table.py (tableau des mouvements commun), statement_pdf.py (compte courant), savings_pdf.py (PEL, épargne)
+    fortuneo/      statement_pdf.py (relevé mensuel), fees_pdf.py (récapitulatif des frais), deposit_guarantee_pdf.py (lettre FGDR)
     revolut/       statement_csv.py : export CSV
     generic/       OFX, QIF, CSV et PDF « devinés »
   services/    import (doublons, cohérence), contacts, prix, valorisation, taux réglementés
@@ -128,6 +134,6 @@ mymoney/
 2. `detect(doc)` note de 0 à 1 à quel point le document est bien de ce type, d'après ce qui le distingue des autres documents du même établissement (titre, en-têtes de colonnes, mentions) ; il ne lit rien de personnel.
 3. `parse(doc)` renvoie des `ParsedStatement` : identité du compte (titulaire, adresse, IBAN, RIB), période, soldes initial et final, et des `TransactionData` structurées (date, date de valeur, type, interlocuteur, IBAN de l'interlocuteur, référence, libellé complet dans `raw`). Les soldes servent au contrôle : opérations lues = solde initial → solde final.
 4. Ajoute la classe à `ADAPTERS` dans `registry.py`.
-5. **Écris le test avec un document fictif** (voir `tests/fixtures.py`, qui dessine un faux relevé à la mise en page réelle). Ne commite jamais un vrai relevé.
+5. **Écris le test avec un document fictif** (voir `tests/fixtures.py` et `tests/fixtures_fortuneo.py`, qui dessinent de faux documents à la mise en page réelle). Ne commite jamais un vrai relevé.
 
 Les taux réglementés se mettent à jour dans `mymoney/services/rates.py` (une ligne par changement, les 1er février et 1er août).

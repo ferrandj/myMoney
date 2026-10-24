@@ -67,6 +67,30 @@
 </section>
 {% endif %}
 
+{% if fee_rows %}
+<section class="card">
+  <h2>Frais et intérêts</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Période</th><th class="num">Frais payés</th><th class="num">Intérêts payés</th><th class="num">Intérêts acquis</th><th>Contrôle avec les opérations</th></tr></thead>
+    {% for r in fee_rows %}
+    {% set f = r.summary %}
+    <tr>
+      <td class="nowrap">{{ f.period_start|frdate }} → {{ f.period_end|frdate }}{% if f.document_id %} <a class="small" href="/documents/{{ f.document_id }}">document</a>{% endif %}</td>
+      <td class="num"><strong>{{ f.fees_total|money(account.currency) }}</strong></td>
+      <td class="num">{{ f.interest_paid|money(account.currency) }}</td>
+      <td class="num">{% if f.interest_earned is none %}—{% else %}{{ f.interest_earned|money(account.currency) }}{% endif %}</td>
+      <td class="small">
+        {% if r.complete and r.seen == f.fees_total %}<span class="pos">✓ Cohérent : {{ r.seen_count }} ligne(s) de frais, {{ r.seen|money(account.currency) }}</span>
+        {% elif r.complete %}<span class="warn">⚠ Les relevés montrent {{ r.seen|money(account.currency) }} de frais ({{ r.seen_count }} ligne(s)), le récapitulatif {{ f.fees_total|money(account.currency) }}</span>
+        {% else %}<span class="muted">Relevés incomplets sur cette période : {{ r.seen|money(account.currency) }} de frais retrouvés pour l'instant</span>{% endif %}
+      </td>
+    </tr>
+    {% if f.services %}<tr><td colspan="5" class="small muted">{% for s in f.services %}{{ s.name }} : {{ s.billed }} × {{ s.unit_price|money(account.currency) }}{% if not loop.last %} · {% endif %}{% endfor %}</td></tr>{% endif %}
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
+
 {% if to_identify %}
 <section class="card">
   <h2>À identifier</h2>

@@ -229,6 +229,24 @@ class Statement(Base):
     account: Mapped[Account] = relationship(back_populates="statements")
 
 
+class FeeSummary(Base):
+    """The yearly recap of an account's fees and interest, as the bank states it (no operations in it)."""
+
+    __tablename__ = "fee_summaries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    fees_total: Mapped[Decimal] = mapped_column(default=Decimal(0))
+    interest_paid: Mapped[Decimal | None] = mapped_column()
+    interest_earned: Mapped[Decimal | None] = mapped_column()  # None: "intérêts non applicables"
+    # [{"category", "name", "used", "unit_price", "billed", "total"}]
+    services: Mapped[list | None] = mapped_column(JSON)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class GapAck(Base):
     """A stretch of days without statement that the user said is normal: it is not reported any more."""
 

@@ -59,6 +59,76 @@
 {% set st = plan.statement %}
 {% set idx = loop.index0 %}
 {% set statuses = plan.statuses() %}
+{% if st.document_kind == 'info' %}
+<section class="card">
+  <h2>{{ st.extra.get('title') or "Document d'information" }} <span class="tag conf-high">à conserver</span></h2>
+  <dl class="kv">
+    {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+    {% if st.holder_name %}<dt>Destinataire</dt><dd>{{ st.holder_name }}</dd>{% endif %}
+    {% if st.holder_address %}<dt>Adresse</dt><dd>{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+    {% if st.extra.get('issued_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
+    {% if st.extra.get('ceiling') %}<dt>Plafond de la garantie</dt><dd>{{ st.extra.ceiling }} par déposant et par établissement</dd>{% endif %}
+  </dl>
+  <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable).</p>
+  {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec tes papiers.</p>
+  {% else %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>
+  {% endif %}
+</section>
+{% elif st.document_kind == 'fees_summary' %}
+<section class="card">
+  <h2>{{ st.account_label or 'Récapitulatif des frais' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
+  <div class="grid">
+    <dl class="kv">
+      {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+      {% if st.holder_name %}<dt>Titulaire</dt><dd>{{ st.holder_name }}</dd>{% endif %}
+      {% if st.holder_address %}<dt>Adresse</dt><dd>{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban }}</code></dd>{% endif %}
+      {% if st.bic %}<dt>BIC</dt><dd><code>{{ st.bic }}</code></dd>{% endif %}
+      {% if st.bank_code %}<dt>RIB</dt><dd><code>{{ st.bank_code }} {{ st.branch_code }} {{ st.account_number }} {{ st.rib_key }}</code></dd>{% endif %}
+    </dl>
+    <dl class="kv">
+      <dt>Période</dt><dd>{{ st.period_start|frdate }} → {{ st.period_end|frdate }}</dd>
+      <dt>Frais payés</dt><dd><strong>{{ st.extra.get('fees_total')|money }}</strong></dd>
+      <dt>Intérêts payés</dt><dd>{{ st.extra.get('interest_paid')|money }}</dd>
+      <dt>Intérêts acquis</dt><dd>{% if st.extra.get('interest_earned') is none %}non applicables{% else %}{{ st.extra.interest_earned|money }}{% endif %}</dd>
+    </dl>
+  </div>
+  {% if st.extra.get('services') %}
+  <h3>Frais par service</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Catégorie</th><th>Service</th><th class="num">Utilisé</th><th class="num">Prix unitaire</th><th class="num">Facturé</th><th class="num">Total</th></tr></thead>
+    {% for s in st.extra.services %}<tr><td class="small">{{ s.category or '' }}</td><td>{{ s.name }}</td><td class="num">{{ s.used }}</td><td class="num">{{ s.unit_price|money }}</td><td class="num">{{ s.billed }}</td><td class="num">{{ s.total|money }}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  <h3>Contrôles</h3>
+  <ul class="checks small">
+    {% if st.confidence == 'high' %}<li class="ok">✓ Le total des frais correspond à la somme des services listés.</li>{% endif %}
+    {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
+    {% if plan.fee_existing %}<li class="bad">⚠ <strong>Déjà rattaché</strong> : ce compte a déjà un récapitulatif des frais pour cette période (importé le {{ plan.fee_existing.imported_at|frdate }}).</li>{% endif %}
+    {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
+  </ul>
+  {% if doc.status != 'imported' %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Compte auquel le rattacher
+      <select name="account_id" data-toggle-new>
+        <option value="new" {% if not plan.account %}selected{% endif %}>➕ Créer le compte à partir de ce document</option>
+        {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset class="new-account">
+      <legend>Nouveau compte</legend>
+      <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
+      <label>Établissement <input name="institution" value="{{ st.institution or '' }}"></label>
+      <label>Type <select name="account_type">{% for code, (label, cat) in ACCOUNT_TYPES.items() %}<option value="{{ code }}" {% if st.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    </fieldset>
+    {% if plan.fee_existing %}<label class="check"><input type="checkbox" name="force"> Remplacer le récapitulatif déjà rattaché</label>{% endif %}
+    <button class="btn primary">Rattacher au compte</button>
+  </form>
+  {% else %}<p class="flash">✓ Rattaché {% if doc.account_id %}à <a href="/accounts/{{ doc.account_id }}">ce compte</a>{% endif %}.</p>{% endif %}
+</section>
+{% else %}
 <section class="card">
   <h2>{{ st.account_label or 'Compte' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
   <div class="grid">
@@ -202,9 +272,10 @@
   </details>
   {% endif %}
 </section>
+{% endif %}
 {% endfor %}
 
-{% if doc.status == 'imported' %}
+{% if doc.status == 'imported' and not plans|selectattr('statement.document_kind', 'in', ['info', 'fees_summary'])|list %}
 <section class="card">
   <h2>Importé</h2>
   <p>{% if doc.account_id %}Les opérations de ce document sont dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>. {% endif %}Un nouvel import ignore les opérations déjà présentes.</p>

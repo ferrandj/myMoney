@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 from ..adapters import ADAPTERS, catalog, get_adapter
 from ..config import Settings, settings as default_settings
 from ..core import QUARANTINE_HOURS, MyMoney
-from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, Transaction
+from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, FeeSummary, Transaction
 from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
 from ..services import analytics
@@ -101,6 +101,31 @@ def safe_next(value: str | None, default: str) -> str:
     return value if value and value.startswith("/") and not value.startswith("//") else default
 
 
+DOC_KINDS = {
+    "statement": "Relevé de compte", "savings_statement": "Relevé d'épargne", "fees_summary": "Récapitulatif des frais",
+    "info": "Information", "pdf": "Relevé (lecture générique)", "csv": "Relevé (CSV)", "ofx": "Relevé (OFX)", "qif": "Relevé (QIF)",
+}
+
+
+def fee_summaries(session, account) -> list[dict]:
+    """The fees recaps of an account, each with what the imported statements say for the same period."""
+    rows = []
+    for summary in session.scalars(select(FeeSummary).where(FeeSummary.account_id == account.id).order_by(FeeSummary.period_start.desc())):
+        spent = [
+            t for t in session.scalars(
+                select(Transaction).where(
+                    Transaction.account_id == account.id, Transaction.kind == "fee",
+                    Transaction.date >= summary.period_start, Transaction.date <= summary.period_end,
+                )
+            )
+        ]
+        rows.append({
+            "summary": summary, "seen": sum((-t.amount for t in spent), Decimal(0)), "seen_count": len(spent),
+            "complete": coverage_service.covers(session, account.id, summary.period_start, summary.period_end),
+        })
+    return rows
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or default_settings
     core = MyMoney(settings)
@@ -110,7 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.filters.update(money=money, qty=quantity, frdate=frdate)
     templates.env.globals.update(
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
-        DOCUMENT_STATUS=DOCUMENT_STATUS,
+        DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS,
     )
     templates.env.globals.update(QUARANTINE_HOURS=QUARANTINE_HOURS)
     templates.env.filters.update(pct=lambda v: "—" if v is None else f"{Decimal(v):+.1f} %".replace(".", ","))
@@ -376,6 +401,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     .order_by(Transaction.date.desc(), Transaction.id.desc()).offset((page - 1) * per_page).limit(per_page)
                 )
             )
+            fee_rows = fee_summaries(s, account)
             statements, chain_issues = statement_service.coverage(s, account_id)
             all_gaps = coverage_service.account_gaps(s, account, include_acknowledged=True)
             to_identify = contact_service.unresolved(s, account_id=account_id)
@@ -384,7 +410,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rate, rate_source = effective_rate(account.account_type, account.interest_rate)
         return render(
             request, "account.html", account=account, value=value, transactions=transactions, rate=rate, rate_source=rate_source,
-            page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, chain_issues=chain_issues,
+            page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, chain_issues=chain_issues, fee_rows=fee_rows,
             open_gaps=[g for g in all_gaps if not g.acknowledged], acked_gaps=[g for g in all_gaps if g.acknowledged],
             to_identify=to_identify,
         )
@@ -482,7 +508,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if state == "differs":
                 return redirect(f"/documents/{doc_id}", "Ce relevé existe déjà mais le fichier diffère : choisis quoi en faire")
             if imported:
-                return redirect(f"/accounts/{imported['account_id']}", import_message(imported, auto=True))
+                return redirect(after_import(imported, doc_id), import_message(imported, auto=True))
             return redirect(f"/documents/{doc_id}")
         counts = {k: sum(1 for _, state, _ in outcomes if state == k) for k in ("imported", "existing", "duplicate", "differs")}
         review = len(outcomes) - sum(counts.values())
@@ -497,7 +523,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             parts.append(f"{counts['existing']} strictement identique(s) à un fichier déjà déposé")
         return redirect("/documents", " · ".join(parts))
 
+    def after_import(result: dict, doc_id: int) -> str:
+        return f"/accounts/{result['account_id']}" if result.get("account_id") else f"/documents/{doc_id}"
+
     def import_message(result: dict, auto: bool = False) -> str:
+        if result.get("kind") == "info":
+            return "Document classé avec tes papiers : il ne contient aucune opération"
+        if result.get("kind") == "fees_summary":
+            return ("Classé automatiquement : " if auto else "") + f"récapitulatif des frais {result['year']} rattaché au compte"
         text = f"{result['added']} opération(s) ajoutée(s)"
         if result["skipped_exact"]:
             text += f" · {result['skipped_exact']} doublon(s) exact(s) ignoré(s)"
@@ -546,7 +579,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = await run_in_threadpool(core.import_statement, doc_id, index, form)
         except Exception as exc:
             return redirect(f"/documents/{doc_id}", f"Import impossible : {exc}")
-        return redirect(f"/accounts/{result['account_id']}", import_message(result))
+        return redirect(after_import(result, doc_id), import_message(result))
 
     @app.post("/documents/{doc_id}/dedup/{index}")
     async def document_dedup(request: Request, doc_id: int, index: int):

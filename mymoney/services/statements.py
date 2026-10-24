@@ -15,9 +15,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..adapters.base import ParsedStatement, TransactionData
-from ..models import ACCOUNT_TYPES, Account, Document, Holding, Statement, Transaction
+from ..models import ACCOUNT_TYPES, Account, Document, FeeSummary, Holding, Statement, Transaction
 from . import counterparties, ledger
 from . import coverage as coverage_service
+
+
+# Documents worth keeping and reading, with no operation in them: they are attached to an account or filed.
+DOCUMENT_ONLY_KINDS = ("fees_summary", "info")
 
 
 @dataclass
@@ -56,6 +60,7 @@ class ImportPlan:
     # The holder line looks cut by the bank and the full names were never given: ask once, before importing.
     ask_holder: bool = False
     dedup: DedupReport | None = None  # set when this statement repeats one already imported
+    fee_existing: FeeSummary | None = None  # a fees recap for this account and period is already there
 
     def statuses(self) -> list[str]:
         """For each line of the statement: new | exact (already stored) | probable (same day and amount as a stored line)."""
@@ -67,6 +72,12 @@ class ImportPlan:
     def clean(self) -> bool:
         """Nothing to ask and nothing suspicious: safe to import without a review."""
         st = self.statement
+        if st.document_kind == "info":
+            return True  # nothing to ask: it is just filed
+        if st.document_kind == "fees_summary":
+            return (
+                self.account is not None and len(self.candidates) == 1 and st.confidence == "high" and not st.warnings and self.fee_existing is None
+            )
         return (
             self.account is not None
             and len(self.candidates) == 1
@@ -105,6 +116,15 @@ def find_accounts(session: Session, st: ParsedStatement) -> list[Account]:
 
 def plan_import(session: Session, st: ParsedStatement, account: Account | None) -> ImportPlan:
     candidates = find_accounts(session, st)
+    if st.document_kind in DOCUMENT_ONLY_KINDS:
+        plan = ImportPlan(st, account, candidates, ledger.Classified(), None)
+        if account is not None and st.document_kind == "fees_summary":
+            plan.fee_existing = session.scalar(
+                select(FeeSummary).where(
+                    FeeSummary.account_id == account.id, FeeSummary.period_start == st.period_start, FeeSummary.period_end == st.period_end
+                )
+            )
+        return plan
     classified = ledger.classify(session, account.id if account else None, st.transactions)
     plan = ImportPlan(st, account, candidates, classified, None)
     plan.ask_holder = _holder_unconfirmed(st, account)
@@ -206,7 +226,43 @@ def _decimal(raw: str | None) -> Decimal | None:
     return Decimal(raw) if raw else None
 
 
+def file_document(session: Session, doc: Document) -> dict:
+    """An information document (no account, no operation): recognised, dated and kept with the others."""
+    doc.status = "imported"
+    doc.account_id = None
+    return {"account_id": None, "kind": "info", "added": 0, "skipped_exact": 0, "skipped_probable": 0}
+
+
+def _attach_fee_summary(session: Session, doc: Document, st: ParsedStatement, account: Account, form: dict[str, str]) -> dict:
+    existing = session.scalar(
+        select(FeeSummary).where(FeeSummary.account_id == account.id, FeeSummary.period_start == st.period_start, FeeSummary.period_end == st.period_end)
+    )
+    if existing is not None:
+        if form.get("force") != "on":
+            raise ValueError("Ce récapitulatif des frais est déjà rattaché à ce compte pour cette période")
+        session.delete(existing)
+    _fill_identity(account, st, latest=False)  # an old recap never overwrites a newer address
+    extra = st.extra
+
+    def amount(key: str) -> Decimal | None:
+        return Decimal(extra[key]) if extra.get(key) is not None else None
+
+    session.add(
+        FeeSummary(
+            account_id=account.id, document_id=doc.id, period_start=st.period_start, period_end=st.period_end,
+            fees_total=amount("fees_total") or Decimal(0), interest_paid=amount("interest_paid"), interest_earned=amount("interest_earned"),
+            services=extra.get("services") or [],
+        )
+    )
+    doc.status = "imported"
+    doc.account_id = account.id
+    session.flush()
+    return {"account_id": account.id, "kind": "fees_summary", "year": st.period_end.year, "added": 0, "skipped_exact": 0, "skipped_probable": 0}
+
+
 def import_statement(session: Session, doc: Document, st: ParsedStatement, form: dict[str, str]) -> dict:
+    if st.document_kind == "info":
+        return file_document(session, doc)
     target = form.get("account_id") or "new"
     if target == "new":
         account = Account(
@@ -221,6 +277,8 @@ def import_statement(session: Session, doc: Document, st: ParsedStatement, form:
         account = session.get(Account, int(target))
         if account is None:
             raise ValueError("Compte introuvable")
+    if st.document_kind == "fees_summary":
+        return _attach_fee_summary(session, doc, st, account, form)
     plan = plan_import(session, st, account)
     if plan.already_imported is not None and form.get("force") != "on":
         raise ValueError("Ce relevé a déjà été importé dans ce compte (même période)")
@@ -276,6 +334,7 @@ def undo_import(session: Session, doc: Document) -> int:
             t.details = {k: v for k, v in t.details.items() if k not in ("paired_with", "internal")} or None
     removed = session.execute(delete(Transaction).where(Transaction.document_id == doc.id)).rowcount or 0
     session.execute(delete(Statement).where(Statement.document_id == doc.id))
+    session.execute(delete(FeeSummary).where(FeeSummary.document_id == doc.id))
     doc.status = "parsed" if (doc.parse_result or {}).get("statements") else "uploaded"
     doc.account_id = None
     session.flush()

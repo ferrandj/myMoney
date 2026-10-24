@@ -327,6 +327,8 @@ class MyMoney:
             if doc.status != "parsed" or len(result.get("statements", [])) != 1:
                 return None
             st = ParsedStatement.from_json(result["statements"][0])
+            if st.document_kind in statement_service.DOCUMENT_ONLY_KINDS:
+                return None  # a fees recap or an information letter: nothing to compare operation by operation
             found = statement_service.find_accounts(s, st)
             if len(found) != 1:
                 return None
@@ -422,6 +424,8 @@ class MyMoney:
             if doc.status != "parsed" or result.get("decision") != "auto" or len(result.get("statements", [])) != 1:
                 return None
             st = ParsedStatement.from_json(result["statements"][0])
+            if st.document_kind == "info":  # nothing to ask: it is filed
+                return statement_service.import_statement(s, doc, st, {})
             found = statement_service.find_accounts(s, st)
             if len(found) != 1:
                 return None

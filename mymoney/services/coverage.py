@@ -79,6 +79,21 @@ def account_gaps(session: Session, account: Account, include_acknowledged: bool 
     return result
 
 
+def covers(session: Session, account_id: int, start: date, end: date) -> bool:
+    """Do the imported statements of the account cover every day of a period?"""
+    periods = sorted(
+        (s.period_start, s.period_end)
+        for s in session.scalars(select(Statement).where(Statement.account_id == account_id))
+        if s.period_start and s.period_end
+    )
+    reached = start - timedelta(days=1)
+    for p_start, p_end in periods:
+        if p_start > reached + timedelta(days=1):
+            break
+        reached = max(reached, p_end)
+    return reached >= end
+
+
 def all_gaps(session: Session, include_acknowledged: bool = False) -> list[Gap]:
     """Gaps of every account that is still followed (archived accounts are left alone)."""
     accounts = session.scalars(select(Account).where(Account.archived.is_(False)).order_by(Account.institution, Account.name))
