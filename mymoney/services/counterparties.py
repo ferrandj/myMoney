@@ -7,6 +7,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
 from ..adapters.common import iban_valid, name_key
@@ -127,9 +128,16 @@ def save_contact(session: Session, contact_id: int | None, data: dict[str, str])
     return cp
 
 
+def choices(session: Session) -> list[tuple[int, str]]:
+    """(id, name) of every contact, for the "already known?" lists."""
+    return [(c.id, c.name) for c in session.scalars(select(Counterparty).order_by(Counterparty.name))]
+
+
 def identify(session: Session, data: dict[str, str]) -> Counterparty:
     """Name an unknown counterparty (new contact, or an existing one when `contact_id` is given) and remember it."""
     contact_id = int(data["contact_id"]) if (data.get("contact_id") or "").isdigit() else None
+    if contact_id is None and not (data.get("name") or "").strip():
+        raise ValueError("Donne un nom, ou choisis un contact déjà enregistré")
     # Everything is checked before anything is created: a refused identifier leaves no half-made contact behind.
     _check_identifier(session, "iban", data.get("iban"), contact_id)
     _check_identifier(session, "name", data.get("printed_name"), contact_id)
@@ -215,7 +223,7 @@ class ContactSummary:
 
 def summaries(session: Session) -> list[ContactSummary]:
     stats: dict[int, ContactSummary] = {}
-    contacts = list(session.scalars(select(Counterparty).order_by(Counterparty.name)))
+    contacts = list(session.scalars(select(Counterparty).options(selectinload(Counterparty.identifiers)).order_by(Counterparty.name)))
     for c in contacts:
         stats[c.id] = ContactSummary(c, 0, Decimal(0), Decimal(0), None)
     visible = access.readable_ids(session)

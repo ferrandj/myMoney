@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import CATEGORIES, Account, Snapshot, Transaction
+from . import categories as category_service
 
 PERIODS = {"1m": ("1 mois", 30), "3m": ("3 mois", 91), "6m": ("6 mois", 182), "1a": ("1 an", 365), "tout": ("Tout", None)}
 MAX_POINTS = 150
@@ -246,3 +247,99 @@ def spending(session: Session, account_ids: list[int], start: date, end: date, i
     result.by_kind = rank(kinds)
     result.top_out, result.top_in = rank(out)[:limit], rank(inc)[:limit]
     return result
+
+
+# ---------------------------------------------------------------------------- spending by category
+@dataclass
+class CategoryTotal:
+    id: str
+    label: str
+    total: Decimal = Decimal(0)
+    count: int = 0
+    share: Decimal = Decimal(0)  # % of the total of that direction
+
+
+@dataclass
+class MerchantTotal:
+    key: str
+    label: str
+    contact_id: int | None
+    total: Decimal = Decimal(0)
+    count: int = 0
+    category: str = ""
+    ruled: bool = False  # the user chose this category (not a guess)
+
+
+@dataclass
+class SpendingReport:
+    direction: str  # out | in
+    total: Decimal = Decimal(0)  # of that direction
+    total_out: Decimal = Decimal(0)
+    total_in: Decimal = Decimal(0)
+    categories: list[CategoryTotal] = field(default_factory=list)
+    months: list[tuple[date, Decimal]] = field(default_factory=list)
+    # With a category chosen:
+    category: CategoryTotal | None = None
+    merchants: list[MerchantTotal] = field(default_factory=list)
+    operations: list[tuple[Transaction, str]] = field(default_factory=list)  # (operation, account name), newest first
+    top_merchants: list[MerchantTotal] = field(default_factory=list)  # all categories mixed
+
+    @property
+    def saved(self) -> Decimal:
+        return self.total_in - self.total_out
+
+
+def spending_report(
+    session: Session, account_ids: list[int], start: date, end: date, include_internal: bool, direction: str = "out", category: str | None = None
+) -> SpendingReport:
+    """Where the money went (or came from): per category, then per merchant and operation inside one category."""
+    report = SpendingReport(direction)
+    rules = category_service.load_rules(session)
+    names = {a.id: a.name for a in session.scalars(select(Account).where(Account.id.in_(account_ids)))} if account_ids else {}
+    totals: dict[str, CategoryTotal] = {}
+    merchants: dict[tuple[str, str], MerchantTotal] = {}
+    months: dict[date, Decimal] = {}
+    cursor = date(start.year, start.month, 1)
+    while cursor <= end:
+        months[cursor] = Decimal(0)
+        cursor = date(cursor.year + cursor.month // 12, cursor.month % 12 + 1, 1)
+    chosen_ops: list[tuple[Transaction, str]] = []
+    for t in _transactions(session, account_ids, start, end, include_internal):
+        amount = Decimal(t.amount)
+        if amount == 0:
+            continue
+        if amount < 0:
+            report.total_out += -amount
+        else:
+            report.total_in += amount
+        if (amount < 0) != (direction == "out"):
+            continue
+        cat = category_service.categorize(t, rules)
+        key, label, contact_id = category_service.merchant(t)
+        value = abs(amount)
+        report.total += value
+        entry = totals.setdefault(cat, CategoryTotal(cat, category_service.ALL[cat].label))
+        entry.total += value
+        entry.count += 1
+        m = merchants.setdefault((cat, key), MerchantTotal(key, label, contact_id, category=cat, ruled=key in rules and rules[key] in category_service.ALL))
+        m.total += value
+        m.count += 1
+        if category is None or cat == category:
+            months[date(t.date.year, t.date.month, 1)] += value
+        if cat == category:
+            chosen_ops.append((t, names.get(t.account_id, "")))
+    for entry in totals.values():
+        entry.share = entry.total / report.total * 100 if report.total else Decimal(0)
+    report.categories = sorted(totals.values(), key=lambda c: -c.total)
+    report.months = sorted(months.items())
+    by_key: dict[str, MerchantTotal] = {}
+    for (cat, key), m in merchants.items():
+        top = by_key.setdefault(key, MerchantTotal(key, m.label, m.contact_id, category=cat, ruled=m.ruled))
+        top.total += m.total
+        top.count += m.count
+    report.top_merchants = sorted(by_key.values(), key=lambda m: -m.total)[:12]
+    if category is not None and category in totals:
+        report.category = totals[category]
+        report.merchants = sorted((m for (cat, _), m in merchants.items() if cat == category), key=lambda m: -m.total)
+        report.operations = sorted(chosen_ops, key=lambda x: (x[0].date, x[0].id), reverse=True)[:300]
+    return report

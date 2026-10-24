@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
@@ -18,12 +18,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from ..adapters import ADAPTERS, catalog, get_adapter
+from ..adapters.common import strip_accents
 from ..config import Settings, settings as default_settings
 from ..core import QUARANTINE_HOURS, MyMoney
 from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, FeeSummary, Transaction, User
 from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
 from ..services import access, analytics
+from ..services import categories as category_service
 from ..services import counterparties as contact_service
 from ..services import coverage as coverage_service
 from ..services import loans as loan_service
@@ -154,6 +156,58 @@ def fee_summaries(session, account) -> list[dict]:
     return rows
 
 
+def document_tree(documents: list) -> list[dict]:
+    """Documents grouped for browsing: institution, then type of document, then year, newest first."""
+    banks: dict[str, dict[str, list]] = {}
+    for d in documents:
+        institution = (d.parse_result or {}).get("institution") or "Autres documents"
+        kind = DOC_KINDS.get(d.kind, "Document") if d.adapter_id else "Non reconnu"
+        banks.setdefault(institution, {}).setdefault(kind, []).append(d)
+
+    def when(d) -> date:
+        for st in (d.parse_result or {}).get("statements", []):
+            for key in ("period_end", "balance_date"):
+                if st.get(key):
+                    return date.fromisoformat(st[key])
+        return d.uploaded_at.date()
+
+    tree = []
+    plain = lambda text: strip_accents(text).lower()  # noqa: E731  (so that "Récapitulatif" sorts before "Relevé")
+    for institution in sorted(banks, key=lambda b: (b == "Autres documents", plain(b))):
+        kinds = []
+        for kind, docs in sorted(banks[institution].items(), key=lambda kv: (kv[0] == "Non reconnu", plain(kv[0]))):
+            docs = sorted(docs, key=lambda d: (when(d), d.id), reverse=True)
+            years: list[tuple[int, list]] = []
+            for d in docs:
+                year = when(d).year
+                if not years or years[-1][0] != year:
+                    years.append((year, []))
+                years[-1][1].append((d, when(d)))
+            kinds.append({"label": kind, "count": len(docs), "years": years})
+        tree.append({"label": institution, "count": sum(k["count"] for k in kinds), "kinds": kinds})
+    return tree
+
+
+def zip_documents(files: list[tuple[str, bytes]]) -> bytes:
+    """A zip of (filename, content) pairs; two files with the same name keep both ("releve (2).pdf")."""
+    import io
+    import zipfile
+
+    out = io.BytesIO()
+    used: set[str] = set()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for filename, data in files:
+            name = filename.replace("/", "_").replace("\\", "_") or "document"
+            stem, dot, ext = name.rpartition(".")
+            candidate, n = name, 1
+            while candidate.lower() in used:
+                n += 1
+                candidate = f"{stem} ({n}).{ext}" if dot else f"{name} ({n})"
+            used.add(candidate.lower())
+            archive.writestr(candidate, data)
+    return out.getvalue()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or default_settings
     core = MyMoney(settings)
@@ -167,6 +221,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS, LOAN_KINDS=loan_service.LOAN_KINDS,
         THEME_GROUPS=themes.groups(), identity_text=identity_text,
     )
+
+    def contact_choices():
+        with core.db.session() as session:
+            return contact_service.choices(session)
+
+    templates.env.globals.update(contact_choices=contact_choices)
     templates.env.globals.update(QUARANTINE_HOURS=QUARANTINE_HOURS)
     templates.env.filters.update(pct=lambda v: "—" if v is None else f"{Decimal(v):+.1f} %".replace(".", ","))
 
@@ -427,10 +487,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # -------------------------------------------------------- analytics
     @app.get("/analytics")
     async def analytics_page(
-        request: Request, vue: str = "evolution", periode: str = "1a", par: str = "", c: list[int] = Query(default=[]), interne: int = 0
+        request: Request, vue: str = "evolution", periode: str = "1a", par: str = "", c: list[int] = Query(default=[]), interne: int = 0,
+        sens: str = "sorties", cat: str = "", mois: str = "",
     ):
         vue = vue if vue in ANALYTICS_VIEWS else "evolution"
         periode = periode if periode in analytics.PERIODS else "1a"
+        sens = sens if sens in ("sorties", "entrees") else "sorties"
+        direction = "out" if sens == "sorties" else "in"
+        cat = cat if cat in category_service.ALL and vue == "depenses" else ""
+        month_range = None
+        try:
+            year, month = (int(x) for x in mois.split("-"))
+            month_range = (date(year, month, 1), date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1))
+        except ValueError:
+            mois = ""
         groups = ANALYTICS_GROUPS.get(vue, {})
         par = par if par in groups else next(iter(groups), "")
         portfolio = await run_in_threadpool(core.portfolio, False)
@@ -441,7 +511,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         today = date.today()
 
         def url(**over) -> str:
-            params = {"vue": vue, "periode": periode, "par": par, "interne": interne or "", **over}
+            params = {"vue": vue, "periode": periode, "par": par, "interne": interne or "", "sens": "" if sens == "sorties" else sens, "cat": cat, "mois": mois, **over}
             pairs = [(k, str(v)) for k, v in params.items() if v not in (None, "")]
             pairs += [] if everything else [("c", str(i)) for i in selected]
             return "/analytics?" + urlencode(pairs)
@@ -451,7 +521,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             start = analytics.period_start(periode, today, analytics.earliest_day(histories, selected, today))
             total_points = analytics.build_series(histories, accounts, selected, "total", start, today)
             flows = analytics.monthly_flows(s, selected, start, today, bool(interne)) if vue == "flux" else []
-            spent = analytics.spending(s, selected, start, today, bool(interne)) if vue == "depenses" else None
+            report = None
+            if vue == "depenses":
+                report_start, report_end = month_range if month_range else (start, today)
+                report = analytics.spending_report(s, selected, report_start, report_end, bool(interne), direction, cat or None)
         sel_values = [values[i] for i in selected]
         assets = sum((v.total for v in sel_values if v.total > 0), Decimal(0))
         debts = sum((v.total for v in sel_values if v.total < 0), Decimal(0))
@@ -481,17 +554,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             items = analytics.repartition(sel_values, par)
             content = {"chart": charts.donut(items), "items": items, "ring_total": sum((x[2] for x in items), Decimal(0))}
         elif vue == "flux":
-            content = {"chart": charts.flow_chart(flows), "flows": flows}
+            content = {
+                "chart": charts.flow_chart(flows), "flows": flows,
+                "flow_links": {f.month: url(vue="depenses", par="", cat="", sens="", mois=f.month.strftime("%Y-%m")) for f in flows},
+            }
         else:
-            content = {"spent": spent}
+            palette_size = charts.PALETTE_SIZE
+            top = report.categories[: palette_size - 1]
+            rest = sum((x.total for x in report.categories[palette_size - 1 :]), Decimal(0))
+            ring = [(x.id, x.label, x.total) for x in top] + ([("reste", "Autres catégories", rest)] if rest else [])
+            content = {
+                "report": report, "sens": sens, "cat": cat, "mois": mois, "ring": ring, "donut": charts.donut(ring, "Répartition par catégorie") if not cat else "",
+                "month_chart": charts.month_bars(report.months, "Par mois", "neg" if direction == "out" else "pos"),
+                "options": category_service.options(direction),
+                "category_links": {x.id: url(cat=x.id) for x in report.categories},
+                "sens_links": [("sorties", "Dépenses", url(sens="", cat="")), ("entrees", "Revenus", url(sens="entrees", cat=""))],
+                "all_link": url(cat=""), "month_off_link": url(mois=""),
+                "month_label": month_range[0].strftime("%m/%Y") if month_range else "",
+                "this_url": url(),
+            }
 
         return render(
             request, "analytics.html", vue=vue, periode=periode, par=par, interne=interne, accounts=list(accounts.values()), selected=set(selected),
             everything=everything, rows=rows, assets=assets, debts=debts, total=assets + debts, variation=variation, start=start, today=today,
-            views=[(code, label, url(vue=code, par="")) for code, label in ANALYTICS_VIEWS.items()],
-            periods=[(code, label, url(periode=code)) for code, (label, _) in analytics.PERIODS.items()],
+            views=[(code, label, url(vue=code, par="", cat="", mois="", sens="")) for code, label in ANALYTICS_VIEWS.items()],
+            periods=[(code, label, url(periode=code, mois="")) for code, (label, _) in analytics.PERIODS.items()],
             group_options=[(code, label, url(par=code)) for code, label in groups.items()], palette=charts.PALETTE_SIZE, **content,
         )
+
+    @app.post("/analytics/categorize")
+    async def analytics_categorize(request: Request):
+        """"This merchant goes in that category, from now on": the user's rule wins over the automatic guess."""
+        form = await verified_form(request)
+        target = safe_next(form.get("next"), "/analytics?vue=depenses")
+        try:
+            with core.db.session() as s:
+                category_service.set_rule(s, form.get("key", ""), form.get("category", ""))
+        except ValueError as exc:
+            return redirect(target, str(exc))
+        what = form.get("category")
+        label = form.get("label") or "Ce bénéficiaire"
+        if what == "auto":
+            return redirect(target, f"« {label} » : classement automatique rétabli")
+        return redirect(target, f"« {label} » est maintenant classé dans « {category_service.ALL[what].label} » (toutes ses opérations, y compris les prochaines)")
 
     # --------------------------------------------------------- accounts
     @app.get("/accounts/new")
@@ -527,6 +632,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             )
             fee_rows = fee_summaries(s, account)
+            rules = category_service.load_rules(s)
+            tx_categories = {t.id: category_service.ALL[category_service.categorize(t, rules)].label for t in transactions}
             loan, loan_plan = account.loan, None
             if loan is not None:
                 loan_plan = loan_service.rebuild(s, loan)
@@ -548,7 +655,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, chain_issues=chain_issues, fee_rows=fee_rows,
             open_gaps=[g for g in all_gaps if not g.acknowledged], acked_gaps=[g for g in all_gaps if g.acknowledged],
             to_identify=to_identify, loan=loan, loan_plan=loan_plan, loan_docs=loan_docs,
-            role=my_role, shares=shares, owner=owner, sharable=sharable,
+            role=my_role, shares=shares, owner=owner, sharable=sharable, tx_categories=tx_categories,
         )
 
     @app.post("/accounts/{account_id}/shares")
@@ -656,7 +763,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             names = {d.id: d.filename for d in everything}
         documents = [d for d in everything if d.status != "duplicate"]
         aside = [(d, names.get(d.duplicate_of)) for d in everything if d.status == "duplicate"]
-        return render(request, "documents.html", documents=documents, aside=aside, missing=missing, max_mb=settings.max_upload_mb, catalog=catalog())
+        return render(
+            request, "documents.html", documents=documents, aside=aside, missing=missing, max_mb=settings.max_upload_mb, catalog=catalog(),
+            tree=document_tree(documents),
+        )
+
+    @app.post("/documents/download")
+    async def documents_download(request: Request):
+        """Download the ticked documents: one file as it is, several as a zip."""
+        form = await request.form()
+        session = request.state.session
+        token = form.get("csrf")
+        if not session or not isinstance(token, str) or not hmac.compare_digest(token, session.csrf):
+            raise HTTPException(403, "Jeton CSRF invalide")
+        ids = []
+        for raw in form.getlist("ids"):
+            if isinstance(raw, str) and raw.isdigit() and int(raw) not in ids:
+                ids.append(int(raw))
+        if not ids:
+            return redirect("/documents", "Coche au moins un document à télécharger")
+        files = [await run_in_threadpool(core.read_document, i) for i in ids]  # AccessDenied (404) for a document one cannot open
+        if len(files) == 1:
+            filename, data = files[0]
+            return Response(data, media_type="application/octet-stream", headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
+        if sum(len(data) for _, data in files) > 400 * 1024 * 1024:
+            return redirect("/documents", "Sélection trop volumineuse : télécharge-la en plusieurs fois")
+        archive = await run_in_threadpool(zip_documents, files)
+        name = f"myMoney-documents-{date.today():%Y%m%d}.zip"
+        return Response(archive, media_type="application/zip", headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
     @app.post("/documents")
     async def documents_upload(request: Request):

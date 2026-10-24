@@ -61,6 +61,18 @@ document.querySelectorAll("select[data-toggle-contact]").forEach((select) => {
   select.addEventListener("change", () => toggleNewContact(select));
 });
 
+// "Qui est-ce ?" in a row: picking a contact already known hides the fields of a new one.
+document.querySelectorAll("select[data-inline-contact]").forEach((select) => {
+  const fields = select.closest("form").querySelector(".new-contact-fields");
+  const sync = () => {
+    const known = select.value !== "";
+    fields.hidden = known;
+    fields.querySelectorAll("input[name=name]").forEach((input) => (input.required = !known));
+  };
+  select.addEventListener("change", sync);
+  sync();
+});
+
 // Drag and drop: dropping files on the zone sends them straight away.
 const dropzone = document.getElementById("dropzone");
 if (dropzone) {
@@ -206,3 +218,32 @@ document.addEventListener("click", async (event) => {
     }, 1600);
   }
 });
+
+// Documents: ticking files enables the grouped download; a group's box ticks its files; folders open and close together.
+const downloadForm = document.getElementById("download-form");
+if (downloadForm) {
+  const button = document.getElementById("download-selected");
+  const count = document.getElementById("download-count");
+  const boxes = () => [...downloadForm.querySelectorAll("input[name=ids]")];
+  const refresh = () => {
+    const n = boxes().filter((box) => box.checked).length;
+    button.disabled = n === 0;
+    count.textContent = n ? `(${n})` : "";
+    downloadForm.querySelectorAll("[data-check-group]").forEach((all) => {
+      const mine = [...all.closest("details").querySelectorAll("input[name=ids]")];
+      all.checked = mine.length > 0 && mine.every((box) => box.checked);
+    });
+  };
+  downloadForm.addEventListener("change", (event) => {
+    if (event.target.matches("[data-check-group]")) {
+      event.target.closest("details").querySelectorAll("input[name=ids]").forEach((box) => (box.checked = event.target.checked));
+    }
+    refresh();
+  });
+  // A click on a group's "tout" box must not fold the group.
+  downloadForm.querySelectorAll(".doc-all").forEach((label) => label.addEventListener("click", (event) => event.stopPropagation()));
+  downloadForm.querySelectorAll("[data-expand]").forEach((control) =>
+    control.addEventListener("click", () => downloadForm.querySelectorAll("details").forEach((d) => (d.open = control.dataset.expand === "all"))),
+  );
+  refresh();
+}

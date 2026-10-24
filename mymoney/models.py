@@ -363,6 +363,19 @@ class LoanEvent(Base):
     loan: Mapped[Loan] = relationship(back_populates="events")
 
 
+class CategoryRule(Base):
+    """"This merchant always goes in that category": the user's answer, which wins over the automatic guess."""
+
+    __tablename__ = "category_rules"
+    __table_args__ = (UniqueConstraint("owner_id", "key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(300))  # "c<contact id>" or the merchant's name as the bank prints it, simplified
+    category: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class GapAck(Base):
     """A stretch of days without statement that the user said is normal: it is not reported any more."""
 
