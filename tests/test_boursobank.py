@@ -7,7 +7,7 @@ from mymoney.adapters import SourceDocument, identify, parse_with
 from mymoney.adapters.common import iban_valid, name_key, rib_valid
 from mymoney.adapters.pdftools import fix_text
 
-from .fixtures import ACCOUNT, ADDRESS, BANK, BRANCH, IBAN, Entry, Spec, boursobank_statement_pdf, sample_entries
+from .fixtures import ACCOUNT, ADDRESS, BANK, BRANCH, IBAN, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, sample_entries
 
 ADAPTER = "boursobank.statement_pdf"
 
@@ -149,3 +149,60 @@ def test_name_key_matches_the_same_person_written_differently():
     assert name_key("M DUPONT Jean") == name_key("Jean DUPONT") == name_key("MME dupont  jean")
     assert name_key("ACME CONSULTING SAS") == name_key("Acme Consulting")
     assert name_key("DUPONT JEAN") != name_key("DUPONT PAUL")
+
+
+# ------------------------------------------------------------------------------- savings extract (PEL...)
+SAVINGS = "boursobank.savings_pdf"
+
+
+def pel_spec(**kw) -> SavingsSpec:
+    return SavingsSpec([
+        Entry(date(2026, 9, 28), ["VIR DUPONT JEAN"], Decimal("45.00")),
+        Entry(date(2026, 9, 30), ["INTERETS 2026", "Prime d'Etat"], Decimal("12.34")),
+    ], **kw)
+
+
+def parse_pel(spec: SavingsSpec):
+    doc = SourceDocument("pel.pdf", boursobank_savings_pdf(spec))
+    [st] = parse_with(SAVINGS, doc)
+    return st
+
+
+def test_a_savings_extract_picks_its_own_adapter_and_not_the_current_account_one():
+    found = identify(SourceDocument("pel.pdf", boursobank_savings_pdf(pel_spec())))
+    assert found.decision == "auto" and found.chosen.adapter.id == SAVINGS and found.chosen.score >= 0.9
+    scores = {c.adapter.id: c.score for c in found.candidates}
+    assert scores[ADAPTER] < 0.6  # same brand and table, but no RIB banner
+    current = identify(SourceDocument("releve.pdf", boursobank_statement_pdf(Spec(sample_entries()))))
+    assert current.chosen.adapter.id == ADAPTER
+    assert {c.adapter.id: c.score for c in current.candidates}[SAVINGS] <= 0.3
+
+
+def test_savings_identity_has_an_account_number_but_no_iban():
+    st = parse_pel(pel_spec())
+    assert st.account_number == "00099999999" and st.currency == "EUR"
+    assert (st.iban, st.bic, st.bank_code, st.rib_key) == (None, None, None, None)
+    assert st.holder_name == "DUPONT JEAN" and st.holder_address == "\n".join(ADDRESS)
+    assert (st.period_start, st.period_end) == (date(2026, 9, 1), date(2026, 9, 30))
+    assert st.account_type == "pel" and st.extra["product"] == "Plan Epargne Logement"
+    assert st.account_label == "Plan Epargne Logement BoursoBank …9999"
+
+
+def test_savings_balances_reconcile_and_lines_are_understood():
+    spec = pel_spec()
+    st = parse_pel(spec)
+    assert st.opening_balance == Decimal("3000.00") and st.opening_date == date(2026, 9, 1)
+    assert st.balance == spec.closing == Decimal("3057.34") and st.balance_date == date(2026, 9, 30)
+    assert st.confidence == "high" and not st.warnings
+    transfer, interest = st.transactions
+    assert (transfer.kind, transfer.counterparty, transfer.amount) == ("transfer", "DUPONT JEAN", Decimal("45.00"))
+    assert transfer.details == {"internal": True}  # a transfer from the holder to the holder
+    assert (interest.kind, interest.amount) == ("interest", Decimal("12.34")) and "Prime d'Etat" in interest.label
+
+
+def test_savings_debits_are_read_from_the_debit_column():
+    spec = pel_spec()
+    spec.entries.append(Entry(date(2026, 9, 29), ["VIR RETRAIT PARTIEL"], Decimal("-500.00")))
+    st = parse_pel(spec)
+    assert any(t.amount == Decimal("-500.00") for t in st.transactions)
+    assert st.balance == spec.closing and st.confidence == "high"

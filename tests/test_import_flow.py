@@ -15,7 +15,7 @@ from mymoney.services import counterparties
 from mymoney.web.app import create_app
 
 from .conftest import PASSWORD
-from .fixtures import ACCOUNT, BANK, BRANCH, IBAN, Entry, Spec, boursobank_statement_pdf, fake_iban, sample_entries
+from .fixtures import ACCOUNT, BANK, BRANCH, IBAN, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, fake_iban, sample_entries
 
 D = Decimal
 
@@ -496,3 +496,29 @@ def test_web_asks_which_reading_to_use_when_two_fit(client, monkeypatch):
     doc_id = int(re.search(r"/documents/(\d+)/analyze", r.text).group(1))
     r = client.post(f"/documents/{doc_id}/analyze", data={"csrf": csrf, "adapter": "test.b"})
     assert r.status_code == 200 and "Valider l'import" in r.text and "Lu avec" in r.text and "Acme B" in r.text
+
+
+def test_a_savings_account_without_iban_is_recognised_by_its_account_number(core):
+    first_import(core)  # a current account already exists: the savings plan must not be mistaken for it
+    spec = SavingsSpec([Entry(date(2026, 9, 28), ["VIR DUPONT JEAN"], D("45.00"))])
+    data = boursobank_savings_pdf(spec)
+    doc_id, _ = core.store_document("pel.pdf", data)
+    assert core.analyze_document(doc_id, None, data) == "parsed"
+    [plan] = core.review_document(doc_id)["plans"]
+    assert plan.account is None and plan.candidates == []  # first time: a new account is proposed
+    assert core.auto_import(doc_id) is None
+    result = core.import_statement(doc_id, 0, {"account_id": "new", "name": "PEL", "account_type": "pel", "import_transactions": "on", "update_balance": "on", "balance": str(spec.closing)})
+    with core.db.session() as s:
+        pel = s.get(Account, result["account_id"])
+        assert (pel.account_type, pel.account_number, pel.iban, pel.holder_name) == ("pel", "00099999999", None, "DUPONT JEAN")
+        assert pel.institution == "BoursoBank" and pel.balance == D("3045.00")
+
+    nxt = SavingsSpec([Entry(date(2026, 10, 28), ["VIR DUPONT JEAN"], D("45.00"))], opening=spec.closing,
+                      period=(date(2026, 10, 1), date(2026, 10, 31)))
+    data2 = boursobank_savings_pdf(nxt)
+    doc2, _ = core.store_document("pel2.pdf", data2)
+    core.analyze_document(doc2, None, data2)
+    assert core.auto_import(doc2) == {"account_id": result["account_id"], "added": 1, "skipped_exact": 0, "skipped_probable": 0}
+    with core.db.session() as s:
+        assert s.get(Account, result["account_id"]).balance == nxt.closing
+        assert len(s.scalars(select(Account)).all()) == 2

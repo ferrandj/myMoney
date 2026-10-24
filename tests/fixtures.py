@@ -183,3 +183,56 @@ def sample_entries() -> list[Entry]:
         Entry(date(2026, 9, 12), ["VIR Virement depuis BOURSORAMA Claire", "LEROY CLAIRE"], D("60.00"), value_day=date(2026, 9, 13)),
         Entry(date(2026, 9, 14), ["CARTE 12/09/26 CARREFOUR CITY CB*1234"], D("-14.08")),
     ]
+
+
+@dataclass
+class SavingsSpec:
+    entries: list[Entry]
+    opening: Decimal = Decimal("3000.00")
+    period: tuple[date, date] = (date(2026, 9, 1), date(2026, 9, 30))
+    holder: list[str] = field(default_factory=lambda: ["DUPONT JEAN"])  # savings statements print no civility
+    address: list[str] = field(default_factory=lambda: list(ADDRESS))
+    account: str = "00099999999"
+    product: str = "Plan Epargne Logement"
+    title: str = ""
+
+    @property
+    def closing(self) -> Decimal:
+        return self.opening + sum((e.amount for e in self.entries), Decimal(0))
+
+
+def boursobank_savings_pdf(spec: SavingsSpec) -> bytes:
+    """A savings extract (PEL...): product in the title, plain account number (no RIB, no IBAN), one page."""
+    pdf = FPDF(unit="pt", format=(595, 842))
+    pdf.set_auto_page_break(False)
+    pdf.set_title(spec.title)
+    pdf.set_font("Helvetica", size=9)
+    pdf.add_page()
+    t = pdf.text
+
+    def right(edge: float, y: float, text: str) -> None:
+        pdf.text(edge - pdf.get_string_width(text), y, text)
+
+    t(288, 48, f"Extrait de votre {spec.product}")
+    t(288, 62, "(Protégé par la Garantie des Dépôts www.garantiedesdepots.fr)")
+    y = 198.0
+    for line in [*spec.holder, *spec.address]:
+        t(320, y, line)
+        y += 12
+    t(46, 318, "Date"); t(124, 318, "Numéro de compte"); t(273, 318, "Devise"); t(319, 318, "Période"); t(514, 318, "Page")
+    t(59, 339, d(date(2026, 10, 1))); t(167, 339, spec.account); t(284, 339, "EUR"); t(359, 339, f"du {d(spec.period[0])} au {d(spec.period[1])}"); t(531, 339, "1")
+    t(433, 353, "MOUVEMENTS EN EUR")
+    t(46, 370, "Date"); t(68, 370, "opération"); t(201, 370, "Libellé"); t(343, 370, "Valeur"); t(423, 370, "Débit"); t(501, 370, "Crédit")
+    t(231, 390, "SOLDE EN EUR"); t(295, 390, "AU :"); t(336, 390, d(spec.period[0])); right(544, 390, fr(spec.opening))
+    y = 426.0
+    for e in spec.entries:
+        t(54, y, d(e.day)); t(115, y, e.lines[0]); t(336, y, d(e.value_day or e.day))
+        right(544 if e.amount > 0 else 465, y, fr(e.amount))
+        for extra in e.lines[1:]:
+            y += 11.4
+            t(115, y, extra)
+        y += 14
+    t(204, 677, "Nouveau solde en EUR"); right(545, 677, fr(spec.closing))
+    t(100, 748, "A réception d'un extrait de compte vous disposez d'un délai d'un mois pour formuler toute réclamation")
+    t(85, 773, "Boursorama - SA au capital de 53 576 889,20 - RCS Nanterre 351 058 151")
+    return bytes(pdf.output())

@@ -27,7 +27,8 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 
 | Établissement | Adapter | Document |
 |---|---|---|
-| BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » (relevé mensuel) |
+| BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » (relevé mensuel du compte courant, avec RIB et IBAN) |
+| BoursoBank | `boursobank.savings_pdf` | PDF « Extrait de votre Plan Epargne Logement » (épargne : numéro de compte, sans RIB ni IBAN ; validé sur un PEL) |
 | Revolut | `revolut.statement_csv` | export CSV d'un compte |
 | tous | `generic.ofx`, `generic.qif` | fichiers OFX / QFX et QIF |
 | tous | `generic.csv`, `generic.pdf` | lecture « devinée » (colonnes date / montant / débit / crédit) : jamais importée sans que tu voies ce qui a été compris |
@@ -109,7 +110,7 @@ mymoney/
   adapters/    un adapter par type de document et par établissement
     base.py        contrat (Adapter, Detection, SourceDocument, ParsedStatement)
     registry.py    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
-    boursobank/    statement_pdf.py : extrait de compte mensuel
+    boursobank/    _table.py (tableau des mouvements commun), statement_pdf.py (compte courant), savings_pdf.py (PEL, épargne)
     revolut/       statement_csv.py : export CSV
     generic/       OFX, QIF, CSV et PDF « devinés »
   services/    import (doublons, cohérence), contacts, prix, valorisation, taux réglementés
