@@ -79,31 +79,10 @@ class Base(DeclarativeBase):
     type_annotation_map = {Decimal: DecimalText()}
 
 
-class Connection(Base):
-    __tablename__ = "connections"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200))
-    connector_type: Mapped[str] = mapped_column(String(50))
-    # Credentials and API keys: encrypted a second time on top of the database encryption.
-    config_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
-    # Sessions, tokens, cookies kept between syncs (also encrypted).
-    state_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
-    status: Mapped[str] = mapped_column(String(30), default="new")  # new|ok|error|needs_auth
-    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime)
-    last_error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-    accounts: Mapped[list["Account"]] = relationship(back_populates="connection")
-
-
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (UniqueConstraint("connection_id", "external_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    connection_id: Mapped[int | None] = mapped_column(ForeignKey("connections.id", ondelete="SET NULL"))
-    external_id: Mapped[str | None] = mapped_column(String(200))
     name: Mapped[str] = mapped_column(String(200))
     institution: Mapped[str | None] = mapped_column(String(200))
     account_type: Mapped[str] = mapped_column(String(40), default="checking")
@@ -112,15 +91,28 @@ class Account(Base):
     balance: Mapped[Decimal] = mapped_column(default=Decimal(0))
     balance_date: Mapped[datetime | None] = mapped_column(DateTime)
     iban: Mapped[str | None] = mapped_column(String(40))
+    # Identity of the account and of its holder, read from the documents (or typed by hand).
+    bic: Mapped[str | None] = mapped_column(String(20))
+    bank_code: Mapped[str | None] = mapped_column(String(10))
+    branch_code: Mapped[str | None] = mapped_column(String(10))
+    account_number: Mapped[str | None] = mapped_column(String(40))
+    rib_key: Mapped[str | None] = mapped_column(String(4))
+    holder_name: Mapped[str | None] = mapped_column(String(300))
+    holder_address: Mapped[str | None] = mapped_column(Text)
     # Interest rate in % per year. None = use the reference rate of the account type.
     interest_rate: Mapped[Decimal | None] = mapped_column()
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
-    connection: Mapped[Connection | None] = relationship(back_populates="accounts")
     holdings: Mapped[list["Holding"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    statements: Mapped[list["Statement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+
+    @property
+    def rib(self) -> str | None:
+        parts = [self.bank_code, self.branch_code, self.account_number, self.rib_key]
+        return " ".join(parts) if all(parts) else None
 
     @property
     def type_label(self) -> str:
@@ -148,7 +140,7 @@ class Holding(Base):
     value: Mapped[Decimal | None] = mapped_column()
     value_currency: Mapped[str | None] = mapped_column(String(10))
     cost_basis: Mapped[Decimal | None] = mapped_column()
-    # Hints for price lookup, e.g. {"chain": "ethereum", "contract": "0x..."} or {"coingecko_id": "bitcoin"}.
+    # Hints for price lookup, e.g. {"coingecko_id": "bitcoin"} or {"yahoo": "CW8.PA"}.
     extra: Mapped[dict | None] = mapped_column(JSON)
     manual: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -168,7 +160,10 @@ class Document(Base):
     blob_name: Mapped[str] = mapped_column(String(80))
     kind: Mapped[str] = mapped_column(String(30), default="statement")
     account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"))
-    status: Mapped[str] = mapped_column(String(20), default="uploaded")  # uploaded|parsed|imported|failed
+    # uploaded (stored only) | needs_choice (several adapters fit: the user picks) | parsed | imported | failed
+    status: Mapped[str] = mapped_column(String(20), default="uploaded")
+    adapter_id: Mapped[str | None] = mapped_column(String(60))
+    # {"adapter", "candidates", "decision", "message", "statements": [...], "error"}
     parse_result: Mapped[dict | None] = mapped_column(JSON)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -185,11 +180,83 @@ class Transaction(Base):
     amount: Mapped[Decimal] = mapped_column()
     currency: Mapped[str] = mapped_column(String(10), default="EUR")
     category: Mapped[str | None] = mapped_column(String(60))
-    source: Mapped[str] = mapped_column(String(20), default="sync")  # sync|import|manual
+    source: Mapped[str] = mapped_column(String(20), default="import")  # import|manual
     document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    value_date: Mapped[date | None] = mapped_column(Date)
+    # card | transfer | instant_transfer | direct_debit | loan_payment | fee | cash | cheque | interest | other
+    kind: Mapped[str | None] = mapped_column(String(20))
+    # The other party as printed by the bank, their IBAN when shown, and the contact they were matched to.
+    counterparty_name: Mapped[str | None] = mapped_column(String(300))
+    counterparty_iban: Mapped[str | None] = mapped_column(String(40), index=True)
+    counterparty_id: Mapped[int | None] = mapped_column(ForeignKey("counterparties.id", ondelete="SET NULL"), index=True)
+    reference: Mapped[str | None] = mapped_column(String(200))
+    memo: Mapped[str | None] = mapped_column(Text)
+    raw_label: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSON)
 
     account: Mapped[Account] = relationship(back_populates="transactions")
+    counterparty: Mapped["Counterparty | None"] = relationship(back_populates="transactions")
+
+    @property
+    def internal(self) -> bool:
+        return bool((self.details or {}).get("internal"))
+
+
+class Statement(Base):
+    """One imported statement: the period it covers and its balances, to check that periods follow each other."""
+
+    __tablename__ = "statements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    opening_balance: Mapped[Decimal | None] = mapped_column()
+    closing_balance: Mapped[Decimal | None] = mapped_column()
+    tx_count: Mapped[int] = mapped_column(Integer, default=0)
+    added_count: Mapped[int] = mapped_column(Integer, default=0)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    account: Mapped[Account] = relationship(back_populates="statements")
+
+
+class Counterparty(Base):
+    """Someone or something money goes to or comes from, remembered by IBAN and by name for the next import."""
+
+    __tablename__ = "counterparties"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(20), default="person")  # person | company | self | other
+    phone: Mapped[str | None] = mapped_column(String(40))
+    email: Mapped[str | None] = mapped_column(String(200))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    identifiers: Mapped[list["CounterpartyIdentifier"]] = relationship(
+        back_populates="counterparty", cascade="all, delete-orphan", order_by="CounterpartyIdentifier.id"
+    )
+    transactions: Mapped[list[Transaction]] = relationship(back_populates="counterparty")
+
+
+COUNTERPARTY_KINDS = {"person": "Personne", "company": "Entreprise / organisme", "self": "Moi (autre compte)", "other": "Autre"}
+
+
+class CounterpartyIdentifier(Base):
+    """What lets an import recognise a contact: an IBAN (exact) or a name as banks print it (normalised key)."""
+
+    __tablename__ = "counterparty_identifiers"
+    __table_args__ = (UniqueConstraint("kind", "value"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    counterparty_id: Mapped[int] = mapped_column(ForeignKey("counterparties.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # iban | name
+    value: Mapped[str] = mapped_column(String(200))  # IBAN without spaces, or the name key
+    label: Mapped[str | None] = mapped_column(String(300))  # the name as printed, for display
+
+    counterparty: Mapped[Counterparty] = relationship(back_populates="identifiers")
 
 
 class Snapshot(Base):

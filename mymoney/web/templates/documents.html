@@ -2,25 +2,28 @@
 {% block title %}Documents{% endblock %}
 {% block content %}
 <h1>Documents</h1>
-<form method="post" action="/documents" enctype="multipart/form-data" class="card stack dropzone">
+<form method="post" action="/documents" enctype="multipart/form-data" class="card stack dropzone" id="dropzone">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <label>Relevés et documents <span class="muted small">(PDF, CSV, OFX/QFX, QIF · {{ max_mb }} Mo max)</span>
+  <label class="drop-target">
+    <strong>Dépose tes relevés ici</strong>
+    <span class="muted small">ou clique pour choisir · PDF, CSV, OFX/QFX, QIF · {{ max_mb }} Mo max · plusieurs fichiers possibles</span>
     <input type="file" name="files" multiple required accept=".pdf,.csv,.ofx,.qfx,.qif,.txt,.tsv">
   </label>
-  <small class="muted">Les fichiers sont chiffrés (AES-256-GCM) dès l'arrivée. Chaque document est analysé : tu valides ce qui a été compris avant toute écriture dans tes comptes.</small>
+  <small class="muted">Chaque fichier est chiffré (AES-256-GCM) dès son arrivée, puis reconnu automatiquement : l'adapter de l'établissement et du type de document est choisi tout seul. En cas de doute, l'application te demande. Les doublons sont signalés.</small>
   <button class="btn primary">Envoyer</button>
 </form>
 {% if documents %}
 <section class="card">
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Fichier</th><th>Ajouté</th><th>État</th><th></th></tr></thead>
+    <thead><tr><th>Fichier</th><th>Lu avec</th><th>Ajouté</th><th>État</th><th></th></tr></thead>
     <tbody>
     {% for d in documents %}
     <tr>
       <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
+      <td class="small muted">{{ d.adapter_id or '—' }}</td>
       <td class="nowrap">{{ d.uploaded_at|frdate }}</td>
-      <td><span class="tag status-{{ d.status }}">{{ {'parsed': 'à valider', 'imported': 'importé', 'failed': 'non reconnu', 'uploaded': 'stocké'}[d.status] }}</span></td>
+      <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
       <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
     </tr>
     {% endfor %}
@@ -29,4 +32,12 @@
   </div>
 </section>
 {% endif %}
+<details class="card">
+  <summary>Documents pris en charge</summary>
+  <p class="small muted">Un établissement peut avoir plusieurs adapters : un par type de document (relevé mensuel, export CSV, relevé d'épargne…). Pour en ajouter un, il suffit d'un exemple de document.</p>
+  {% for institution, adapters in catalog %}
+  <h3>{{ institution }}</h3>
+  <ul class="small">{% for a in adapters %}<li><strong>{{ a.label }}</strong> <span class="muted">— {{ a.description }}</span></li>{% endfor %}</ul>
+  {% endfor %}
+</details>
 {% endblock %}

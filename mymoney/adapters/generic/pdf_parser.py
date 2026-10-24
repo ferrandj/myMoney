@@ -14,9 +14,9 @@ import re
 from datetime import date, timedelta
 from decimal import Decimal
 
-from ..connectors.base import HoldingData, TransactionData
-from ..services.rates import guess_account_type
-from .common import ParsedStatement, find_iban, find_institution, norm, parse_amount, parse_date
+from ...services.rates import guess_account_type
+from ..base import HoldingData, ParsedStatement, TransactionData
+from ..common import find_iban, find_institution, norm, parse_amount, parse_date
 
 AMOUNT_RE = re.compile(r"^[+-]?\d{1,3}(?:[.   ]?\d{3})*,\d{2}-?€?$|^[+-]?\d+\.\d{2}-?€?$")
 INT_GROUP_RE = re.compile(r"^[+-]?\d{1,3}$")

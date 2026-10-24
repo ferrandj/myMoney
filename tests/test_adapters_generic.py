@@ -4,8 +4,20 @@ from decimal import Decimal
 import pytest
 from fpdf import FPDF
 
-from mymoney.importers import detect_format, parse_document
-from mymoney.importers.common import find_iban, parse_amount, parse_date
+from mymoney.adapters import SourceDocument, identify, parse_with
+from mymoney.adapters.common import find_iban, parse_amount, parse_date
+
+
+def parse_document(filename: str, data: bytes):
+    """What the app does: pick the adapter by itself, then read."""
+    doc = SourceDocument(filename, data)
+    found = identify(doc)
+    assert found.chosen is not None, found.message
+    return parse_with(found.chosen.adapter.id, doc)
+
+
+def detect_format(filename: str, data: bytes) -> str:
+    return SourceDocument(filename, data).format
 
 
 @pytest.mark.parametrize(

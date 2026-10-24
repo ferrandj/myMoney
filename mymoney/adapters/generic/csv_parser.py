@@ -6,9 +6,9 @@ import csv
 import io
 from decimal import Decimal
 
-from ..connectors.base import HoldingData, TransactionData
-from ..services.rates import guess_account_type
-from .common import ParsedStatement, find_iban, norm, parse_amount, parse_date
+from ...services.rates import guess_account_type
+from ..base import HoldingData, ParsedStatement, TransactionData, decode_text
+from ..common import find_iban, norm, parse_amount, parse_date
 
 COLUMNS = {
     "date": ["date operation", "date de l'operation", "date d'operation", "date comptable", "completed date", "booking date",
@@ -30,15 +30,6 @@ COLUMNS = {
 }
 
 
-def _decode(data: bytes) -> str:
-    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
-
-
 def _match_columns(header: list[str]) -> dict[str, int]:
     found: dict[str, int] = {}
     normalized = [norm(h).strip(" :") for h in header]
@@ -50,8 +41,9 @@ def _match_columns(header: list[str]) -> dict[str, int]:
     return found
 
 
-def parse_csv(data: bytes, filename: str = "") -> list[ParsedStatement]:
-    text = _decode(data)
+def _locate(data: bytes) -> tuple[list[list[str]], int | None, dict[str, int]]:
+    """Rows of the file, index of the header row and the columns it names (None if it is not a statement)."""
+    text = decode_text(data)
     sample = text[:5000]
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=";,\t|")
@@ -59,15 +51,21 @@ def parse_csv(data: bytes, filename: str = "") -> list[ParsedStatement]:
     except csv.Error:
         delimiter = ";" if sample.count(";") > sample.count(",") else ","
     rows = [row for row in csv.reader(io.StringIO(text), delimiter=delimiter) if any(cell.strip() for cell in row)]
-
-    header_index, columns = None, {}
     for i, row in enumerate(rows[:30]):
         candidate = _match_columns(row)
         if ("date" in candidate and ("amount" in candidate or "debit" in candidate or "credit" in candidate)) or (
             "quantity" in candidate and ("symbol" in candidate or "isin" in candidate)
         ):
-            header_index, columns = i, candidate
-            break
+            return rows, i, candidate
+    return rows, None, {}
+
+
+def looks_like_statement(data: bytes) -> bool:
+    return _locate(data)[1] is not None
+
+
+def parse_csv(data: bytes, filename: str = "") -> list[ParsedStatement]:
+    rows, header_index, columns = _locate(data)
     if header_index is None:
         raise ValueError("Colonnes non reconnues : il faut au moins une date et un montant (ou un symbole et une quantité)")
 

@@ -20,10 +20,6 @@ class Settings:
     cookie_secure: bool = field(default_factory=lambda: _bool(os.environ.get("MYMONEY_COOKIE_SECURE"), False))
     # Minutes of inactivity after which the vault is locked and the key wiped from memory.
     auto_lock_minutes: int = field(default_factory=lambda: int(os.environ.get("MYMONEY_AUTO_LOCK_MINUTES", "15")))
-    # Hours between automatic synchronisations while the vault is unlocked (0 disables it).
-    auto_sync_hours: int = field(default_factory=lambda: int(os.environ.get("MYMONEY_AUTO_SYNC_HOURS", "6")))
-    # Public URL of the app, used to build bank redirect URLs (e.g. https://nas.local:8443).
-    public_url: str = field(default_factory=lambda: os.environ.get("MYMONEY_PUBLIC_URL", "http://localhost:8000").rstrip("/"))
     # Opt-in unattended unlock from a Docker secret file. Lowers security: see SECURITY.md.
     unlock_password_file: str | None = field(default_factory=lambda: os.environ.get("MYMONEY_UNLOCK_PASSWORD_FILE"))
     max_upload_mb: int = field(default_factory=lambda: int(os.environ.get("MYMONEY_MAX_UPLOAD_MB", "25")))
@@ -42,10 +38,6 @@ class Settings:
     @property
     def documents_dir(self) -> Path:
         return self.data_dir / "documents"
-
-    @property
-    def woob_dir(self) -> Path:
-        return self.data_dir / "woob"
 
     def ensure_dirs(self) -> None:
         # Files created by the app (database, WAL, documents) are readable by its user only.

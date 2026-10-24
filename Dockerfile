@@ -5,7 +5,7 @@ WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY mymoney ./mymoney
 RUN python -m venv /opt/venv \
- && /opt/venv/bin/pip install ".[woob,traderepublic]" \
+ && /opt/venv/bin/pip install . \
  && find /opt/venv -name "__pycache__" -type d -prune -exec rm -rf {} +
 
 FROM ${PYTHON_IMAGE}

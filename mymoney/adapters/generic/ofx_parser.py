@@ -5,9 +5,9 @@ from __future__ import annotations
 import io
 from decimal import Decimal
 
-from ..connectors.base import TransactionData
-from ..services.rates import guess_account_type
-from .common import ParsedStatement, find_institution, parse_amount, parse_date
+from ...services.rates import guess_account_type
+from ..base import ParsedStatement, TransactionData
+from ..common import find_institution, parse_amount, parse_date
 
 
 def parse_ofx(data: bytes, filename: str = "") -> list[ParsedStatement]:

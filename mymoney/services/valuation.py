@@ -39,13 +39,11 @@ class Valuator:
     def __init__(self, prices: PriceService):
         self.prices = prices
         self._crypto: dict[str, Decimal] = {}
-        self._tokens: dict[tuple[str, str], Decimal] = {}
 
     def prefetch(self, accounts: list[Account]) -> None:
         """Fetch all crypto prices in as few calls as possible (the free CoinGecko tier is rate-limited)."""
         symbols: set[str] = set()
         ids: dict[str, str] = {}
-        tokens: dict[str, set[str]] = {}
         for account in accounts:
             for h in account.holdings:
                 if h.asset_class != "crypto" or h.value is not None:
@@ -53,8 +51,6 @@ class Valuator:
                 extra = h.extra or {}
                 if extra.get("coingecko_id") and h.symbol:
                     ids[h.symbol.upper()] = extra["coingecko_id"]
-                if extra.get("contract") and extra.get("chain"):
-                    tokens.setdefault(extra["chain"], set()).add(extra["contract"])
                 if h.symbol:
                     symbols.add(h.symbol.upper())
             if account.currency.upper() not in ("EUR", "USD") and len(account.currency) > 3:
@@ -63,13 +59,6 @@ class Valuator:
             self._crypto = self.prices.crypto_prices(symbols, BASE, ids) if symbols else {}
         except Exception as exc:
             log.warning("Prix crypto indisponibles : %s", exc)
-        for chain, contracts in tokens.items():
-            pending = [c for c in contracts]
-            try:
-                for contract, price in self.prices.token_prices(chain, pending, BASE).items():
-                    self._tokens[(chain, contract.lower())] = price
-            except Exception as exc:
-                log.warning("Prix tokens %s indisponibles : %s", chain, exc)
 
     def _convert(self, amount: Decimal, currency: str | None) -> Decimal | None:
         try:
@@ -85,9 +74,7 @@ class Valuator:
         extra = h.extra or {}
         if h.asset_class == "crypto":
             price = None
-            if extra.get("contract") and extra.get("chain"):
-                price = self._tokens.get((extra["chain"], extra["contract"].lower()))
-            if price is None and h.symbol:
+            if h.symbol:
                 price = self._crypto.get(h.symbol.upper())
             if price is None and h.symbol and h.symbol.upper() not in self._crypto:
                 price = self.prices.crypto_prices([h.symbol], BASE).get(h.symbol.upper())

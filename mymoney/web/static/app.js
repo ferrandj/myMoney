@@ -49,3 +49,64 @@ document.querySelectorAll("select[data-toggle-new]").forEach((select) => {
   toggleNewAccount(select);
   select.addEventListener("change", () => toggleNewAccount(select));
 });
+
+function toggleNewContact(select) {
+  const fieldset = select.closest("form").querySelector(".new-contact");
+  if (!fieldset) return;
+  fieldset.hidden = select.value !== "";
+  fieldset.querySelectorAll("input[name=name]").forEach((input) => (input.required = select.value === ""));
+}
+document.querySelectorAll("select[data-toggle-contact]").forEach((select) => {
+  toggleNewContact(select);
+  select.addEventListener("change", () => toggleNewContact(select));
+});
+
+// Drag and drop: dropping files on the zone sends them straight away.
+const dropzone = document.getElementById("dropzone");
+if (dropzone) {
+  const input = dropzone.querySelector("input[type=file]");
+  ["dragenter", "dragover"].forEach((name) =>
+    dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.add("dragging");
+    }),
+  );
+  ["dragleave", "drop"].forEach((name) => dropzone.addEventListener(name, () => dropzone.classList.remove("dragging")));
+  dropzone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    if (!event.dataTransfer || !event.dataTransfer.files.length) return;
+    input.files = event.dataTransfer.files;
+    dropzone.requestSubmit();
+  });
+  input.addEventListener("change", () => input.files.length && dropzone.requestSubmit());
+}
+
+// Analyses: filters apply as soon as they change; table headers sort their column.
+document.querySelectorAll("form[data-autosubmit]").forEach((form) => {
+  form.addEventListener("change", () => form.requestSubmit());
+  form.querySelectorAll("button[data-check]").forEach((button) =>
+    button.addEventListener("click", () => {
+      form.querySelectorAll("input[type=checkbox]").forEach((box) => (box.checked = button.dataset.check === "all"));
+      form.requestSubmit();
+    }),
+  );
+});
+document.querySelectorAll("table[data-sortable]").forEach((table) => {
+  const body = table.tBodies[0];
+  table.tHead.querySelectorAll("th").forEach((th, column) =>
+    th.addEventListener("click", () => {
+      const direction = th.dataset.sortDir === "asc" ? "desc" : "asc";
+      table.tHead.querySelectorAll("th").forEach((other) => delete other.dataset.sortDir);
+      th.dataset.sortDir = direction;
+      const key = (row) => {
+        const cell = row.cells[column];
+        const raw = cell.dataset.sort !== undefined ? cell.dataset.sort : cell.textContent.trim();
+        const number = Number(raw);
+        return raw !== "" && !Number.isNaN(number) ? number : raw.toLowerCase();
+      };
+      [...body.rows]
+        .sort((a, b) => (key(a) > key(b) ? 1 : key(a) < key(b) ? -1 : 0) * (direction === "asc" ? 1 : -1))
+        .forEach((row) => body.appendChild(row));
+    }),
+  );
+});

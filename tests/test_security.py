@@ -30,15 +30,23 @@ def test_weak_passwords_rejected():
 def test_database_and_documents_are_encrypted_at_rest(settings):
     app = MyMoney(settings)
     recovery = app.vault.setup(PASSWORD)
-    app.save_account(None, {"name": "Compte joint MARQUEUR", "account_type": "checking", "balance": "1234.56", "iban": "FR7630001007941234567890185"})
-    doc_id = app.store_document("releve.csv", "Date;Libellé;Montant\n01/02/2026;LOYER MARQUEUR;-800,00\n".encode())
+    app.save_account(None, {
+        "name": "Compte joint MARQUEUR", "account_type": "checking", "balance": "1234.56", "iban": "FR7630001007941234567890185",
+        "holder_name": "TITULAIRE MARQUEUR", "holder_address": "1 RUE MARQUEUR", "bank_code": "30001", "account_number": "ACCT-MARQUEUR",
+    })
+    with app.db.session() as s:
+        from mymoney.services import counterparties
+
+        counterparties.save_contact(s, None, {"name": "CONTACT MARQUEUR", "phone": "0611223344", "notes": "NOTE MARQUEUR"})
+    doc_id, _ = app.store_document("releve-MARQUEUR.csv", "Date;Libellé;Montant\n01/02/2026;LOYER MARQUEUR;-800,00\n".encode())
     app.vault.lock()
 
     raw_db = settings.db_path.read_bytes()
     assert not raw_db.startswith(b"SQLite format 3")
-    assert b"MARQUEUR" not in raw_db and b"FR7630001007941234567890185" not in raw_db
+    for secret in (b"MARQUEUR", b"FR7630001007941234567890185", b"0611223344"):
+        assert secret not in raw_db
     for blob in settings.documents_dir.iterdir():
-        assert b"MARQUEUR" not in blob.read_bytes()
+        assert b"MARQUEUR" not in blob.read_bytes() and b"MARQUEUR" not in blob.name.encode()
     assert PASSWORD.encode() not in settings.keystore_path.read_bytes()
 
     with pytest.raises(VaultLocked):
@@ -50,7 +58,8 @@ def test_database_and_documents_are_encrypted_at_rest(settings):
     app.vault.unlock_with_recovery(recovery.lower().replace("-", " "))
     with app.db.session() as s:
         assert s.get(Account, 1).name == "Compte joint MARQUEUR"
-    assert b"MARQUEUR" in app.read_document(doc_id)[1]
+    filename, content = app.read_document(doc_id)
+    assert filename == "releve-MARQUEUR.csv" and b"MARQUEUR" in content
 
 
 def test_change_password_keeps_data(settings):
@@ -64,22 +73,6 @@ def test_change_password_keeps_data(settings):
     app.vault.unlock("Another-Strong-Pass-2")
     with app.db.session() as s:
         assert s.get(Account, 1).name == "Livret"
-
-
-def test_connection_secrets_double_encrypted(settings):
-    app = MyMoney(settings)
-    app.vault.setup(PASSWORD)
-    conn_id = app.create_connection("exchange", "Binance", {"exchange": "binance", "api_key": "KEY-MARQUEUR", "secret": "S", "password": ""})
-    with app.db.session() as s:
-        from mymoney.models import Connection
-
-        conn = s.get(Connection, conn_id)
-        assert b"KEY-MARQUEUR" not in conn.config_enc
-        assert app.connection_config(conn)["api_key"] == "KEY-MARQUEUR"
-    # Empty secret on update = unchanged.
-    app.update_connection(conn_id, "Binance", {"exchange": "binance", "api_key": "", "secret": "", "password": ""})
-    with app.db.session() as s:
-        assert app.connection_config(s.get(Connection, conn_id))["api_key"] == "KEY-MARQUEUR"
 
 
 def test_login_throttling(settings):

@@ -1,0 +1,30 @@
+{# Inline form to name an unknown counterparty: remembered by IBAN and by the name as the bank prints it. #}
+{% macro identify_form(g, next) %}
+<form method="post" action="/contacts/identify" class="inline-identify">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <input type="hidden" name="iban" value="{{ g.iban or '' }}">
+  <input type="hidden" name="printed_name" value="{{ g.name or '' }}">
+  <input name="name" placeholder="Qui est-ce ?" value="" required aria-label="Nom du contact">
+  <input name="phone" placeholder="Téléphone (facultatif)" inputmode="tel" aria-label="Téléphone">
+  <select name="kind" aria-label="Type">
+    {% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+  </select>
+  <button class="btn small primary">Retenir</button>
+</form>
+{% endmacro %}
+
+{% macro unresolved_table(items, next, limit=10) %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Imprimé par la banque</th><th class="num">Opérations</th><th class="num">Reçu / envoyé</th><th>Qui est-ce ?</th></tr></thead>
+  {% for g in items[:limit] %}
+  <tr>
+    <td>{{ g.name or '—' }}{% if g.iban %}<div class="muted small"><code>{{ g.iban }}</code></div>{% endif %}</td>
+    <td class="num">{{ g.count }}</td>
+    <td class="num small">{% if g.total_in %}<span class="pos">+{{ g.total_in|money }}</span><br>{% endif %}{% if g.total_out %}−{{ g.total_out|money }}{% endif %}</td>
+    <td>{{ identify_form(g, next) }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% if items|length > limit %}<p class="small muted">{{ items|length - limit }} autre(s) sur la page <a href="/contacts">Contacts</a>.</p>{% endif %}
+{% endmacro %}

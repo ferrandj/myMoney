@@ -1,4 +1,4 @@
-"""Free price sources: ECB rates (Frankfurter), CoinGecko (crypto) and Yahoo Finance (stocks, ETFs, funds)."""
+"""Free price sources for manually entered positions: ECB rates (Frankfurter), CoinGecko (crypto), Yahoo Finance (stocks, ETFs, funds)."""
 
 from __future__ import annotations
 
@@ -37,13 +37,6 @@ COINGECKO_IDS = {
     "1INCH": "1inch", "ZEC": "zcash", "DASH": "dash", "EOS": "eos", "NEO": "neo", "QNT": "quant-network",
     "BAT": "basic-attention-token", "CHZ": "chiliz", "FTM": "fantom", "S": "sonic-3", "GNO": "gnosis",
     "XDAI": "xdai", "CELO": "celo", "KAVA": "kava", "OSMO": "osmosis", "RUNE": "thorchain",
-}
-
-# Chain names used by the wallet connectors -> CoinGecko "asset platform" ids.
-COINGECKO_PLATFORMS = {
-    "ethereum": "ethereum", "base": "base", "optimism": "optimistic-ethereum", "arbitrum": "arbitrum-one",
-    "polygon": "polygon-pos", "gnosis": "xdai", "bsc": "binance-smart-chain", "avalanche": "avalanche",
-    "scroll": "scroll", "zksync": "zksync", "linea": "linea", "celo": "celo", "solana": "solana",
 }
 
 FX_TTL = 6 * 3600
@@ -176,36 +169,6 @@ class PriceService:
             value = self._stale(f"cg:{coin_id}:{currency}")
             if value is not None:
                 result[symbol] = Decimal(value)
-        return result
-
-    def token_prices(self, chain: str, contracts: Iterable[str], currency: str = "EUR") -> dict[str, Decimal]:
-        """Prices of tokens by contract address (EVM chains, Solana mints)."""
-        platform = COINGECKO_PLATFORMS.get(chain)
-        contracts = sorted({c.lower() if chain != "solana" else c for c in contracts})
-        if not platform or not contracts:
-            return {}
-        currency = currency.lower()
-        result: dict[str, Decimal] = {}
-        missing = []
-        for contract in contracts:
-            cached = self._cached(f"cgt:{platform}:{contract}:{currency}", PRICE_TTL)
-            if cached:
-                result[contract] = Decimal(cached)
-            else:
-                missing.append(contract)
-        # The free tier only allows one contract per call: keep it to the tokens we don't know yet.
-        for contract in missing[:25]:
-            try:
-                data = self._coingecko_get(
-                    f"/simple/token_price/{platform}", {"contract_addresses": contract, "vs_currencies": currency}
-                )
-            except Exception:
-                continue
-            for addr, prices in data.items():
-                if currency in prices:
-                    key = addr if chain == "solana" else addr.lower()
-                    self._store(f"cgt:{platform}:{key}:{currency}", str(prices[currency]))
-                    result[key] = Decimal(str(prices[currency]))
         return result
 
     # -- stocks, ETFs, funds --------------------------------------------

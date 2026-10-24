@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% from "_macros.html" import unresolved_table with context %}
 {% block title %}{{ account.name }}{% endblock %}
 {% block content %}
 <p><a href="/">← Patrimoine</a></p>
 <section class="hero">
   <div>
-    <p class="muted">{{ [account.institution, account.type_label, ('via ' ~ account.connection.name) if account.connection else 'saisi manuellement']|select|join(' · ') }}</p>
+    <p class="muted">{{ [account.institution, account.type_label, account.holder_name]|select|join(' · ') }}</p>
     <h1>{{ account.name }}</h1>
     <p class="big">{{ value.total|money }}</p>
     {% if account.currency != 'EUR' %}<p class="muted small">Solde {{ account.balance|money(account.currency) }}</p>{% endif %}
@@ -20,13 +21,52 @@
     <h2>Informations</h2>
     <dl class="kv">
       {% if rate is not none %}<dt>Taux</dt><dd><strong>{{ '%.2f'|format(rate)|replace('.', ',') }} %</strong> <span class="muted small">{{ rate_source }}</span></dd>{% endif %}
-      {% if account.iban %}<dt>IBAN</dt><dd><code>{{ account.iban }}</code></dd>{% endif %}
       <dt>Devise</dt><dd>{{ account.currency }}</dd>
       {% if account.notes %}<dt>Notes</dt><dd>{{ account.notes }}</dd>{% endif %}
     </dl>
     {% for w in value.warnings %}<p class="warn small">⚠ {{ w }}</p>{% endfor %}
   </div>
+  <div class="card">
+    <h2>Titulaire et coordonnées</h2>
+    {% if account.holder_name or account.holder_address or account.iban or account.rib %}
+    <dl class="kv">
+      {% if account.holder_name %}<dt>Titulaire</dt><dd>{{ account.holder_name }}</dd>{% endif %}
+      {% if account.holder_address %}<dt>Adresse</dt><dd>{{ account.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+      {% if account.iban %}<dt>IBAN</dt><dd><code>{{ account.iban }}</code></dd>{% endif %}
+      {% if account.bic %}<dt>BIC</dt><dd><code>{{ account.bic }}</code></dd>{% endif %}
+      {% if account.rib %}<dt>RIB</dt><dd><code>{{ account.rib }}</code> <span class="muted small">banque · guichet · compte · clé</span></dd>
+      {% elif account.account_number %}<dt>N° de compte</dt><dd><code>{{ account.account_number }}</code></dd>{% endif %}
+    </dl>
+    {% else %}<p class="muted small">Aucune information lue. Elles viennent des relevés importés, ou de <a href="/accounts/{{ account.id }}/edit">la fiche du compte</a>.</p>{% endif %}
+  </div>
 </section>
+
+{% if statements %}
+<section class="card">
+  <h2>Relevés importés</h2>
+  {% for g in gaps %}<p class="warn small">⚠ {{ g }}</p>{% endfor %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Période</th><th class="num">Solde initial</th><th class="num">Solde final</th><th class="num">Opérations</th><th>Importé</th></tr></thead>
+    {% for st in statements|reverse %}
+    <tr>
+      <td class="nowrap">{{ st.period_start|frdate }} → {{ st.period_end|frdate }}</td>
+      <td class="num">{{ st.opening_balance|money(account.currency) }}</td>
+      <td class="num">{{ st.closing_balance|money(account.currency) }}</td>
+      <td class="num">{{ st.added_count }} / {{ st.tx_count }}</td>
+      <td class="nowrap small">{% if st.document_id %}<a href="/documents/{{ st.document_id }}">{{ st.imported_at|frdate }}</a>{% else %}{{ st.imported_at|frdate }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
+
+{% if to_identify %}
+<section class="card">
+  <h2>À identifier</h2>
+  <p class="small muted">Ces interlocuteurs reviennent dans les opérations de ce compte sans être nommés.</p>
+  {{ unresolved_table(to_identify, '/accounts/' ~ account.id, 5) }}
+</section>
+{% endif %}
 
 {% if account.holdings or account.category in ['crypto', 'investissements', 'autres'] %}
 <section class="card">
@@ -77,13 +117,18 @@
     <thead><tr><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
     <tbody>
     {% for t in transactions %}
-      <tr><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}{% if t.source == 'import' %} <span class="tag">import</span>{% endif %}</td>
+      <tr><td class="nowrap">{{ t.date|frdate }}</td>
+      <td>{{ t.label }}
+        <div class="muted small">{{ [KIND_LABELS.get(t.kind, ''), 'virement interne' if t.internal else '', ('valeur ' ~ (t.value_date|frdate)) if t.value_date and t.value_date != t.date else '']|select|join(' · ') }}
+          {% if t.counterparty %}{% if t.kind %} · {% endif %}<a href="/contacts/{{ t.counterparty.id }}">{{ t.counterparty.name }}</a>
+          {% elif (t.counterparty_name or t.counterparty_iban) and not t.internal and t.kind != 'card' %}{% if t.kind %} · {% endif %}<a href="/contacts/identify?name={{ (t.counterparty_name or '')|urlencode }}&iban={{ (t.counterparty_iban or '')|urlencode }}&next={{ ('/accounts/' ~ account.id)|urlencode }}">identifier {{ t.counterparty_name or t.counterparty_iban }}</a>{% endif %}
+        </div></td>
       <td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
   {% if pages > 1 %}<p class="pager">{% if page > 1 %}<a href="?page={{ page - 1 }}">← Plus récentes</a>{% endif %} Page {{ page }}/{{ pages }} {% if page < pages %}<a href="?page={{ page + 1 }}">Plus anciennes →</a>{% endif %}</p>{% endif %}
-  {% else %}<p class="muted">Aucune opération. Importe un relevé ou connecte la banque.</p>{% endif %}
+  {% else %}<p class="muted">Aucune opération. <a href="/documents">Dépose un relevé</a> de ce compte.</p>{% endif %}
 </section>
 {% endblock %}
