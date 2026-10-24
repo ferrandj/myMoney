@@ -6,6 +6,8 @@ description = "Gestionnaire de patrimoine personnel auto-hébergé : tu déposes
 license = "MIT"
 publish = false
 
+build = "build.rs"
+
 [[bin]]
 name = "mymoney"
 path = "src/main.rs"
@@ -42,3 +44,6 @@ strip = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[build-dependencies]
+sha2 = "0.10"

@@ -39,6 +39,30 @@ pub fn split_ws(s: &str) -> Vec<&str> {
     s.split(is_space).filter(|x| !x.is_empty()).collect()
 }
 
+/// `str.splitlines()`: every line break Python knows, "\r\n" counted once, no trailing empty line.
+pub fn splitlines(s: &str) -> Vec<&str> {
+    let mut out = vec![];
+    let mut start = 0;
+    let mut it = s.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        if matches!(c, '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e' | '\u{85}' | '\u{2028}' | '\u{2029}') {
+            out.push(&s[start..i]);
+            let mut end = i + c.len_utf8();
+            if c == '\r' {
+                if let Some(&(j, '\n')) = it.peek() {
+                    it.next();
+                    end = j + 1;
+                }
+            }
+            start = end;
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
 /// `" ".join(s.split())`.
 pub fn squash_ws(s: &str) -> String {
     split_ws(s).join(" ")
@@ -64,6 +88,72 @@ pub fn is_numeric_char(c: char) -> bool {
 
 pub fn is_alnum_char(c: char) -> bool {
     is_alpha_char(c) || is_numeric_char(c)
+}
+
+/// `-d` with Python's decimal: a zero comes out positive.
+pub fn neg(d: Decimal) -> Decimal {
+    if d.is_zero() {
+        d.abs()
+    } else {
+        -d
+    }
+}
+
+/// `x or Decimal(0)`: a zero (falsy, whatever its exponent) becomes the plain `Decimal(0)`.
+pub fn or_zero(d: Option<Decimal>) -> Decimal {
+    match d {
+        Some(v) if !v.is_zero() => v,
+        _ => Decimal::ZERO,
+    }
+}
+
+/// `repr(str)`: single quotes unless the text has one and no double quote.
+pub fn repr_str(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::new();
+    out.push(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == q => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push(q);
+    out
+}
+
+/// `int(s)` (base 10): surrounding whitespace, a sign, Unicode decimal digits, single underscores between digits.
+pub fn py_int(s: &str) -> Result<i64, String> {
+    let err = || format!("invalid literal for int() with base 10: {}", repr_str(s));
+    let t = strip(s);
+    let (neg, body) = match t.chars().next() {
+        Some('-') => (true, &t[1..]),
+        Some('+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    if body.is_empty() || body.starts_with('_') || body.ends_with('_') || body.contains("__") {
+        return Err(err());
+    }
+    let mut v: i64 = 0;
+    for c in body.chars() {
+        if c == '_' {
+            continue;
+        }
+        if !is_decimal_char(c) {
+            return Err(err());
+        }
+        let d = c.to_digit(10).unwrap_or_else(|| crate::adapters::common::unicode_digit(c)) as i64;
+        v = v.checked_mul(10).and_then(|x| x.checked_add(d)).ok_or_else(err)?;
+    }
+    Ok(if neg { -v } else { v })
 }
 
 pub fn isdigit(s: &str) -> bool {
@@ -151,10 +241,17 @@ pub fn dec_parse(s: &str) -> Option<Decimal> {
     if t.is_empty() {
         return None;
     }
-    if let Ok(d) = t.parse::<Decimal>() {
-        return Some(d);
+    let d = t.parse::<Decimal>().ok().or_else(|| Decimal::from_scientific(t).ok())?;
+    Some(signed_zero(d, t))
+}
+
+/// Python keeps the sign of "-0.00"; rust_decimal reads it as a plain zero.
+pub fn signed_zero(d: Decimal, text: &str) -> Decimal {
+    if d.is_zero() && text.starts_with('-') && !d.is_sign_negative() {
+        -d
+    } else {
+        d
     }
-    Decimal::from_scientific(t).ok()
 }
 
 /// `repr(float)`.
@@ -385,3 +482,4 @@ mod tests {
         assert_eq!(py_round(-2.5), -2);
     }
 }
+

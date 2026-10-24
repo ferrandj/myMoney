@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -36,6 +37,27 @@ fn main() {
                 Ok(())
             }).unwrap();
         }
+    } else if args.len() >= 3 && args[1] == "parse" {
+        // identify + parse_with, as JSON, for comparing with the Python reader
+        let data = std::fs::read(&args[2]).expect("read");
+        let name = args.get(3).cloned().unwrap_or_else(|| std::path::Path::new(&args[2]).file_name().unwrap().to_string_lossy().into_owned());
+        let doc = adapters::SourceDocument::new(&name, data);
+        let found = adapters::registry::identify(&doc);
+        let mut out = serde_json::Map::new();
+        out.insert("decision".into(), found.decision.into());
+        out.insert("message".into(), found.message.clone().into());
+        out.insert("institution".into(), found.institution.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null));
+        out.insert("candidates".into(), serde_json::Value::Array(found.candidates.iter().map(|c| c.to_json()).collect()));
+        let mut parsed = serde_json::Map::new();
+        for c in &found.candidates {
+            let v = match adapters::registry::parse_with(c.adapter.id(), &doc) {
+                Ok(sts) => serde_json::Value::Array(sts.iter().map(|s| s.to_json()).collect()),
+                Err(e) => serde_json::json!({"error": e}),
+            };
+            parsed.insert(c.adapter.id().into(), v);
+        }
+        out.insert("parsed".into(), serde_json::Value::Object(parsed));
+        println!("{}", py::json_dumps(&serde_json::Value::Object(out)));
     } else if args.len() >= 3 && args[1] == "pdf-text" {
         let data = std::fs::read(&args[2]).expect("read");
         print!("{}", pdf::extract_text(&data).expect("pdf"));
