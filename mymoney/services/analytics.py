@@ -17,7 +17,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import CATEGORIES, Account, Snapshot, Transaction
+from ..models import CATEGORIES, Account, FeeSummary, Snapshot, Transaction
 from . import categories as category_service
 
 PERIODS = {"1m": ("1 mois", 30), "3m": ("3 mois", 91), "6m": ("6 mois", 182), "1a": ("1 an", 365), "tout": ("Tout", None)}
@@ -271,6 +271,48 @@ class MerchantTotal:
 
 
 @dataclass
+class FeeYear:
+    """The bank's own recap of fees for one account and period, next to what the statements' operations say."""
+
+    account_id: int
+    account_name: str
+    document_id: int | None
+    period_start: date
+    period_end: date
+    charged: Decimal  # services billed
+    refunded: Decimal  # refunds in the member's favour (positive number)
+    net: Decimal  # what the bank states as the total of fees paid
+    interest_paid: Decimal | None
+    interest_earned: Decimal | None
+    services: list[dict]
+    operations: Decimal = Decimal(0)  # fee operations found in the imported statements over the same period
+    operations_count: int = 0
+
+    @property
+    def gap(self) -> Decimal:
+        return self.net - self.operations
+
+
+@dataclass
+class FeesReport:
+    operations_total: Decimal = Decimal(0)  # net fees found in the operations of the period shown
+    operations_count: int = 0
+    summaries: list[FeeYear] = field(default_factory=list)
+
+    @property
+    def summaries_total(self) -> Decimal:
+        return sum((f.net for f in self.summaries), Decimal(0))
+
+    @property
+    def interest_paid(self) -> Decimal:
+        return sum((f.interest_paid or Decimal(0) for f in self.summaries), Decimal(0))
+
+    @property
+    def refunded(self) -> Decimal:
+        return sum((f.refunded for f in self.summaries), Decimal(0))
+
+
+@dataclass
 class SpendingReport:
     direction: str  # out | in
     total: Decimal = Decimal(0)  # of that direction
@@ -283,6 +325,7 @@ class SpendingReport:
     merchants: list[MerchantTotal] = field(default_factory=list)
     operations: list[tuple[Transaction, str]] = field(default_factory=list)  # (operation, account name), newest first
     top_merchants: list[MerchantTotal] = field(default_factory=list)  # all categories mixed
+    fees: FeesReport = field(default_factory=FeesReport)
 
     @property
     def saved(self) -> Decimal:
@@ -295,6 +338,7 @@ def spending_report(
     """Where the money went (or came from): per category, then per merchant and operation inside one category."""
     report = SpendingReport(direction)
     rules = category_service.load_rules(session)
+    categorize = category_service.categorizer(rules)
     names = {a.id: a.name for a in session.scalars(select(Account).where(Account.id.in_(account_ids)))} if account_ids else {}
     totals: dict[str, CategoryTotal] = {}
     merchants: dict[tuple[str, str], MerchantTotal] = {}
@@ -312,9 +356,12 @@ def spending_report(
             report.total_out += -amount
         else:
             report.total_in += amount
+        cat = categorize(t)
+        if amount < 0 and cat == "frais":
+            report.fees.operations_total += -amount
+            report.fees.operations_count += 1
         if (amount < 0) != (direction == "out"):
             continue
-        cat = category_service.categorize(t, rules)
         key, label, contact_id = category_service.merchant(t)
         value = abs(amount)
         report.total += value
@@ -338,8 +385,35 @@ def spending_report(
         top.total += m.total
         top.count += m.count
     report.top_merchants = sorted(by_key.values(), key=lambda m: -m.total)[:12]
+    report.fees.summaries = fee_summaries(session, account_ids, start, end, names, rules)
     if category is not None and category in totals:
         report.category = totals[category]
         report.merchants = sorted((m for (cat, _), m in merchants.items() if cat == category), key=lambda m: -m.total)
         report.operations = sorted(chosen_ops, key=lambda x: (x[0].date, x[0].id), reverse=True)[:300]
     return report
+
+
+def fee_summaries(session: Session, account_ids: list[int], start: date, end: date, names: dict[int, str], rules: dict[str, str]) -> list[FeeYear]:
+    """The bank's recaps of fees whose period touches start..end, each with the fee operations the statements show for it."""
+    if not account_ids:
+        return []
+    rows = session.scalars(
+        select(FeeSummary)
+        .where(FeeSummary.account_id.in_(account_ids), FeeSummary.period_end >= start, FeeSummary.period_start <= end)
+        .order_by(FeeSummary.period_start.desc(), FeeSummary.account_id)
+    )
+    result = []
+    for r in rows:
+        services = r.services or []
+        totals = [Decimal(str(x.get("total", 0))) for x in services]
+        year = FeeYear(
+            r.account_id, names.get(r.account_id, ""), r.document_id, r.period_start, r.period_end,
+            charged=sum((t for t in totals if t > 0), Decimal(0)), refunded=-sum((t for t in totals if t < 0), Decimal(0)),
+            net=Decimal(r.fees_total), interest_paid=r.interest_paid, interest_earned=r.interest_earned, services=services,
+        )
+        for t in _transactions(session, [r.account_id], r.period_start, r.period_end, True):
+            if t.amount < 0 and category_service.categorize(t, rules) == "frais":
+                year.operations += -t.amount
+                year.operations_count += 1
+        result.append(year)
+    return result

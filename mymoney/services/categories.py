@@ -118,6 +118,22 @@ def set_rule(session: Session, key: str, category: str) -> None:
     session.flush()
 
 
+def categorizer(rules: dict[str, str]):
+    """`categorize` for a whole batch: operations that read the same (the same merchant month after month) are decided once."""
+    seen: dict[tuple, str] = {}
+
+    def decide(t: Transaction) -> str:
+        key = (
+            t.internal, t.counterparty_id, t.counterparty_name, t.label, t.memo, t.kind, Decimal(t.amount) >= 0,
+            t.counterparty.name if t.counterparty is not None else None,
+        )
+        if key not in seen:
+            seen[key] = categorize(t, rules)
+        return seen[key]
+
+    return decide
+
+
 def categorize(t: Transaction, rules: dict[str, str]) -> str:
     """The id of the category of one operation."""
     if t.internal:
