@@ -139,6 +139,7 @@ Sauvegarde le dossier `data/` tel quel (Hyper Backup, rsync…). Il est chiffré
 2. Va dans **Documents** et **dépose** le fichier (glisser-déposer, plusieurs fichiers possibles).
 3. Le document est chiffré, reconnu, lu, puis contrôlé :
    - compte déjà connu (même IBAN / même RIB), relevé cohérent, sans doublon : **importé automatiquement** ;
+   - un premier relevé (compte pas encore connu) reste **« à valider »** : la page Documents affiche un encadré avec le bouton **Tout valider**, qui crée les comptes et importe d'un coup tout ce qui est évident (ce qui demande un choix, comme un nom de titulaire coupé, reste dans la liste) ;
    - sinon, une page de vérification montre ce qui a été compris (titulaire, RIB, soldes, opérations, doublons, anomalies) et te laisse choisir le compte, l'adapter ou ce qu'il faut importer.
 4. Dans **Contacts**, nomme les bénéficiaires et émetteurs qui reviennent : ils seront reconnus automatiquement ensuite.
 
