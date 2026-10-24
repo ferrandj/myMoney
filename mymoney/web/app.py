@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -18,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from ..adapters import ADAPTERS, catalog, get_adapter
+from ..adapters import ADAPTERS, catalog, get_adapter, reader_version
 from ..adapters.common import strip_accents
 from ..config import Settings, settings as default_settings
 from ..core import QUARANTINE_HOURS, MyMoney
@@ -256,6 +257,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
         DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS, LOAN_KINDS=loan_service.LOAN_KINDS,
         THEME_GROUPS=themes.groups(), identity_text=identity_text, reliability=reliability,
+        APP_VERSION=os.environ.get("MYMONEY_VERSION", "dev"), READER_VERSION=reader_version(),
     )
 
     def contact_choices():
@@ -794,6 +796,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         missing = {"account": account.name, "label": coverage_service.describe(date.fromisoformat(start), date.fromisoformat(end))}
             except ValueError:
                 missing = None
+        await run_in_threadpool(core.refresh_stale_waiting)  # waiting documents are shown with the current reading
         with core.db.session() as s:
             everything = access.visible_documents(s)
             names = {d.id: d.filename for d in everything}
@@ -976,7 +979,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             nxt, waiting = await run_in_threadpool(core.next_pending, doc_id)
             queue = {"waiting": waiting, "next": nxt}
         return render(
-            request, "document.html", doc=doc, result=result, plans=review["plans"], accounts=review["accounts"],
+            request, "document.html", doc=doc, result=result, current_reading=core.reading_is_current(doc), plans=review["plans"], accounts=review["accounts"],
             candidates=candidates, adapters=ADAPTERS, to_identify=to_identify, original=original, queue=queue,
         )
 

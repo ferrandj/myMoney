@@ -9,6 +9,7 @@ RUN python -m venv /opt/venv \
  && find /opt/venv -name "__pycache__" -type d -prune -exec rm -rf {} +
 
 FROM ${PYTHON_IMAGE}
+ARG VERSION=dev
 LABEL org.opencontainers.image.title="myMoney" \
       org.opencontainers.image.description="Gestionnaire de patrimoine auto-hébergé, chiffré au repos" \
       org.opencontainers.image.source="https://github.com/ferrandj/myMoney"
@@ -27,7 +28,8 @@ ENV PATH=/opt/venv/bin:$PATH \
     HOME=/tmp \
     MYMONEY_DATA_DIR=/data \
     MYMONEY_HOST=0.0.0.0 \
-    MYMONEY_PORT=8000
+    MYMONEY_PORT=8000 \
+    MYMONEY_VERSION=${VERSION}
 USER 10001:10001
 WORKDIR /tmp
 VOLUME ["/data"]

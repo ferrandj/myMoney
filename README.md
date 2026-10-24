@@ -148,6 +148,8 @@ Un livret, un bien immobilier, un crédit ou des positions crypto sans relevé :
 
 Un trou n'est signalé que s'il est vrai : une période couverte par un relevé déjà **lu mais pas encore validé** n'est pas « manquante », elle est en attente.
 
+Chaque document garde l'empreinte de la version de lecture qui l'a lu (visible en bas de page : « myMoney 1.x.y · lecture abc123 »). Un document **en attente** lu par une version plus ancienne est relu automatiquement quand tu l'ouvres ou que tu ouvres la page Documents ; un document **déjà importé** n'est jamais modifié en silence : sa page indique « lu par une version plus ancienne » et **Tout relire** le met à jour.
+
 ## Après une mise à jour : tout relire
 
 Les lectures s'améliorent (nouveaux formats, corrections). Dans **Documents → « Tout relire depuis les fichiers »**, un bouton **annule tous les imports** puis **relit chaque fichier** avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents (les opérations saisies à la main restent). Ce qui est évident est revalidé ; ce qui ne passe plus les contrôles (nouvel avertissement, solde qui ne s'enchaîne plus…) reste **à valider**, avec la raison affichée : rien n'est validé en silence. Sur la page d'un document déjà importé, **Invalider l'import** retire seulement ses opérations ; dans la bibliothèque, **Invalider** (par type de document ou par établissement), **Invalider la sélection** et **Tout invalider** font la même chose en groupe (les fichiers restent, ils reviennent dans « À valider »).

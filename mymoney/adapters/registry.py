@@ -7,8 +7,11 @@ decision is returned as "ask" or "fallback" so the app can put the question to t
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 from .base import Adapter, ParsedStatement, SourceDocument
 from .boursobank.savings_pdf import BoursoBankSavingsPdf
@@ -25,6 +28,17 @@ from .generic import GenericCsv, GenericOfx, GenericPdf, GenericQif
 from .revolut.statement_csv import RevolutStatementCsv
 
 log = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def reader_version() -> str:
+    """A short fingerprint of the reading code (every adapter and the PDF helpers). A document remembers the one that read it:
+    when it differs from the current one, the reading may be out of date and is redone."""
+    digest = hashlib.sha256()
+    for path in sorted(Path(__file__).parent.rglob("*.py")):
+        digest.update(path.relative_to(Path(__file__).parent).as_posix().encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:8]
 
 # One entry per kind of document per institution. To support a new one: write the adapter, add it here.
 ADAPTERS: list[type[Adapter]] = [

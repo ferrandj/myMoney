@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from .adapters import ParsedStatement, SourceDocument, get_adapter, identify, parse_with
+from .adapters import ParsedStatement, SourceDocument, get_adapter, identify, parse_with, reader_version
 from .config import Settings
 from .db import Database
 from .models import ACCOUNT_TYPES, CATEGORIES, Account, Document, Holding, PriceCache, Setting, Snapshot, Statement, Transaction, User, utcnow
@@ -375,6 +375,7 @@ class MyMoney:
             "institution": found.institution,
             "candidates": [c.to_json() for c in found.candidates],
             "statements": [],
+            "reader": reader_version(),
         }
         chosen = adapter_id or (found.chosen.adapter.id if found.chosen else None)
         status, kind = "failed", "statement"
@@ -513,8 +514,36 @@ class MyMoney:
         self._wipe(old_path)
         return result
 
+    def refresh_if_stale(self, doc_id: int) -> bool:
+        """Read again a document that is still waiting (not imported) when the reading code changed since it was read:
+        what it shows must come from the current reading, not from a past one. Returns True when it was redone."""
+        with self.db.session() as s:
+            doc = s.get(Document, doc_id)
+            if doc is None or not access.document_visible(s, doc) or doc.status not in ("parsed", "needs_choice", "failed"):
+                return False
+            result = doc.parse_result or {}
+            if result.get("reader") == reader_version():
+                return False
+            chosen = result.get("adapter") if result.get("decision") == "chosen" else None  # the user's own choice stays
+        try:
+            if self.analyze_document(doc_id, chosen) == "parsed":
+                self.check_duplicate(doc_id)
+        except Exception as exc:
+            log.warning("Relecture de %s impossible : %s", doc_id, exc)
+            return False
+        return True
+
+    def refresh_stale_waiting(self) -> int:
+        with self.db.session() as s:
+            ids = [d.id for d in access.visible_documents(s) if d.status in ("parsed", "needs_choice", "failed") and (d.parse_result or {}).get("reader") != reader_version()]
+        return sum(1 for i in ids if self.refresh_if_stale(i))
+
+    def reading_is_current(self, doc: Document) -> bool:
+        return (doc.parse_result or {}).get("reader") == reader_version()
+
     def review_document(self, doc_id: int) -> dict | None:
         """Everything the review page shows: what was understood, and what importing it would do."""
+        self.refresh_if_stale(doc_id)
         with self.db.session() as s:
             doc = s.get(Document, doc_id)
             if doc is None or not access.document_visible(s, doc):
