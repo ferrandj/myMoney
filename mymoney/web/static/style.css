@@ -219,18 +219,15 @@ progress { width: 140px; height: 10px; vertical-align: middle; }
 .menu > summary { list-style: none; }
 .menu > summary::-webkit-details-marker { display: none; }
 .menu[open] > summary { border-color: var(--border); background: var(--bg); }
-.menu-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(420px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+.menu-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(420px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow-y: auto;
+  overscroll-behavior: contain; scrollbar-gutter: stable; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
 .menu-panel h4 { margin: 12px 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.menu-panel h4:first-of-type { margin-top: 10px; }
 .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
 .theme-pick { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
-.theme-chip { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 8px; border-radius: 10px; border: 2px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: .85rem; cursor: pointer; text-align: left; }
-.theme-chip .dots { display: flex; gap: 4px; }
-.theme-chip .dots i { width: 14px; height: 14px; border-radius: 50%; display: block; }
-.theme-chip .dots i:nth-child(1) { background: var(--primary); } .theme-chip .dots i:nth-child(2) { background: var(--s1); }
-.theme-chip .dots i:nth-child(3) { background: var(--s2); } .theme-chip .dots i:nth-child(4) { background: var(--s5); }
-.theme-chip[aria-pressed="true"], .theme-pick[aria-pressed="true"] { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: 1px; }
-.theme-chip:hover, .theme-pick:hover { border-color: var(--primary); }
+/* A swatch is the style itself (its own background and text colours) with a stripe in its accent colour: no layout change on hover or selection. */
+.theme-chip { display: block; height: 40px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); border-left: 8px solid var(--primary); background: var(--bg); color: var(--text); font: inherit; font-size: .85rem; cursor: pointer; text-align: left; white-space: nowrap; overflow: hidden; }
+.theme-chip[aria-pressed="true"], .theme-pick[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--primary); }
 
 /* Copy buttons */
 .btn.copy { padding: 1px 7px; font-size: .78rem; color: var(--muted); margin-left: 4px; vertical-align: middle; }
@@ -253,3 +250,8 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .hero-logo .logo { border-radius: 18px; box-shadow: 0 6px 20px rgba(79, 70, 229, .35); margin-bottom: 8px; }
 .hero-logo h1 { margin: 0; } .hero-logo h1 b { color: var(--primary); }
 .hero-logo p { margin: 2px 0 0; }
+@media (max-width: 640px) {
+  /* On a narrow screen the panel spans the window instead of hanging from its button, so it can never push the page sideways. */
+  .menu { position: static; }
+  .menu-panel { position: fixed; left: 12px; right: 12px; top: 60px; width: auto; max-height: calc(100vh - 76px); }
+}
