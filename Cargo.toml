@@ -11,8 +11,25 @@ name = "mymoney"
 path = "src/main.rs"
 
 [dependencies]
-indexmap = "2"
+indexmap = { version = "2", features = ["serde"] }
 regex = "1"
+fancy-regex = "0.14"
+aes-gcm = "0.10"
+argon2 = "0.5"
+hkdf = "0.12"
+sha2 = "0.10"
+hmac = "0.12"
+md-5 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+hex = "0.4"
+rust_decimal = { version = "1", features = ["maths"] }
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }
+unicode-normalization = "0.1"
+unicode-general-category = "1"
+zeroize = "1"
+log = "0.4"
 flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

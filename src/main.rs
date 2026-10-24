@@ -1,4 +1,12 @@
+pub mod config;
+pub mod db;
+pub mod error;
+pub mod models;
 pub mod pdf;
+pub mod py;
+pub mod schema;
+pub mod security;
+pub mod services;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -7,6 +15,27 @@ fn main() {
         let tol: f64 = args.get(3).map(|s| s.parse().unwrap()).unwrap_or(1.0);
         let pages = pdf::extract_words(&data, tol).expect("pdf");
         println!("{}", serde_json::to_string(&pages).unwrap());
+    } else if args.len() >= 5 && (args[1] == "debug-db" || args[1] == "debug-create") {
+        let settings = config::Settings { data_dir: args[2].clone().into(), ..config::Settings::from_env() };
+        settings.ensure_dirs().unwrap();
+        let ks = security::keystore::Keystore { path: settings.keystore_path(), time_cost: settings.argon2_time_cost, memory_kib: settings.argon2_memory_kib };
+        let vault = security::vault::Vault::new(ks);
+        let slot = services::users::slot_id(&args[3]).unwrap();
+        let db = db::Database::new(settings.db_path());
+        if args[1] == "debug-create" {
+            let rec = vault.setup(&args[4], Some(&slot)).unwrap();
+            db.open(&vault.subkey("database").unwrap()).unwrap();
+            db.session(|c| { services::users::create(c, &args[3], Some("Rust"), true)?; let mut a = models::Account { name: "Compte Rust".into(), balance: "12.50".parse().unwrap(), ..Default::default() }; a.insert(c)?; Ok(()) }).unwrap();
+            println!("recovery {rec}");
+        } else {
+            vault.unlock(&args[4], Some(&slot)).unwrap();
+            db.open(&vault.subkey("database").unwrap()).unwrap();
+            db.session(|c| {
+                for u in services::users::all_users(c)? { println!("user {} {} admin={} created={}", u.id, u.email, u.is_admin, models::fmt_datetime(&u.created_at)); }
+                for a in models::Account::query(c, "", [])? { println!("account {} {} {} {:?}", a.id, a.name, py::dec_str(&a.balance), a.owner_id); }
+                Ok(())
+            }).unwrap();
+        }
     } else if args.len() >= 3 && args[1] == "pdf-text" {
         let data = std::fs::read(&args[2]).expect("read");
         print!("{}", pdf::extract_text(&data).expect("pdf"));
