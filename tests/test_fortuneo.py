@@ -356,31 +356,61 @@ def test_a_savings_statement_with_an_operation_the_balances_do_not_explain_is_fl
     assert st.confidence == "low" and any("ne tombent pas juste" in w for w in st.warnings)
 
 
-def test_web_validate_all_imports_what_is_obvious_in_one_click(client):
+def import_by_hand(client, csrf, name, data, account="new"):
+    page = upload(client, csrf, name, data)
+    found = re.search(r"/documents/(\d+)", str(page.url))
+    if found is None:  # the account was known and the document clean: it was imported on arrival
+        return None
+    doc = found.group(1)
+    form = {"csrf": csrf, "account_id": account, "import_transactions": "on"}
+    if account == "new":
+        form["name"] = "Compte"
+    client.post(f"/documents/{doc}/import/0", data=form)
+    return doc
+
+
+def test_web_there_is_no_validate_all_button(client):
     csrf = login(client)
-    # The recap comes first and the account does not exist yet: both wait for a green light.
-    upload(client, csrf, "frais.pdf", fortuneo_fees_pdf(FeesSpec()))
     upload(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
     page = client.get("/documents")
-    assert "À valider" in page.text and "Tout valider (2)" in page.text
+    assert "À valider" in page.text and "Tout valider" not in page.text and "Passer en revue" in page.text
+    assert client.post("/documents/validate-all", data={"csrf": csrf}).status_code in (404, 405)
 
-    done = client.post("/documents/validate-all", data={"csrf": csrf})
-    assert "2 document(s) validé(s)" in done.text
-    assert "Tout valider" not in done.text
+
+def test_web_invalidate_everything_one_institution_or_one_type(client):
+    csrf = login(client)
+    import_by_hand(client, csrf, "septembre.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    import_by_hand(client, csrf, "frais.pdf", fortuneo_fees_pdf(FeesSpec()), account="1")
+    upload(client, csrf, "fgdr.pdf", fortuneo_info_pdf())
+    page = client.get("/documents")
+    assert "Tout invalider (3)" in page.text and "Invalider la sélection" in page.text
+    assert "Invalider (3)" in page.text  # the institution
+
+    def statuses():
+        with client.core.db.session() as s:
+            return {d.filename: d.status for d in s.scalars(select(Document))}
+
+    # One type of document: only the fees recap goes back to "à valider".
+    client.post("/documents/invalidate", data={"csrf": csrf, "scope": "kind:Fortuneo::Récapitulatif des frais"})
+    assert statuses() == {"septembre.pdf": "imported", "frais.pdf": "parsed", "fgdr.pdf": "imported"}
     with client.core.db.session() as s:
-        assert len(list(s.scalars(select(Account)))) == 1
-        assert s.scalar(select(FeeSummary)) is not None
+        assert s.scalar(select(FeeSummary)) is None
         assert len(list(s.scalars(select(Transaction)))) == len(fortuneo_entries())
 
-
-def test_web_validate_all_leaves_a_cut_joint_holder_name_to_the_user(client):
-    csrf = login(client)
-    long_name = "M PRENOMLONG NOMDEFAMILLE OU MME AUTRE NOM"
-    upload(client, csrf, "joint.pdf", fortuneo_statement_pdf(fortuneo_september(holder=long_name)))
-    done = client.post("/documents/validate-all", data={"csrf": csrf})
-    assert "0 document(s) validé(s)" in done.text and "1 à regarder un par un" in done.text
+    # The ticked documents.
     with client.core.db.session() as s:
-        assert s.scalar(select(Account)) is None
+        fgdr = s.scalar(select(Document).where(Document.filename == "fgdr.pdf")).id
+    client.post("/documents/invalidate", data={"csrf": csrf, "ids": [str(fgdr)]})
+    assert statuses()["fgdr.pdf"] == "parsed" and statuses()["septembre.pdf"] == "imported"
+
+    # Everything left: the operations leave the account, the files stay, the account stays.
+    done = client.post("/documents/invalidate", data={"csrf": csrf, "scope": "all"})
+    assert "1 import(s) invalidé(s)" in done.text
+    assert set(statuses().values()) == {"parsed"}
+    with client.core.db.session() as s:
+        assert len(list(s.scalars(select(Transaction)))) == 0
+        assert len(list(s.scalars(select(Account)))) == 1
+    assert "Tout invalider" not in client.get("/documents").text
 
 
 def test_web_the_documents_show_their_reliability_and_can_be_reviewed_one_after_the_other(client):
@@ -476,9 +506,8 @@ def test_web_an_imported_document_does_not_warn_about_being_imported_twice(clien
 def test_web_rebuild_cancels_every_import_and_reads_the_files_again(client):
     csrf = login(client)
     D = Decimal
-    upload(client, csrf, "septembre.pdf", fortuneo_statement_pdf(fortuneo_september()))
-    upload(client, csrf, "frais.pdf", fortuneo_fees_pdf(FeesSpec()))
-    client.post("/documents/validate-all", data={"csrf": csrf})
+    import_by_hand(client, csrf, "septembre.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    import_by_hand(client, csrf, "frais.pdf", fortuneo_fees_pdf(FeesSpec()), account="1")
     # October does not pick up where September ended: imported by hand, it will not pass the checks a second time.
     october = FSpec(
         [FEntry(date(2026, 10, 5), ["VIR M MARTIN PAUL"], D("10.00"))], opening=D("999.00"), period_end=date(2026, 10, 31),

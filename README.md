@@ -140,7 +140,7 @@ Sauvegarde le dossier `data/` tel quel (Hyper Backup, rsync…). Il est chiffré
 2. Va dans **Documents** et **dépose** le fichier (glisser-déposer, plusieurs fichiers possibles).
 3. Le document est chiffré, reconnu, lu, puis contrôlé :
    - compte déjà connu (même IBAN / même RIB), relevé cohérent, sans doublon : **importé automatiquement** ;
-   - un premier relevé (compte pas encore connu) reste **« à valider »** : la page Documents affiche un encadré avec le bouton **Tout valider**, qui crée les comptes et importe d'un coup tout ce qui est évident (ce qui demande un choix, comme un nom de titulaire coupé, reste dans la liste). À côté de chaque document, une pastille **fiabilité** (élevée / moyenne / faible) dit si les contrôles ont réussi ; **Passer en revue un par un** ouvre les documents à valider l'un après l'autre ;
+   - un premier relevé (compte pas encore connu) reste **« à valider »** : la page Documents affiche un encadré « À valider » (avec, pour chaque document, la raison qui le retient). À côté de chaque document, une pastille **fiabilité** (élevée / moyenne / faible) dit si les contrôles ont réussi ; **Passer en revue un par un** ouvre les documents à valider l'un après l'autre ;
    - sinon, une page de vérification montre ce qui a été compris (titulaire, RIB, soldes, opérations, doublons, anomalies) et te laisse choisir le compte, l'adapter ou ce qu'il faut importer.
 4. Dans **Contacts**, nomme les bénéficiaires et émetteurs qui reviennent : ils seront reconnus automatiquement ensuite.
 
@@ -150,7 +150,7 @@ Un trou n'est signalé que s'il est vrai : une période couverte par un relevé 
 
 ## Après une mise à jour : tout relire
 
-Les lectures s'améliorent (nouveaux formats, corrections). Dans **Documents → « Tout relire depuis les fichiers »**, un bouton **annule tous les imports** puis **relit chaque fichier** avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents (les opérations saisies à la main restent). Ce qui est évident est revalidé ; ce qui ne passe plus les contrôles (nouvel avertissement, solde qui ne s'enchaîne plus…) reste **à valider**, avec la raison affichée : rien n'est validé en silence. Sur la page d'un document déjà importé, **Invalider l'import** retire seulement ses opérations.
+Les lectures s'améliorent (nouveaux formats, corrections). Dans **Documents → « Tout relire depuis les fichiers »**, un bouton **annule tous les imports** puis **relit chaque fichier** avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents (les opérations saisies à la main restent). Ce qui est évident est revalidé ; ce qui ne passe plus les contrôles (nouvel avertissement, solde qui ne s'enchaîne plus…) reste **à valider**, avec la raison affichée : rien n'est validé en silence. Sur la page d'un document déjà importé, **Invalider l'import** retire seulement ses opérations ; dans la bibliothèque, **Invalider** (par type de document ou par établissement), **Invalider la sélection** et **Tout invalider** font la même chose en groupe (les fichiers restent, ils reviennent dans « À valider »).
 
 ## Développement
 

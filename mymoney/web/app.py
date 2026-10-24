@@ -185,13 +185,19 @@ def fee_summaries(session, account) -> list[dict]:
     return rows
 
 
+def document_group(d) -> tuple[str, str]:
+    """(institution, type of document) as the library shows them."""
+    institution = (d.parse_result or {}).get("institution") or "Autres documents"
+    category = next((st.get("extra", {}).get("category") for st in (d.parse_result or {}).get("statements", []) if st.get("extra")), None)
+    kind = category or DOC_KINDS.get(d.kind, "Document") if d.adapter_id else "Non reconnu"
+    return institution, kind
+
+
 def document_tree(documents: list) -> list[dict]:
     """Documents grouped for browsing: institution, then type of document, then year, newest first."""
     banks: dict[str, dict[str, list]] = {}
     for d in documents:
-        institution = (d.parse_result or {}).get("institution") or "Autres documents"
-        category = next((st.get("extra", {}).get("category") for st in (d.parse_result or {}).get("statements", []) if st.get("extra")), None)
-        kind = category or DOC_KINDS.get(d.kind, "Document") if d.adapter_id else "Non reconnu"
+        institution, kind = document_group(d)
         banks.setdefault(institution, {}).setdefault(kind, []).append(d)
 
     def when(d) -> date:
@@ -213,8 +219,8 @@ def document_tree(documents: list) -> list[dict]:
                 if not years or years[-1][0] != year:
                     years.append((year, []))
                 years[-1][1].append((d, when(d)))
-            kinds.append({"label": kind, "count": len(docs), "years": years})
-        tree.append({"label": institution, "count": sum(k["count"] for k in kinds), "kinds": kinds})
+            kinds.append({"label": kind, "count": len(docs), "imported": sum(1 for d in docs if d.status == "imported"), "years": years})
+        tree.append({"label": institution, "count": sum(k["count"] for k in kinds), "imported": sum(k["imported"] for k in kinds), "kinds": kinds})
     return tree
 
 
@@ -800,14 +806,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             imported_count=sum(1 for d in documents if d.status == "imported"),
         )
 
-    @app.post("/documents/validate-all")
-    async def documents_validate_all(request: Request):
-        await verified_form(request)
-        outcome = await run_in_threadpool(core.validate_pending)
-        parts = [f"{outcome['imported']} document(s) validé(s)"]
-        if outcome["left"]:
-            parts.append(f"{outcome['left']} à regarder un par un (un choix ou une vérification est nécessaire)")
-        return redirect("/documents", " · ".join(parts))
+    @app.post("/documents/invalidate")
+    async def documents_invalidate(request: Request):
+        """Cancel imports: the ticked documents, everything, one institution, or one type of document of an institution."""
+        form = await request.form()
+        session = request.state.session
+        token = form.get("csrf")
+        if not session or not isinstance(token, str) or not hmac.compare_digest(token, session.csrf):
+            raise HTTPException(403, "Jeton CSRF invalide")
+        scope = str(form.get("scope") or "")
+        with core.db.session() as s:
+            imported = [d for d in access.visible_documents(s) if d.status == "imported"]
+            groups = {d.id: document_group(d) for d in imported}
+        if scope == "all":
+            ids = [d.id for d in imported]
+        elif scope.startswith("bank:"):
+            ids = [i for i, (bank, _) in groups.items() if bank == scope[5:]]
+        elif scope.startswith("kind:"):
+            bank, _, kind = scope[5:].partition("::")
+            ids = [i for i, g in groups.items() if g == (bank, kind)]
+        else:
+            chosen = {int(x) for x in form.getlist("ids") if str(x).isdigit()}
+            ids = [i for i in groups if i in chosen]
+            if not chosen:
+                return redirect("/documents", "Coche au moins un document à invalider")
+        count = await run_in_threadpool(core.invalidate_documents, ids)
+        return redirect("/documents", f"{count} import(s) invalidé(s) : les fichiers sont conservés et reviennent dans « À valider »" if count else "Aucun import à invalider")
 
     @app.post("/documents/download")
     async def documents_download(request: Request):
