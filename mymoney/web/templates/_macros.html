@@ -14,6 +14,21 @@
 </form>
 {% endmacro %}
 
+{# One missing period: upload the statement, or say it is normal. #}
+{% macro gap_row(g, next) %}
+<li class="gap">
+  <div><strong>{{ g.account_name }}</strong> · {{ g.label }} <span class="muted small">({{ g.days }} jour{{ 's' if g.days > 1 }} sans relevé)</span></div>
+  <div class="actions">
+    <a class="btn small primary" href="/documents?account_id={{ g.account_id }}&start={{ g.start.isoformat() }}&end={{ g.end.isoformat() }}">Déposer le relevé manquant</a>
+    <form method="post" action="/gaps/acknowledge" data-confirm="Marquer « {{ g.label }} » comme normal pour {{ g.account_name }} ? Il ne sera plus signalé.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ next }}">
+      <input type="hidden" name="account_id" value="{{ g.account_id }}"><input type="hidden" name="start" value="{{ g.start.isoformat() }}"><input type="hidden" name="end" value="{{ g.end.isoformat() }}">
+      <button class="btn small">C'est normal</button>
+    </form>
+  </div>
+</li>
+{% endmacro %}
+
 {% macro unresolved_table(items, next, limit=10) %}
 <div class="table-wrap"><table>
   <thead><tr><th>Imprimé par la banque</th><th class="num">Opérations</th><th class="num">Reçu / envoyé</th><th>Qui est-ce ?</th></tr></thead>

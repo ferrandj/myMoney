@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..adapters.base import ParsedStatement, TransactionData
 from ..models import ACCOUNT_TYPES, Account, Document, Holding, Statement, Transaction
 from . import counterparties, ledger
+from . import coverage as coverage_service
 
 
 @dataclass
@@ -118,7 +119,7 @@ def plan_import(session: Session, st: ParsedStatement, account: Account | None) 
                 plan.already_imported = other
             elif other.period_start <= st.period_end and other.period_end >= st.period_start:
                 plan.overlaps.append(other)
-        plan.issues = _continuity(st, [s for s in existing if s is not plan.already_imported])
+        plan.issues = _continuity(st, [s for s in existing if s is not plan.already_imported], coverage_service.acknowledged_ranges(session, account.id))
         if plan.already_imported is not None:
             plan.dedup = _compare(session, st, plan.already_imported, classified)
     if st.balance is not None and account.balance_date is not None and st.balance_date is not None:
@@ -147,17 +148,22 @@ def _holder_unconfirmed(st: ParsedStatement, account: Account | None) -> bool:
     return account is None or not account.holder_name or account.holder_name == (account.holder_alias or st.holder_name)
 
 
-def _continuity(st: ParsedStatement, existing: list[Statement]) -> list[str]:
-    """The statement just before and just after must touch this one, and their balances must chain."""
+def _continuity(st: ParsedStatement, existing: list[Statement], acknowledged: list[tuple[date, date]] = ()) -> list[str]:
+    """The statement just before and just after must touch this one, and their balances must chain.
+    A hole the user marked as normal is not reported again."""
     issues: list[str] = []
+
+    def hole(start: date, end: date) -> list[str]:
+        if any(a <= start and end <= b for a, b in acknowledged):
+            return []
+        return [f"Il manque une période : rien entre le {_d(start)} et le {_d(end)}"]
+
     before = [s for s in existing if s.period_end and s.period_end < st.period_start]
     after = [s for s in existing if s.period_start and s.period_start > st.period_end]
     if before:
         prev = max(before, key=lambda s: s.period_end)
         if (st.period_start - prev.period_end).days > 1:
-            issues.append(
-                f"Il manque une période : rien entre le {_d(prev.period_end + timedelta(days=1))} et le {_d(st.period_start - timedelta(days=1))}"
-            )
+            issues += hole(prev.period_end + timedelta(days=1), st.period_start - timedelta(days=1))
         elif prev.closing_balance is not None and st.opening_balance is not None and prev.closing_balance != st.opening_balance:
             issues.append(
                 f"Le solde initial ({st.opening_balance} {st.currency}) ne reprend pas le solde final du relevé précédent "
@@ -166,9 +172,7 @@ def _continuity(st: ParsedStatement, existing: list[Statement]) -> list[str]:
     if after:
         nxt = min(after, key=lambda s: s.period_start)
         if (nxt.period_start - st.period_end).days > 1:
-            issues.append(
-                f"Il manque une période : rien entre le {_d(st.period_end + timedelta(days=1))} et le {_d(nxt.period_start - timedelta(days=1))}"
-            )
+            issues += hole(st.period_end + timedelta(days=1), nxt.period_start - timedelta(days=1))
         elif nxt.opening_balance is not None and st.balance is not None and nxt.opening_balance != st.balance:
             issues.append(
                 f"Le solde final ({st.balance} {st.currency}) ne correspond pas au solde initial du relevé suivant ({nxt.opening_balance} au {_d(nxt.period_start)})"
@@ -292,12 +296,11 @@ def default_import_form(plan: ImportPlan) -> dict[str, str]:
 
 
 def coverage(session: Session, account_id: int) -> tuple[list[Statement], list[str]]:
-    """Statements of an account in order, and the holes between them."""
+    """Statements of an account in order, and the places where consecutive balances do not chain.
+    (Missing periods are in services/coverage.py, where they can be marked as normal.)"""
     rows = [s for s in session.scalars(select(Statement).where(Statement.account_id == account_id).order_by(Statement.period_start)) if s.period_start and s.period_end]
-    gaps = []
+    broken = []
     for prev, nxt in zip(rows, rows[1:]):
-        if (nxt.period_start - prev.period_end).days > 1:
-            gaps.append(f"Rien entre le {_d(prev.period_end + timedelta(days=1))} et le {_d(nxt.period_start - timedelta(days=1))}")
-        elif prev.closing_balance is not None and nxt.opening_balance is not None and prev.closing_balance != nxt.opening_balance:
-            gaps.append(f"Les soldes ne se suivent pas entre le {_d(prev.period_end)} ({prev.closing_balance}) et le {_d(nxt.period_start)} ({nxt.opening_balance})")
-    return rows, gaps
+        if (nxt.period_start - prev.period_end).days == 1 and prev.closing_balance is not None and nxt.opening_balance is not None and prev.closing_balance != nxt.opening_balance:
+            broken.append(f"Les soldes ne se suivent pas entre le {_d(prev.period_end)} ({prev.closing_balance}) et le {_d(nxt.period_start)} ({nxt.opening_balance})")
+    return rows, broken

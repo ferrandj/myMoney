@@ -24,6 +24,7 @@ from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
 from ..services import analytics
 from ..services import counterparties as contact_service
+from ..services import coverage as coverage_service
 from ..services import statements as statement_service
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
@@ -242,6 +243,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         portfolio = await run_in_threadpool(core.portfolio)
         with core.db.session() as s:
             to_identify = len(contact_service.unresolved(s))
+            gaps = coverage_service.all_gaps(s)
         groups: dict[str, list] = {}
         for value in portfolio.accounts:
             groups.setdefault(value.account.category, []).append(value)
@@ -252,7 +254,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             groups=[(code, CATEGORIES[code], groups[code]) for code in CATEGORIES if code in groups],
             chart=sparkline(portfolio.history),
             to_identify=to_identify,
+            gaps=gaps,
         )
+
+    # -------------------------------------------------------- missing statements
+    @app.post("/gaps/acknowledge")
+    async def gap_acknowledge(request: Request):
+        form = await verified_form(request)
+        target = safe_next(form.get("next"), "/")
+        try:
+            with core.db.session() as s:
+                coverage_service.acknowledge(
+                    s, int(form["account_id"]), date.fromisoformat(form["start"]), date.fromisoformat(form["end"]), form.get("note")
+                )
+        except (KeyError, ValueError) as exc:
+            return redirect(target, str(exc) if isinstance(exc, ValueError) and str(exc) else "Période invalide")
+        return redirect(target, "Noté : ce trou n'est plus signalé (tu peux le remettre en alerte depuis la page du compte)")
+
+    @app.post("/gaps/{ack_id}/restore")
+    async def gap_restore(request: Request, ack_id: int):
+        form = await verified_form(request)
+        with core.db.session() as s:
+            coverage_service.restore(s, ack_id)
+        return redirect(safe_next(form.get("next"), "/"), "Ce trou est de nouveau signalé")
 
     # -------------------------------------------------------- analytics
     @app.get("/analytics")
@@ -352,14 +376,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     .order_by(Transaction.date.desc(), Transaction.id.desc()).offset((page - 1) * per_page).limit(per_page)
                 )
             )
-            statements, gaps = statement_service.coverage(s, account_id)
+            statements, chain_issues = statement_service.coverage(s, account_id)
+            all_gaps = coverage_service.account_gaps(s, account, include_acknowledged=True)
             to_identify = contact_service.unresolved(s, account_id=account_id)
         valuator = Valuator(core.prices)
         value = await run_in_threadpool(lambda: (valuator.prefetch([account]), valuator.account_value(account))[1])
         rate, rate_source = effective_rate(account.account_type, account.interest_rate)
         return render(
             request, "account.html", account=account, value=value, transactions=transactions, rate=rate, rate_source=rate_source,
-            page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, gaps=gaps,
+            page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, chain_issues=chain_issues,
+            open_gaps=[g for g in all_gaps if not g.acknowledged], acked_gaps=[g for g in all_gaps if g.acknowledged],
             to_identify=to_identify,
         )
 
@@ -403,14 +429,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # -------------------------------------------------------- documents
     @app.get("/documents")
-    async def documents_page(request: Request):
+    async def documents_page(request: Request, account_id: int | None = None, start: str = "", end: str = ""):
         await run_in_threadpool(core.purge_quarantine)
+        missing = None
+        if account_id and start and end:
+            try:
+                with core.db.session() as s:
+                    account = s.get(Account, account_id)
+                    if account is not None:
+                        missing = {"account": account.name, "label": coverage_service.describe(date.fromisoformat(start), date.fromisoformat(end))}
+            except ValueError:
+                missing = None
         with core.db.session() as s:
             everything = list(s.scalars(select(Document).order_by(Document.uploaded_at.desc())))
             names = {d.id: d.filename for d in everything}
         documents = [d for d in everything if d.status != "duplicate"]
         aside = [(d, names.get(d.duplicate_of)) for d in everything if d.status == "duplicate"]
-        return render(request, "documents.html", documents=documents, aside=aside, max_mb=settings.max_upload_mb, catalog=catalog())
+        return render(request, "documents.html", documents=documents, aside=aside, missing=missing, max_mb=settings.max_upload_mb, catalog=catalog())
 
     @app.post("/documents")
     async def documents_upload(request: Request):
