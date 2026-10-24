@@ -51,6 +51,9 @@ class FSpec:
     wrong_totals: bool = False  # print totals that do not match the operations
     wrong_closing: Decimal | None = None
     title: str = ""  # document metadata only: gives the same statement a different file hash
+    livret: bool = False  # a savings book: "Relevé Livret +", "Compte <client> 01", no RIB and no IBAN
+    opening_on: date | None = None  # date of the "ancien solde" (default: the last day of the month before the period)
+    first: bool = False  # the account's first statement: "ANCIEN SOLDE 0,00 €" with no date and no side
 
     @property
     def closing(self) -> Decimal:
@@ -90,26 +93,36 @@ def fortuneo_statement_pdf(spec: FSpec) -> bytes:
     end = spec.period_end
     key = rib_key(spec.bank, spec.branch, spec.account)
     iban = make_iban(f"{spec.bank}{spec.branch}{spec.account}{key}")
-    opening_date = date.fromordinal(date(end.year, end.month, 1).toordinal() - 1)
+    opening_date = spec.opening_on or date.fromordinal(date(end.year, end.month, 1).toordinal() - 1)
 
-    _text(pdf, 264, 32, "Relevé de Compte"); _text(pdf, 531, 35, f"N° {spec.number}")
-    _text(pdf, 264, 48, "COMPTE COURANT"); _text(pdf, 541, 48, "Page 1/1")
+    if spec.livret:
+        _text(pdf, 264, 32, "Relevé Livret +"); _text(pdf, 531, 35, f"N° {spec.number}")
+        _text(pdf, 264, 48, f"Compte {spec.account[:8]} 01"); _text(pdf, 541, 48, "Page 1/1")
+    else:
+        _text(pdf, 264, 32, "Relevé de Compte"); _text(pdf, 531, 35, f"N° {spec.number}")
+        _text(pdf, 264, 48, "COMPTE COURANT"); _text(pdf, 541, 48, "Page 1/1")
     _text(pdf, 264, 68, f"Arrêté au {long_date(end)}")
     _bank_block(pdf, spec.brand)
-    _text(pdf, 323, 176, spec.holder)
+    if len(spec.holder) > 30:  # a joint account: the bank cuts the holder line at 30 characters, in the middle of a word
+        _text(pdf, 323, 165, spec.holder[:30]); _text(pdf, 323, 176, spec.holder[30:])
+    else:
+        _text(pdf, 323, 176, spec.holder)
     for i, line in enumerate(spec.address):
         _text(pdf, 323, 189 + 10 * i, line)
     _text(pdf, 45, 189, f"SITE INTERNET www.{spec.brand.lower()}.fr")
     _text(pdf, 45, 208, "SERVICE CLIENTS TEL 0 800 000 000")
     _text(pdf, 45, 221, "SERVICE CLIENTS FAX 0 800 000 001")
-    _text(pdf, 58, 267, f"Titulaire(s) du compte : {spec.holder}")
-    _text(pdf, 58, 291, f"NUMÉRO DE COMPTE {spec.bank} {spec.branch} {spec.account} {key}")
-    _text(pdf, 58, 301, f"IBAN {_iban_line(iban)}"); _text(pdf, 235, 301, "BIC FTNOFRP1XXX")
+    _text(pdf, 58, 267, f"Titulaire(s) du compte : {spec.holder[:30]}")
+    if len(spec.holder) > 30:
+        _text(pdf, 146, 277, spec.holder[30:])
+    if not spec.livret:
+        _text(pdf, 58, 291, f"NUMÉRO DE COMPTE {spec.bank} {spec.branch} {spec.account} {key}")
+        _text(pdf, 58, 301, f"IBAN {_iban_line(iban)}"); _text(pdf, 235, 301, "BIC FTNOFRP1XXX")
 
     _text(pdf, 57, 357, "Date"); _text(pdf, 84, 357, "Date de Valeur"); _text(pdf, 236, 357, "Opération")
     _text(pdf, 407, 357, "Débit"); _text(pdf, 495, 357, "Crédit")
     y = 375.0
-    _text(pdf, 54, y, f"ANCIEN SOLDE CRÉDITEUR AU {long_date(opening_date).upper()}")
+    _text(pdf, 54, y, "ANCIEN SOLDE" if spec.first else f"ANCIEN SOLDE CRÉDITEUR AU {long_date(opening_date).upper()}")
     _text(pdf, 0, y, fr(spec.opening), right=546 if spec.opening >= 0 else 463)
     y += 22
     for e in spec.entries:
@@ -217,7 +230,7 @@ def fortuneo_fees_pdf(spec: FeesSpec) -> bytes:
 
 
 # ------------------------------------------------------------------------------------------- FGDR letter
-def fortuneo_info_pdf(year: int = 2026, holder: str = F_HOLDER, address: list[str] | None = None, brand: str = "Fortuneo", title: str = "") -> bytes:
+def fortuneo_info_pdf(year: int = 2026, holder: str = F_HOLDER, address: list[str] | None = None, brand: str = "Fortuneo", title: str = "", ceiling: str = "100 000 €") -> bytes:
     pdf = _pdf(title)
     _text(pdf, 323, 53, f"Le 01 janvier {year},")
     _text(pdf, 323, 176, holder)
@@ -229,5 +242,5 @@ def fortuneo_info_pdf(year: int = 2026, holder: str = F_HOLDER, address: list[st
     _text(pdf, 50, 430, f"L'Équipe {brand}")
     _text(pdf, 149, 468, "INFORMATIONS GÉNÉRALES SUR LA PROTECTION DES DÉPÔTS")
     _text(pdf, 53, 480, "La protection des dépôts Fonds de garantie des dépôts et de résolution (FGDR)")
-    _text(pdf, 54, 514, "Plafond de la protection : 100 000 € par déposant et par établissement de crédit (1)")
+    _text(pdf, 54, 514, f"Plafond de la protection : {ceiling} par déposant et par établissement de crédit (1)")
     return bytes(pdf.output())

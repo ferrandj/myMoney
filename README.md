@@ -40,7 +40,7 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 |---|---|---|
 | BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » : compte courant, compte joint, LDDS et autres livrets (même mise en page, avec RIB et IBAN ; le type du compte est lu sur la ligne « Compte d'épargne : … ») |
 | BoursoBank | `boursobank.savings_pdf` | PDF « Extrait de votre Plan Epargne Logement » (épargne : numéro de compte, sans RIB ni IBAN ; validé sur un PEL) |
-| Fortuneo | `fortuneo.statement_pdf` | PDF « Relevé de Compte » mensuel (compte courant) : RIB, IBAN, BIC, titulaires, soldes, opérations ; contrôlé aussi avec les totaux débit / crédit imprimés par la banque |
+| Fortuneo | `fortuneo.statement_pdf` | PDF « Relevé de Compte » ou « Relevé Livret » mensuel (compte courant, compte joint, Livret +…) : RIB, IBAN, BIC, titulaires, soldes, opérations (virements, chèques, intérêts) ; contrôlé aussi avec les totaux débit / crédit imprimés par la banque. Un livret n'a pas d'IBAN : il est reconnu par son numéro. Premier relevé (sans date d'ancien solde) accepté. Sur un compte joint, le nom des titulaires, coupé par la banque à 30 caractères, est recollé puis **demandé une seule fois** pour confirmation |
 | Fortuneo | `fortuneo.fees_pdf` | PDF « Relevé de frais » annuel : frais et intérêts de l'année, service par service. Aucune opération : il est **rattaché au compte** (retrouvé par l'IBAN) et comparé aux lignes de frais des relevés importés |
 | Fortuneo | `fortuneo.deposit_guarantee_pdf` | lettre annuelle sur la garantie des dépôts (FGDR) : aucune opération, elle est **classée automatiquement** avec tes papiers (chiffrée, téléchargeable) |
 | Fortuneo | `fortuneo.loan_offer_pdf` | **offre de prêt immobilier** : montant, durée, taux, TAEG, coût du crédit et tableau d'amortissement d'origine (numéroté) |
@@ -163,7 +163,7 @@ mymoney/
     base.py        contrat (Adapter, Detection, SourceDocument, ParsedStatement)
     registry.py    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
     boursobank/    _table.py (tableau des mouvements commun), statement_pdf.py (compte courant), savings_pdf.py (PEL, épargne)
-    fortuneo/      statement_pdf.py (relevé mensuel), fees_pdf.py (récapitulatif des frais), deposit_guarantee_pdf.py (lettre FGDR),
+    fortuneo/      statement_pdf.py (relevé de compte ou de livret), fees_pdf.py (récapitulatif des frais), deposit_guarantee_pdf.py (lettre FGDR),
                    loan_offer_pdf.py, loan_prepayment_pdf.py, loan_schedule_pdf.py (prêt)
     revolut/       statement_csv.py : export CSV
     generic/       OFX, QIF, CSV et PDF « devinés »

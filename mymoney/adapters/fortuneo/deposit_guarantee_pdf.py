@@ -57,5 +57,6 @@ class FortuneoDepositGuaranteePdf(Adapter):
             st.holder_name, st.holder_address = read_address_block(rows, dated, salutation, from_x=280)
         st.extra["title"] = "Information sur la garantie des dépôts (FGDR)"
         if m := CEILING_RE.search(doc.text.replace("\xa0", " ")):
-            st.extra["ceiling"] = f"{' '.join(m.group(1).split())} €"
+            digits = "".join(ch for ch in m.group(1) if ch.isdigit())
+            st.extra["ceiling"] = f"{int(digits):,}".replace(",", " ") + " €"  # "100 000 €", whatever the PDF's spacing
         return [st]

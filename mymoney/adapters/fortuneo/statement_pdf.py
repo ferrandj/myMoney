@@ -46,8 +46,8 @@ class FortuneoStatementPdf(Adapter):
     id = "fortuneo.statement_pdf"
     institution = "Fortuneo"
     kind = "statement"
-    label = "Fortuneo · relevé de compte mensuel (PDF)"
-    description = "Le PDF « Relevé de Compte » (compte courant ou livret) de l'espace client Fortuneo."
+    label = "Fortuneo · relevé de compte ou de livret (PDF)"
+    description = "Le PDF « Relevé de Compte » (compte courant) ou « Relevé Livret » de l'espace client Fortuneo."
     formats = ("pdf",)
 
     @classmethod
@@ -58,7 +58,7 @@ class FortuneoStatementPdf(Adapter):
         score, reasons = 0.0, []
         for ok, points, why in (
             ("fortuneo" in c, 0.25, "mentionne Fortuneo"),
-            ("relevedecompte" in c, 0.25, "titre « Relevé de Compte »"),
+            ("relevedecompte" in c or "relevelivret" in c, 0.25, "titre « Relevé de Compte » ou « Relevé Livret »"),
             ("anciensolde" in c and "nouveausolde" in c, 0.2, "« Ancien solde » et « Nouveau solde »"),
             ("totaldesoperationsdureleve" in c, 0.15, "« Total des opérations du relevé »"),
             ("datedevaleur" in c, 0.15, "colonne « Date de valeur »"),
@@ -132,6 +132,11 @@ class FortuneoStatementPdf(Adapter):
         st.period_end = st.period_end or st.balance_date
         holder_key = name_key(st.holder_name) if st.holder_name else None
         st.transactions = [t for t in (_to_transaction(e, st, holder_key) for e in entries) if t is not None]
+        if st.period_start is None and st.period_end:
+            # The first statement of an account has no "ancien solde" date: it starts the month of its first operation.
+            first = min((t.date for t in st.transactions), default=st.period_end)
+            st.period_start = first.replace(day=1)
+            st.extra["first_statement"] = True
         self._check(st, declared)
         return [st]
 
@@ -139,18 +144,27 @@ class FortuneoStatementPdf(Adapter):
     @staticmethod
     def _read_header(st: ParsedStatement, rows: list[list[dict]], texts: list[str]) -> None:
         read_identity(st, texts)
-        title = next((i for i, t in enumerate(texts) if norm(t).startswith("releve de compte")), None)
+        title = next((i for i, t in enumerate(texts) if norm(t).startswith(("releve de compte", "releve livret"))), None)
         if title is not None:
             for text in texts[title : title + 4]:
                 if m := re.search(r"N°\s*(\d+)(?:\s*-\s*(\d{4}))?", text):
                     st.extra["number"] = f"{m.group(1)}/{m.group(2)}" if m.group(2) else m.group(1)
-            # The product ("COMPTE COURANT") is the first line under the title that is neither the number nor the page.
-            for text in texts[title + 1 : title + 4]:
-                cleaned = re.sub(r"(?i)\s*page\s*\d+\s*/\s*\d+|N°\s*\d+(\s*-\s*\d{4})?", "", text).strip()
-                if cleaned and not norm(cleaned).startswith("arrete"):
-                    st.extra["product"] = cleaned.capitalize()
-                    st.account_type = guess_account_type(cleaned, "checking")
-                    break
+            if norm(texts[title]).startswith("releve livret"):
+                # A savings book: "Relevé Livret +", then "Compte 12345678 01" (client number and rank): no RIB, no IBAN.
+                product = re.sub(r"(?i)^relev[ée]\s+", "", re.sub(r"\s*N°.*$", "", texts[title])).strip()
+                st.extra["product"] = product
+                st.account_type = guess_account_type(product, "savings")
+                for text in texts[title + 1 : title + 4]:
+                    if m := re.match(r"(?i)^compte\s+(\d{8})\s+(\d{2})\b", text):
+                        st.account_number = m.group(1) + m.group(2)
+            else:
+                # The product ("COMPTE COURANT") is the first line under the title that is neither the number nor the page.
+                for text in texts[title + 1 : title + 4]:
+                    cleaned = re.sub(r"(?i)\s*page\s*\d+\s*/\s*\d+|N°\s*\d+(\s*-\s*\d{4})?", "", text).strip()
+                    if cleaned and not norm(cleaned).startswith("arrete"):
+                        st.extra["product"] = cleaned.capitalize()
+                        st.account_type = guess_account_type(cleaned, "checking")
+                        break
         for text in texts:
             if norm(text).startswith("arrete au"):
                 st.period_end = french_date(text)
@@ -264,6 +278,13 @@ def _to_transaction(e: _Entry, st: ParsedStatement, holder_key: str | None) -> T
     elif FEE_RE.match(first):
         kind = "fee"
         label = make_label(first, memo)
+    elif re.match(r"^INT[EÉ]R[EÊ]TS?\b", first, flags=re.I):
+        kind = "interest"
+        label = make_label(first, memo)
+    elif m := re.match(r"^(?:REM(?:ISE)?\.?\s+)?CH(?:Q|[EÈ]QUE)\b\s*(.*)$", first, flags=re.I):
+        kind = "cheque"
+        reference = (m.group(1).split() or [None])[0]
+        label = make_label("Remise de chèque" if first.upper().startswith("REM") else "Chèque", f"n° {reference}" if reference else None)
     else:
         label = make_label(first, memo)
     if kind in ("transfer", "instant_transfer") and is_own(counterparty, holder_key):

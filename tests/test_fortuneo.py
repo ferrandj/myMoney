@@ -269,7 +269,7 @@ def test_web_the_library_shows_type_and_institution_and_the_account_checks_the_f
     csrf = login(client)
     page = upload(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
     doc = re.search(r"/documents/(\d+)", str(page.url)).group(1)
-    assert "Fortuneo · relevé de compte mensuel (PDF)" in page.text
+    assert "Fortuneo · relevé de compte ou de livret (PDF)" in page.text
     form = client.post(f"/documents/{doc}/import/0", data={"csrf": csrf, "account_id": "new", "name": "Compte Fortuneo", "import_transactions": "on"})
     account_id = re.search(r"/accounts/(\d+)", str(form.url)).group(1)
 
@@ -285,3 +285,72 @@ def test_web_the_library_shows_type_and_institution_and_the_account_checks_the_f
     account = client.get(f"/accounts/{account_id}")
     assert "Frais et intérêts" in account.text and "9,00" in account.text
     assert "Relevés incomplets sur cette période" in account.text  # one statement of 2026 cannot confirm the fees of 2023
+
+
+# ------------------------------------------------------------------------ savings book, first statement, joint account
+def test_a_savings_book_statement_is_read_without_rib_or_iban():
+    spec = FSpec([FEntry(date(2026, 12, 31), ["INTERETS 2026"], D("0.13"), value_day=date(2027, 1, 1))], opening=D("10.32"), period_end=date(2026, 12, 31),
+                 opening_on=date(2025, 12, 31), livret=True, number="1 - 2026")
+    found, [st] = parse(fortuneo_statement_pdf(spec))
+    assert found.decision == "auto" and found.chosen.adapter.id == "fortuneo.statement_pdf"
+    assert (st.account_type, st.extra["product"]) == ("savings", "Livret +") and st.account_label == "Livret + Fortuneo …6501"
+    assert st.account_number == F_ACCOUNT[:8] + "01" and st.iban is None and st.bank_code is None
+    assert (st.period_start, st.period_end) == (date(2026, 1, 1), date(2026, 12, 31))  # one statement a year
+    assert (st.opening_balance, st.balance) == (D("10.32"), D("10.45")) and st.confidence == "high" and not st.warnings
+    [t] = st.transactions
+    assert t.kind == "interest" and t.date == date(2026, 12, 31) and t.amount == D("0.13")  # the value date is in January: the operation is not
+
+
+def test_a_savings_book_is_its_own_account_and_matched_again_by_its_number(core):
+    spec = FSpec([FEntry(date(2026, 12, 31), ["INTERETS 2026"], D("0.13"), value_day=date(2027, 1, 1))], opening=D("10.32"), period_end=date(2026, 12, 31),
+                 opening_on=date(2025, 12, 31), livret=True)
+    _, courant = import_statement(core, fortuneo_september())
+    doc_id = drop(core, fortuneo_statement_pdf(spec))
+    assert core.auto_import(doc_id) is None  # a new account to create: the user decides
+    saved = core.import_statement(doc_id, 0, {"account_id": "new", "name": "Livret +", "import_transactions": "on"})["account_id"]
+    assert saved != courant
+    next_year = FSpec([FEntry(date(2027, 12, 31), ["INTERETS 2027"], D("0.20"))], opening=D("10.45"), period_end=date(2027, 12, 31), opening_on=date(2026, 12, 31), livret=True)
+    again = drop(core, fortuneo_statement_pdf(next_year))
+    assert core.auto_import(again)["account_id"] == saved  # recognised by its number, no IBAN needed
+    with core.db.session() as s:
+        assert s.get(Account, saved).account_type == "savings"
+
+
+def test_the_first_statement_of_an_account_has_no_opening_date():
+    spec = FSpec([FEntry(date(2026, 10, 8), ["REM CHQ 4085312 0034 001 CHQ", "24293IP1RT038729693"], D("645.11")), FEntry(date(2026, 10, 19), ["VIR INST M MARTIN PAUL"], D("-645.11"))],
+                 opening=D("0.00"), period_end=date(2026, 10, 31), first=True)
+    _, [st] = parse(fortuneo_statement_pdf(spec))
+    assert (st.period_start, st.period_end) == (date(2026, 10, 1), date(2026, 10, 31)) and st.extra["first_statement"]
+    assert st.opening_balance == D("0.00") and st.balance == D("0.00") and st.confidence == "high" and not st.warnings
+    cheque, transfer = st.transactions
+    assert cheque.kind == "cheque" and "Remise de chèque" in cheque.label and "4085312" in cheque.label
+    assert transfer.kind == "instant_transfer"
+
+
+def test_a_joint_account_holder_line_cut_by_the_bank_is_glued_back_and_confirmed_once(core):
+    holder = "M MARTIN PAUL OU MME DUPUIS-LEBLANC ANNE"  # cut at 30 characters, in the middle of a word
+    assert len(holder) > 30 and holder[29] != " "
+    spec = FSpec(fortuneo_entries(), holder=holder)
+    _, [st] = parse(fortuneo_statement_pdf(spec))
+    assert st.holder_name == holder and st.extra["holder_maybe_truncated"]
+    assert st.confidence == "high"
+    doc_id = drop(core, fortuneo_statement_pdf(spec))
+    assert core.auto_import(doc_id) is None  # new account, and the names are to be confirmed
+    plan = core.review_document(doc_id)["plans"][0]
+    assert plan.ask_holder
+    core.import_statement(doc_id, 0, {"account_id": "new", "name": "Compte joint", "holder_name": holder, "import_transactions": "on"})
+    with core.db.session() as s:
+        assert s.scalar(select(Account)).holder_name == holder
+
+
+def test_the_guarantee_ceiling_is_shown_the_same_way_whatever_the_spacing():
+    for printed in ("100 000 €", "100000 €", "100\u00a0000 €"):
+        _, [st] = parse(fortuneo_info_pdf(ceiling=printed))
+        assert st.extra["ceiling"] == "100 000 €", printed
+
+
+def test_a_savings_statement_with_an_operation_the_balances_do_not_explain_is_flagged():
+    spec = FSpec([FEntry(date(2026, 12, 31), ["INTERETS 2026"], D("0.13"))], opening=D("10.32"), period_end=date(2026, 12, 31), opening_on=date(2025, 12, 31), livret=True,
+                 wrong_closing=D("11.00"))
+    _, [st] = parse(fortuneo_statement_pdf(spec))
+    assert st.confidence == "low" and any("ne tombent pas juste" in w for w in st.warnings)
