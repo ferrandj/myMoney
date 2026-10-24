@@ -72,8 +72,11 @@ def account_gaps(session: Session, account: Account, include_acknowledged: bool 
         if s.period_start and s.period_end
     ]
     acks = list(session.scalars(select(GapAck).where(GapAck.account_id == account.id)))
+    from . import statements  # here to avoid a circular import (statements checks continuity with this module)
+
+    waiting = statements.waiting_periods(session, account)  # read but not validated yet: waiting, not missing
     result = []
-    for start, end in gaps_between(periods):
+    for start, end in (g for gap in gaps_between(periods) for g in statements._uncovered(gap[0], gap[1], waiting)):
         ack = next((a for a in acks if a.period_start <= start and end <= a.period_end), None)
         if ack is None or include_acknowledged:
             result.append(Gap(account.id, account.name, start, end, ack.id if ack else None))

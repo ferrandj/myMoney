@@ -146,6 +146,8 @@ Sauvegarde le dossier `data/` tel quel (Hyper Backup, rsync…). Il est chiffré
 
 Un livret, un bien immobilier, un crédit ou des positions crypto sans relevé : **+ Compte manuel** sur la page Patrimoine.
 
+Un trou n'est signalé que s'il est vrai : une période couverte par un relevé déjà **lu mais pas encore validé** n'est pas « manquante », elle est en attente.
+
 ## Après une mise à jour : tout relire
 
 Les lectures s'améliorent (nouveaux formats, corrections). Dans **Documents → « Tout relire depuis les fichiers »**, un bouton **annule tous les imports** puis **relit chaque fichier** avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents (les opérations saisies à la main restent). Ce qui est évident est revalidé ; ce qui ne passe plus les contrôles (nouvel avertissement, solde qui ne s'enchaîne plus…) reste **à valider**, avec la raison affichée : rien n'est validé en silence. Sur la page d'un document déjà importé, **Invalider l'import** retire seulement ses opérations.

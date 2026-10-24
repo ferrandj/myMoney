@@ -150,12 +150,37 @@ def plan_import(session: Session, st: ParsedStatement, account: Account | None) 
                 plan.already_imported = other
             elif other.period_start <= st.period_end and other.period_end >= st.period_start:
                 plan.overlaps.append(other)
-        plan.issues = _continuity(st, [s for s in existing if s is not plan.already_imported], coverage_service.acknowledged_ranges(session, account.id))
+        plan.issues = _continuity(
+            st, [s for s in existing if s is not plan.already_imported], coverage_service.acknowledged_ranges(session, account.id),
+            waiting_periods(session, account, st),
+        )
         if plan.already_imported is not None:
             plan.dedup = _compare(session, st, plan.already_imported, classified)
     if st.balance is not None and account.balance_date is not None and st.balance_date is not None:
         plan.newer_balance = st.balance_date >= account.balance_date.date()
     return plan
+
+
+def waiting_periods(session: Session, account: Account, st: ParsedStatement | None = None) -> list[tuple[date, date]]:
+    """Periods of the statements read but not validated yet that belong to this account: a period they cover is not missing,
+    it is waiting. (Judging a hole only on what is already imported would call "missing" what the next click is about to
+    import.) Their balances prove nothing yet, so only the periods count.)"""
+    waiting: list[tuple[date, date]] = []
+    for doc in access.visible_documents(session):
+        if doc.status != "parsed":
+            continue
+        found = (doc.parse_result or {}).get("statements", [])
+        if len(found) != 1:
+            continue
+        other = ParsedStatement.from_json(found[0])
+        if other.document_kind in DOCUMENT_ONLY_KINDS or not (other.period_start and other.period_end):
+            continue
+        if st is not None and (other.period_start, other.period_end) == (st.period_start, st.period_end):
+            continue  # this very document, or a copy of it
+        if account.id not in {a.id for a in find_accounts(session, other)}:
+            continue
+        waiting.append((other.period_start, other.period_end))
+    return waiting
 
 
 def _compare(session: Session, st: ParsedStatement, previous: Statement, classified: ledger.Classified) -> DedupReport:
@@ -179,15 +204,17 @@ def _holder_unconfirmed(st: ParsedStatement, account: Account | None) -> bool:
     return account is None or not account.holder_name or account.holder_name == (account.holder_alias or st.holder_name)
 
 
-def _continuity(st: ParsedStatement, existing: list[Statement], acknowledged: list[tuple[date, date]] = ()) -> list[str]:
+def _continuity(
+    st: ParsedStatement, existing: list[Statement], acknowledged: list[tuple[date, date]] = (), waiting: list[tuple[date, date]] = ()
+) -> list[str]:
     """The statement just before and just after must touch this one, and their balances must chain.
-    A hole the user marked as normal is not reported again."""
+    A hole the user marked as normal is not reported again, nor the part of it that a statement waiting for validation covers."""
     issues: list[str] = []
 
     def hole(start: date, end: date) -> list[str]:
         if any(a <= start and end <= b for a, b in acknowledged):
             return []
-        return [f"Il manque une période : rien entre le {_d(start)} et le {_d(end)}"]
+        return [f"Il manque une période : rien entre le {_d(a)} et le {_d(b)}" for a, b in _uncovered(start, end, waiting)]
 
     before = [s for s in existing if s.period_end and s.period_end < st.period_start]
     after = [s for s in existing if s.period_start and s.period_start > st.period_end]
@@ -209,6 +236,20 @@ def _continuity(st: ParsedStatement, existing: list[Statement], acknowledged: li
                 f"Le solde final ({st.balance} {st.currency}) ne correspond pas au solde initial du relevé suivant ({nxt.opening_balance} au {_d(nxt.period_start)})"
             )
     return issues
+
+
+def _uncovered(start: date, end: date, covered: list[tuple[date, date]]) -> list[tuple[date, date]]:
+    """What is left of start..end once the covered periods are taken out."""
+    left, cursor = [], start
+    for a, b in sorted(covered):
+        if b < cursor or a > end:
+            continue
+        if a > cursor:
+            left.append((cursor, a - timedelta(days=1)))
+        cursor = max(cursor, b + timedelta(days=1))
+    if cursor <= end:
+        left.append((cursor, end))
+    return left
 
 
 def _d(value: date) -> str:
