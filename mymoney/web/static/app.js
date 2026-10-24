@@ -110,3 +110,99 @@ document.querySelectorAll("table[data-sortable]").forEach((table) => {
     }),
   );
 });
+
+// Appearance: the style and the "hide sensitive data" mode are kept on this device (the server never sees them).
+const root = document.documentElement;
+function store(key, value) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch (error) {
+    /* storage blocked: the choice only lasts for this page */
+  }
+}
+function syncThemeUi() {
+  const current = root.getAttribute("data-theme") || "auto";
+  document.querySelectorAll("[data-set-theme]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.setTheme === current)));
+  const color = getComputedStyle(root).getPropertyValue("--surface").trim();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta && color) meta.setAttribute("content", color);
+}
+document.querySelectorAll("[data-set-theme]").forEach((button) =>
+  button.addEventListener("click", () => {
+    const id = button.dataset.setTheme;
+    if (id === "auto") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", id);
+    store("mymoney-theme", id === "auto" ? null : id);
+    syncThemeUi();
+  }),
+);
+syncThemeUi();
+document.addEventListener("click", (event) => {
+  const menu = document.getElementById("theme-menu");
+  if (menu && menu.open && !menu.contains(event.target)) menu.open = false;
+});
+document.addEventListener("keydown", (event) => {
+  const menu = document.getElementById("theme-menu");
+  if (event.key === "Escape" && menu && menu.open) menu.open = false;
+});
+
+const privacyToggle = document.getElementById("privacy-toggle");
+function syncPrivacyUi() {
+  if (!privacyToggle) return;
+  const hidden = root.classList.contains("privacy");
+  privacyToggle.setAttribute("aria-pressed", String(hidden));
+  privacyToggle.querySelector(".lbl").textContent = hidden ? "Afficher" : "Masquer";
+  privacyToggle.querySelector(".ico").textContent = hidden ? "🙈" : "👁";
+}
+if (privacyToggle) {
+  privacyToggle.addEventListener("click", () => {
+    root.classList.toggle("privacy");
+    store("mymoney-privacy", root.classList.contains("privacy") ? "1" : null);
+    syncPrivacyUi();
+  });
+  syncPrivacyUi();
+}
+
+// Copy buttons: `data-copy` holds the text. The clipboard API needs HTTPS (or localhost): over plain http the NAS falls back
+// to a hidden field and the old copy command.
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      /* try the fallback */
+    }
+  }
+  const field = document.createElement("textarea");
+  field.value = text;
+  field.setAttribute("readonly", "");
+  field.className = "copy-field";
+  document.body.appendChild(field);
+  field.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (error) {
+    ok = false;
+  }
+  field.remove();
+  return ok;
+}
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-copy]");
+  if (!button) return;
+  const label = button.querySelector(".copy-label");
+  const ok = await copyText(button.dataset.copy);
+  if (label) {
+    if (button.dataset.original === undefined) button.dataset.original = label.textContent;
+    label.textContent = ok ? "Copié ✓" : "Échec";
+    button.classList.toggle("done", ok);
+    clearTimeout(button.copyTimer);
+    button.copyTimer = setTimeout(() => {
+      label.textContent = button.dataset.original;
+      button.classList.remove("done");
+    }, 1600);
+  }
+});

@@ -7,7 +7,7 @@
   <div class="grid">
     <dl class="kv">
       {% if loan.product %}<dt>Produit</dt><dd>{{ loan.product }}</dd>{% endif %}
-      {% if loan.borrower %}<dt>Emprunteur</dt><dd>{{ loan.borrower }}</dd>{% endif %}
+      {% if loan.borrower %}<dt>Emprunteur</dt><dd class="sensitive">{{ loan.borrower }}</dd>{% endif %}
       {% if loan.purpose %}<dt>Objet</dt><dd>{{ loan.purpose }}</dd>{% endif %}
       {% if loan.project_reference %}<dt>Projet</dt><dd>{{ loan.project_reference }}</dd>{% endif %}
       {% if loan.principal is not none %}<dt>Montant emprunté</dt><dd>{{ loan.principal|money }}</dd>{% endif %}
@@ -64,7 +64,7 @@
         <td class="num">{{ r.capital|money }}</td><td class="num">{{ r.interest|money }}</td><td class="num">{{ r.insurance|money }}</td>
         <td class="num"><strong>{{ r.total|money }}</strong></td><td class="num">{{ r.remaining|money }}</td>
         <td class="small muted">{{ r.source }}</td>
-        <td class="small">{% if r.confirmed is not none %}<span class="pos" title="Retrouvé dans un relevé : {{ r.confirmed|money }}">✓ prélevé</span>{% elif r.status == 'next' %}prochaine{% endif %}</td>
+        <td class="small">{% if r.confirmed is not none %}<span class="pos" title="Retrouvé dans un relevé : {{ r.confirmed|money_text }}">✓ prélevé</span>{% elif r.status == 'next' %}prochaine{% endif %}</td>
       </tr>
       {% endif %}
       {% endfor %}

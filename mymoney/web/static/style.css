@@ -204,3 +204,52 @@ button[disabled] { opacity: .5; cursor: not-allowed; }
 .loan-table .loan-event td { background: color-mix(in srgb, var(--warn) 12%, transparent); }
 details > summary { cursor: pointer; margin: 12px 0 6px; }
 progress { width: 140px; height: 10px; vertical-align: middle; }
+
+/* Logo and tools in the top bar */
+.brand { display: inline-flex; align-items: center; gap: 8px; }
+.logo { display: block; border-radius: 8px; }
+.wordmark { letter-spacing: -.01em; }
+.wordmark b { color: var(--primary); font-weight: 700; }
+.tools { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.tools + .lock { margin-left: 0; }
+.btn .ico { font-size: 1.05rem; line-height: 1; }
+@media (max-width: 640px) { .btn .lbl { display: none; } }
+#privacy-toggle[aria-pressed="true"] { background: var(--primary); color: var(--primary-text); }
+.menu { position: relative; }
+.menu > summary { list-style: none; }
+.menu > summary::-webkit-details-marker { display: none; }
+.menu[open] > summary { border-color: var(--border); background: var(--bg); }
+.menu-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(420px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .25); }
+.menu-panel h4 { margin: 12px 0 6px; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.theme-pick { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; cursor: pointer; }
+.theme-chip { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 8px; border-radius: 10px; border: 2px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: .85rem; cursor: pointer; text-align: left; }
+.theme-chip .dots { display: flex; gap: 4px; }
+.theme-chip .dots i { width: 14px; height: 14px; border-radius: 50%; display: block; }
+.theme-chip .dots i:nth-child(1) { background: var(--primary); } .theme-chip .dots i:nth-child(2) { background: var(--s1); }
+.theme-chip .dots i:nth-child(3) { background: var(--s2); } .theme-chip .dots i:nth-child(4) { background: var(--s5); }
+.theme-chip[aria-pressed="true"], .theme-pick[aria-pressed="true"] { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: 1px; }
+.theme-chip:hover, .theme-pick:hover { border-color: var(--primary); }
+
+/* Copy buttons */
+.btn.copy { padding: 1px 7px; font-size: .78rem; color: var(--muted); margin-left: 4px; vertical-align: middle; }
+.btn.copy:hover { color: var(--text); }
+.btn.copy.done { color: var(--pos); border-color: var(--pos); }
+.head-actions { float: right; font-weight: 400; }
+dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
+
+/* "Hide sensitive data": amounts, identifiers, names and labels are blurred and cannot be selected */
+.privacy .sensitive, .privacy code, .privacy .chart-svg, .privacy .donut-svg, .privacy .spark, .privacy .bar, .privacy progress {
+  filter: blur(7px); user-select: none; -webkit-user-select: none;
+}
+.privacy a.sensitive { pointer-events: none; }
+.privacy .chart-svg .pop { display: none !important; }
+.privacy input:not([type="password"]):not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]), .privacy textarea { filter: blur(5px); }
+.privacy input:focus, .privacy textarea:focus { filter: none; }
+@media print { .privacy .sensitive, .privacy code { filter: blur(7px); } }
+.copy-field { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; }
+.hero-logo { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 16px; }
+.hero-logo .logo { border-radius: 18px; box-shadow: 0 6px 20px rgba(79, 70, 229, .35); margin-bottom: 8px; }
+.hero-logo h1 { margin: 0; } .hero-logo h1 b { color: var(--primary); }
+.hero-logo p { margin: 2px 0 0; }

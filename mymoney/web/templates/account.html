@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% from "_macros.html" import unresolved_table, gap_row with context %}
+{% from "_macros.html" import unresolved_table, gap_row, copy with context %}
 {% block title %}{{ account.name }}{% endblock %}
 {% block content %}
 <p><a href="/">← Patrimoine</a></p>
 <section class="hero">
   <div>
-    <p class="muted">{{ [account.institution, account.type_label, account.holder_name]|select|join(' · ') }}</p>
+    <p class="muted">{{ [account.institution, account.type_label]|select|join(' · ') }}{% if account.holder_name %} · <span class="sensitive">{{ account.holder_name }}</span>{% endif %}</p>
     <h1>{{ account.name }}</h1>
     <p class="big">{{ value.total|money }}</p>
     {% if account.currency != 'EUR' %}<p class="muted small">Solde {{ account.balance|money(account.currency) }}</p>{% endif %}
@@ -27,15 +27,16 @@
     {% for w in value.warnings %}<p class="warn small">⚠ {{ w }}</p>{% endfor %}
   </div>
   <div class="card">
-    <h2>Titulaire et coordonnées</h2>
+    <h2>Titulaire et coordonnées
+      {% if account.iban or account.rib or account.holder_name %}<span class="head-actions">{{ copy(identity_text(account), 'Tout copier', 'Copier titulaire, IBAN, BIC et RIB') }}</span>{% endif %}</h2>
     {% if account.holder_name or account.holder_address or account.iban or account.rib %}
     <dl class="kv">
-      {% if account.holder_name %}<dt>Titulaire</dt><dd>{{ account.holder_name }}</dd>{% endif %}
-      {% if account.holder_address %}<dt>Adresse</dt><dd>{{ account.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
-      {% if account.iban %}<dt>IBAN</dt><dd><code>{{ account.iban }}</code></dd>{% endif %}
-      {% if account.bic %}<dt>BIC</dt><dd><code>{{ account.bic }}</code></dd>{% endif %}
-      {% if account.rib %}<dt>RIB</dt><dd><code>{{ account.rib }}</code> <span class="muted small">banque · guichet · compte · clé</span></dd>
-      {% elif account.account_number %}<dt>N° de compte</dt><dd><code>{{ account.account_number }}</code></dd>{% endif %}
+      {% if account.holder_name %}<dt>Titulaire</dt><dd><span class="sensitive">{{ account.holder_name }}</span> {{ copy(account.holder_name) }}</dd>{% endif %}
+      {% if account.holder_address %}<dt>Adresse</dt><dd><span class="sensitive">{{ account.holder_address|e|replace('\n', '<br>'|safe) }}</span> {{ copy(account.holder_address) }}</dd>{% endif %}
+      {% if account.iban %}<dt>IBAN</dt><dd><code>{{ account.iban|iban }}</code> {{ copy(account.iban|replace(' ', '')) }}</dd>{% endif %}
+      {% if account.bic %}<dt>BIC</dt><dd><code>{{ account.bic }}</code> {{ copy(account.bic) }}</dd>{% endif %}
+      {% if account.rib %}<dt>RIB</dt><dd><code>{{ account.rib }}</code> {{ copy(account.rib) }} <span class="muted small">banque · guichet · compte · clé</span></dd>
+      {% elif account.account_number %}<dt>N° de compte</dt><dd><code>{{ account.account_number }}</code> {{ copy(account.account_number) }}</dd>{% endif %}
     </dl>
     {% else %}<p class="muted small">Aucune information lue. Elles viennent des relevés importés, ou de <a href="/accounts/{{ account.id }}/edit">la fiche du compte</a>.</p>{% endif %}
   </div>
@@ -151,7 +152,7 @@
     <tbody>
     {% for t in transactions %}
       <tr><td class="nowrap">{{ t.date|frdate }}</td>
-      <td>{{ t.label }}
+      <td class="sensitive-cell"><span class="sensitive">{{ t.label }}</span>
         <div class="muted small">{{ [KIND_LABELS.get(t.kind, ''), 'virement interne' if t.internal else '', ('valeur ' ~ (t.value_date|frdate)) if t.value_date and t.value_date != t.date else '']|select|join(' · ') }}
           {% if t.counterparty %}{% if t.kind %} · {% endif %}<a href="/contacts/{{ t.counterparty.id }}">{{ t.counterparty.name }}</a>
           {% elif (t.counterparty_name or t.counterparty_iban) and not t.internal and t.kind != 'card' %}{% if t.kind %} · {% endif %}<a href="/contacts/identify?name={{ (t.counterparty_name or '')|urlencode }}&iban={{ (t.counterparty_iban or '')|urlencode }}&next={{ ('/accounts/' ~ account.id)|urlencode }}">identifier {{ t.counterparty_name or t.counterparty_iban }}</a>{% endif %}

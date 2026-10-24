@@ -9,7 +9,7 @@ from functools import lru_cache
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
-THEME_COLOR = "#3b5bdb"
+THEME_COLOR = "#4f46e5"
 BACKGROUND_COLOR = "#f6f7f9"
 
 # name -> (pixel size, maskable). Android needs a 192 and a 512 icon, plus a full-bleed one for adaptive launchers.
@@ -54,9 +54,22 @@ self.addEventListener("fetch", (event) => {
 });
 """
 
-# Glyph of static/icon.svg, in its 32x32 coordinate system.
-_GLYPH = [(8, 22), (8, 10), (16, 17), (24, 10), (24, 22)]
-_GLYPH_WIDTH = 3
+# The artwork of static/icon.svg (32x32 coordinates): an "m" made of two arches, and a coin above it.
+_ARCHES = [((8.5, 23), (8.5, 15.5)), ((8.5, 15.5), (8.5, 10.5), (16, 10.5), (16, 15.5)), ((16, 15.5), (16, 23)),
+           ((16, 15.5), (16, 10.5), (23.5, 10.5), (23.5, 15.5)), ((23.5, 15.5), (23.5, 23))]
+_STROKE = 2.8
+_FROM, _TO = (0x4F, 0x46, 0xE5), (0x08, 0x91, 0xB2)
+
+
+def _bezier(points, steps=24):
+    if len(points) == 2:
+        return list(points)
+    out = []
+    for i in range(steps + 1):
+        t = i / steps
+        a, b, c, d = points
+        out.append(tuple((1 - t) ** 3 * a[k] + 3 * (1 - t) ** 2 * t * b[k] + 3 * (1 - t) * t**2 * c[k] + t**3 * d[k] for k in (0, 1)))
+    return out
 
 
 @lru_cache(maxsize=None)
@@ -66,20 +79,36 @@ def render_icon(size: int, maskable: bool) -> bytes:
 
     oversample = 4  # drawn large then scaled down: smooth edges without anti-aliasing support in ImageDraw
     px = size * oversample
-    image = Image.new("RGBA", (px, px), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    blue = tuple(int(THEME_COLOR[i : i + 2], 16) for i in (1, 3, 5)) + (255,)
-    white = (255, 255, 255, 255)
+    # Diagonal gradient, one line per diagonal.
+    gradient = Image.new("RGBA", (px, px))
+    gdraw = ImageDraw.Draw(gradient)
+    for d in range(2 * px):
+        t = d / (2 * px - 1)
+        color = tuple(round(_FROM[i] + (_TO[i] - _FROM[i]) * t) for i in range(3)) + (255,)
+        gdraw.line([(d, 0), (0, d)], fill=color, width=2)
+    mask = Image.new("L", (px, px), 0)
     if maskable:
-        draw.rectangle((0, 0, px, px), fill=blue)  # the launcher applies its own mask
+        ImageDraw.Draw(mask).rectangle((0, 0, px, px), fill=255)  # the launcher applies its own mask
     else:
-        draw.rounded_rectangle((0, 0, px - 1, px - 1), radius=px * 8 // 32, fill=blue)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, px - 1, px - 1), radius=px * 8 // 32, fill=255)
+    image = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    image.paste(gradient, (0, 0), mask)
+    draw = ImageDraw.Draw(image)
     k = px / 32 * (0.6 if maskable else 1)  # maskable icons keep the glyph inside the central safe zone
-    points = [(px / 2 + (x - 16) * k, px / 2 + (y - 16) * k) for x, y in _GLYPH]
-    width = round(_GLYPH_WIDTH * k)
-    draw.line(points, fill=white, width=width, joint="curve")
-    for x, y in (points[0], points[-1]):  # round caps
-        draw.ellipse((x - width / 2, y - width / 2, x + width / 2, y + width / 2), fill=white)
+    to_px = lambda p: (px / 2 + (p[0] - 16) * k, px / 2 + (p[1] - 16) * k)
+    width = max(1, round(_STROKE * k))
+    for segment in _ARCHES:
+        points = [to_px(p) for p in _bezier(segment)]
+        draw.line(points, fill=(255, 255, 255, 255), width=width, joint="curve")
+        for x, y in (points[0], points[-1]):  # round caps
+            draw.ellipse((x - width / 2, y - width / 2, x + width / 2, y + width / 2), fill=(255, 255, 255, 255))
+    cx, cy = to_px((24.2, 7.6))
+    for radius, fill in ((2.6, (252, 211, 77, 255)), (1.1, (245, 158, 11, 255))):
+        r = radius * k
+        if radius < 2:
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=fill, width=max(1, round(0.8 * k)))
+        else:
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill)
     out = io.BytesIO()
     image.resize((size, size), Image.LANCZOS).save(out, "PNG", optimize=True)
     return out.getvalue()

@@ -6,7 +6,9 @@
   <meta name="robots" content="noindex, nofollow">
   <title>{% block title %}myMoney{% endblock %} · myMoney</title>
   <link rel="stylesheet" href="/static/style.css">
-  <meta name="theme-color" content="#3b5bdb">
+  <link rel="stylesheet" href="/themes.css">
+  <script src="/static/theme.js"></script>
+  <meta name="theme-color" content="#4f46e5">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -15,7 +17,7 @@
 <body>
   {% if unlocked and csrf %}
   <header class="topbar">
-    <a class="brand" href="/">myMoney</a>
+    <a class="brand" href="/" aria-label="myMoney, accueil"><img class="logo" src="/static/logo.svg" alt="" width="30" height="30"><span class="wordmark">my<b>Money</b></span></a>
     <nav>
       <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Patrimoine</a>
       <a href="/analytics" {% if request.url.path.startswith('/analytics') %}aria-current="page"{% endif %}>Analyses</a>
@@ -23,6 +25,21 @@
       <a href="/contacts" {% if request.url.path.startswith('/contacts') %}aria-current="page"{% endif %}>Contacts</a>
       <a href="/settings" {% if request.url.path.startswith('/settings') %}aria-current="page"{% endif %}>Paramètres</a>
     </nav>
+    <div class="tools">
+      <button type="button" class="btn ghost" id="privacy-toggle" aria-pressed="false" title="Masquer ou afficher les montants, IBAN, noms et autres données sensibles"><span class="ico">👁</span><span class="lbl">Masquer</span></button>
+      <details class="menu" id="theme-menu">
+        <summary class="btn ghost" title="Choisir le style de l'application"><span class="ico">🎨</span><span class="lbl">Style</span></summary>
+        <div class="menu-panel">
+          <button type="button" class="theme-pick auto" data-set-theme="auto" aria-pressed="false">Automatique <span class="muted small">selon l'appareil</span></button>
+          {% for title, items in THEME_GROUPS %}
+          <h4>{{ title }}</h4>
+          <div class="chips">
+            {% for t in items %}<button type="button" class="theme-chip" data-theme="{{ t.id }}" data-set-theme="{{ t.id }}" aria-pressed="false" title="{{ t.label }}"><span class="dots"><i></i><i></i><i></i><i></i></span><span class="chip-label">{{ t.label }}</span></button>{% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+    </div>
     <form method="post" action="/logout" class="lock">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="lock" value="1">

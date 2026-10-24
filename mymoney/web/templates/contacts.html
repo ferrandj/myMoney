@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import unresolved_table with context %}
+{% from "_macros.html" import unresolved_table, copy with context %}
 {% block title %}Contacts{% endblock %}
 {% block content %}
 <section class="hero">
@@ -27,8 +27,8 @@
     <tr>
       <td><a href="/contacts/{{ s.contact.id }}">{{ s.contact.name }}</a></td>
       <td class="small">{{ COUNTERPARTY_KINDS.get(s.contact.kind, s.contact.kind) }}</td>
-      <td class="small nowrap">{{ s.contact.phone or '' }}</td>
-      <td class="small">{% for i in s.contact.identifiers %}{% if i.kind == 'iban' %}<code>{{ i.value }}</code>{% else %}{{ i.label or i.value }}{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+      <td class="small nowrap"><span class="sensitive">{{ s.contact.phone or '' }}</span></td>
+      <td class="small">{% for i in s.contact.identifiers %}{% if i.kind == 'iban' %}<code>{{ i.value }}</code> {{ copy(i.value, '', 'Copier l\'IBAN') }}{% else %}{{ i.label or i.value }}{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
       <td class="num">{{ s.count }}</td>
       <td class="num pos">{{ s.total_in|money if s.total_in else '' }}</td>
       <td class="num">{{ s.total_out|money if s.total_out else '' }}</td>

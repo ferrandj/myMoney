@@ -20,7 +20,7 @@
   <div class="table-wrap"><table>
     {% for d, original in aside %}
     <tr>
-      <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a><div class="muted small">doublon de {{ original or 'un fichier supprimé' }}</div></td>
+      <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a><div class="muted small">doublon de {{ original or 'un fichier supprimé' }}</div></td>
       <td class="nowrap actions">
         <form method="post" action="/documents/{{ d.id }}/keep"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small">Garder en copie</button></form>
         <form method="post" action="/documents/{{ d.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small danger">Supprimer</button></form>
@@ -38,7 +38,7 @@
     <tbody>
     {% for d in documents %}
     <tr>
-      <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
+      <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
       <td class="small">{{ DOC_KINDS.get(d.kind, 'Document') if d.adapter_id else '—' }}</td>
       <td class="small">{{ (d.parse_result or {}).get('institution') or '—' }}</td>
       <td class="nowrap">{{ d.uploaded_at|frdate }}</td>

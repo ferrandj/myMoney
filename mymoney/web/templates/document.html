@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% from "_macros.html" import unresolved_table with context %}
+{% from "_macros.html" import unresolved_table, copy with context %}
 {% block title %}{{ doc.filename }}{% endblock %}
 {% block content %}
 <p><a href="/documents">← Documents</a></p>
-<h1>{{ doc.filename }}</h1>
+<h1><span class="sensitive">{{ doc.filename }}</span></h1>
 <p class="muted small">
   <span class="tag status-{{ doc.status }}">{{ DOCUMENT_STATUS.get(doc.status, doc.status) }}</span>
   {% if result.adapter %}Lu avec <strong>{{ adapters|selectattr('id', 'equalto', result.adapter)|map(attribute='label')|first }}</strong>{% endif %}
@@ -64,8 +64,8 @@
   <h2>{{ st.extra.get('title') or "Document d'information" }} <span class="tag conf-high">à conserver</span></h2>
   <dl class="kv">
     {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
-    {% if st.holder_name %}<dt>Destinataire</dt><dd>{{ st.holder_name }}</dd>{% endif %}
-    {% if st.holder_address %}<dt>Adresse</dt><dd>{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+    {% if st.holder_name %}<dt>Destinataire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+    {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
     {% if st.extra.get('issued_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
     {% if st.extra.get('ceiling') %}<dt>Plafond de la garantie</dt><dd>{{ st.extra.ceiling }} par déposant et par établissement</dd>{% endif %}
   </dl>
@@ -83,7 +83,7 @@
   <div class="grid">
     <dl class="kv">
       {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
-      {% if st.holder_name %}<dt>Emprunteur</dt><dd>{{ st.holder_name }}</dd>{% endif %}
+      {% if st.holder_name %}<dt>Emprunteur</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
       {% if ln.get('reference') %}<dt>N° du prêt</dt><dd><code>{{ ln.reference }}</code></dd>{% endif %}
       {% if ln.get('project') %}<dt>Projet</dt><dd><code>{{ ln.project }}</code></dd>{% endif %}
       {% if ln.get('object') %}<dt>Objet</dt><dd>{{ ln.object }}{% if ln.get('destination') %} · {{ ln.destination }}{% endif %}</dd>{% endif %}
@@ -151,9 +151,9 @@
   <div class="grid">
     <dl class="kv">
       {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
-      {% if st.holder_name %}<dt>Titulaire</dt><dd>{{ st.holder_name }}</dd>{% endif %}
-      {% if st.holder_address %}<dt>Adresse</dt><dd>{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
-      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban }}</code></dd>{% endif %}
+      {% if st.holder_name %}<dt>Titulaire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+      {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban|iban }}</code> {{ copy(st.iban|replace(' ', ''), '', 'Copier l\'IBAN') }}</dd>{% endif %}
       {% if st.bic %}<dt>BIC</dt><dd><code>{{ st.bic }}</code></dd>{% endif %}
       {% if st.bank_code %}<dt>RIB</dt><dd><code>{{ st.bank_code }} {{ st.branch_code }} {{ st.account_number }} {{ st.rib_key }}</code></dd>{% endif %}
     </dl>
@@ -204,9 +204,9 @@
   <div class="grid">
     <dl class="kv">
       {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
-      {% if st.holder_name %}<dt>Titulaire</dt><dd>{{ st.holder_name }}</dd>{% endif %}
-      {% if st.holder_address %}<dt>Adresse</dt><dd>{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
-      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban }}</code></dd>{% endif %}
+      {% if st.holder_name %}<dt>Titulaire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+      {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban|iban }}</code> {{ copy(st.iban|replace(' ', ''), '', 'Copier l\'IBAN') }}</dd>{% endif %}
       {% if st.bic %}<dt>BIC</dt><dd><code>{{ st.bic }}</code></dd>{% endif %}
       {% if st.bank_code %}<dt>RIB</dt><dd><code>{{ st.bank_code }} {{ st.branch_code }} {{ st.account_number }} {{ st.rib_key }}</code></dd>
       {% elif st.account_number %}<dt>N° de compte</dt><dd>{{ st.account_number }}</dd>{% endif %}
@@ -254,8 +254,8 @@
       <summary>Voir les différences</summary>
       <div class="table-wrap"><table>
         <thead><tr><th></th><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
-        {% for t in dd.extra %}<tr><td><span class="tag conf-medium">en plus</span></td><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}</td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
-        {% for t in dd.missing %}<tr><td><span class="tag conf-low">absente</span></td><td class="nowrap">{{ t.date|frdate }}</td><td>{{ t.label }}</td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+        {% for t in dd.extra %}<tr><td><span class="tag conf-medium">en plus</span></td><td class="nowrap">{{ t.date|frdate }}</td><td><span class="sensitive">{{ t.label }}</span></td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+        {% for t in dd.missing %}<tr><td><span class="tag conf-low">absente</span></td><td class="nowrap">{{ t.date|frdate }}</td><td><span class="sensitive">{{ t.label }}</span></td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
       </table></div>
     </details>
     {% endif %}
@@ -332,8 +332,8 @@
       {% for t in st.transactions %}
       <tr class="tx-{{ statuses[loop.index0] }}">
         <td class="nowrap">{{ t.date|frdate }}{% if t.value_date and t.value_date != t.date %}<div class="muted small">valeur {{ t.value_date|frdate }}</div>{% endif %}</td>
-        <td>{{ t.label }}<div class="muted small">{{ KIND_LABELS.get(t.kind, '') }}{% if t.details and t.details.get('internal') %} · virement interne{% endif %}{% if t.reference %} · réf. {{ t.reference }}{% endif %}</div></td>
-        <td class="small">{{ t.counterparty or '' }}{% if t.counterparty_iban %}<div><code>{{ t.counterparty_iban }}</code></div>{% endif %}</td>
+        <td><span class="sensitive">{{ t.label }}</span><div class="muted small">{{ KIND_LABELS.get(t.kind, '') }}{% if t.details and t.details.get('internal') %} · virement interne{% endif %}{% if t.reference %} · réf. {{ t.reference }}{% endif %}</div></td>
+        <td class="small"><span class="sensitive">{{ t.counterparty or '' }}</span>{% if t.counterparty_iban %}<div><code>{{ t.counterparty_iban }}</code></div>{% endif %}</td>
         <td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td>
         <td>{% if statuses[loop.index0] == 'exact' %}<span class="tag conf-low">doublon</span>{% elif statuses[loop.index0] == 'probable' %}<span class="tag conf-medium">doublon probable</span>{% endif %}</td>
       </tr>

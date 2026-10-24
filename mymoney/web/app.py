@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from markupsafe import Markup
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -29,12 +30,12 @@ from ..services import loans as loan_service
 from ..services import statements as statement_service
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
-from . import charts, pwa
+from . import charts, pwa, themes
 from .security import COOKIE, SECURITY_HEADERS, Sessions, verified_form
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
-PUBLIC_PATHS = ("/static/", "/healthz", "/login", "/setup", "/manifest.webmanifest", "/sw.js", "/icons/")
+PUBLIC_PATHS = ("/static/", "/themes.css", "/healthz", "/login", "/setup", "/manifest.webmanifest", "/sw.js", "/icons/")
 KIND_LABELS = {
     "card": "Carte", "transfer": "Virement", "instant_transfer": "Virement instantané", "direct_debit": "Prélèvement",
     "loan_payment": "Prêt", "fee": "Frais", "cash": "Retrait", "cheque": "Chèque", "interest": "Intérêts",
@@ -51,22 +52,45 @@ DOCUMENT_STATUS = {
 
 
 # ----------------------------------------------------------------- formatting
-def money(value, currency: str = "EUR", decimals: int = 2) -> str:
+def money_text(value, currency: str = "EUR", decimals: int = 2) -> str:
+    """An amount as plain text (for attributes and messages)."""
     if value is None:
         return "—"
     value = Decimal(value)
     sign = "-" if value < 0 else ""
-    text = f"{abs(value):,.{decimals}f}".replace(",", " ").replace(".", ",")
+    text = f"{abs(value):,.{decimals}f}".replace(",", " ").replace(".", ",")
     symbol = {"EUR": "€", "USD": "$", "GBP": "£"}.get(currency, currency)
-    return f"{sign}{text} {symbol}"
+    return f"{sign}{text} {symbol}"
 
 
-def quantity(value) -> str:
+def money(value, currency: str = "EUR", decimals: int = 2) -> Markup:
+    """An amount in the page: marked as sensitive, so the "hide sensitive data" button can blur it."""
+    return Markup('<span class="sensitive">{}</span>').format(money_text(value, currency, decimals))
+
+
+def iban(value) -> str:
+    """An IBAN in groups of four characters, the way banks print it."""
+    compact = "".join(str(value or "").split())
+    return " ".join(compact[i : i + 4] for i in range(0, len(compact), 4))
+
+
+def identity_text(account) -> str:
+    """What one sends to be paid: holder, IBAN, BIC and RIB, one per line."""
+    lines = [
+        f"Titulaire : {account.holder_name}" if account.holder_name else "",
+        f"IBAN : {iban(account.iban)}" if account.iban else "",
+        f"BIC : {account.bic}" if account.bic else "",
+        f"RIB : {account.rib}" if account.rib else "",
+    ]
+    return "\n".join(line for line in lines if line)
+
+
+def quantity(value) -> Markup:
     if value is None:
-        return "—"
+        return Markup("—")
     value = Decimal(value)
     text = f"{value:,.8f}".rstrip("0").rstrip(".")
-    return text.replace(",", " ").replace(".", ",")
+    return Markup('<span class="sensitive">{}</span>').format(text.replace(",", " ").replace(".", ","))
 
 
 def frdate(value) -> str:
@@ -133,10 +157,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     sessions = Sessions(settings.auto_lock_minutes)
     core.vault.on_lock(sessions.clear)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
-    templates.env.filters.update(money=money, qty=quantity, frdate=frdate)
+    templates.env.filters.update(money=money, money_text=money_text, qty=quantity, frdate=frdate, iban=iban)
     templates.env.globals.update(
         ACCOUNT_TYPES=ACCOUNT_TYPES, CATEGORIES=CATEGORIES, COUNTERPARTY_KINDS=COUNTERPARTY_KINDS, KIND_LABELS=KIND_LABELS,
         DOCUMENT_STATUS=DOCUMENT_STATUS, DOC_KINDS=DOC_KINDS, LOAN_KINDS=loan_service.LOAN_KINDS,
+        THEME_GROUPS=themes.groups(), identity_text=identity_text,
     )
     templates.env.globals.update(QUARANTINE_HOURS=QUARANTINE_HOURS)
     templates.env.filters.update(pct=lambda v: "—" if v is None else f"{Decimal(v):+.1f} %".replace(".", ","))
@@ -158,6 +183,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.core = core
     app.state.sessions = sessions
+    @app.get("/themes.css")
+    async def themes_css():
+        return Response(themes.stylesheet(), media_type="text/css")
+
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     pwa.install(app)
 
