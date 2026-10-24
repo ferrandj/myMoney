@@ -765,8 +765,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         aside = [(d, names.get(d.duplicate_of)) for d in everything if d.status == "duplicate"]
         return render(
             request, "documents.html", documents=documents, aside=aside, missing=missing, max_mb=settings.max_upload_mb, catalog=catalog(),
-            tree=document_tree(documents),
+            tree=document_tree(documents), pending=[d for d in documents if d.status == "parsed"],
         )
+
+    @app.post("/documents/validate-all")
+    async def documents_validate_all(request: Request):
+        await verified_form(request)
+        outcome = await run_in_threadpool(core.validate_pending)
+        parts = [f"{outcome['imported']} document(s) validé(s)"]
+        if outcome["left"]:
+            parts.append(f"{outcome['left']} à regarder un par un (un choix ou une vérification est nécessaire)")
+        return redirect("/documents", " · ".join(parts))
 
     @app.post("/documents/download")
     async def documents_download(request: Request):
@@ -835,7 +844,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         review = len(outcomes) - sum(counts.values())
         parts = [f"{len(outcomes)} fichier(s)", f"{counts['imported']} importé(s) automatiquement"]
         if review:
-            parts.append(f"{review} à vérifier")
+            parts.append(f"{review} à valider : bouton « Tout valider » ci-dessous")
         if counts["duplicate"]:
             parts.append(f"{counts['duplicate']} doublon(s) sans différence écarté(s)")
         if counts["differs"]:

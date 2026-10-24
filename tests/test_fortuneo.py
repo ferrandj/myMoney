@@ -354,3 +354,30 @@ def test_a_savings_statement_with_an_operation_the_balances_do_not_explain_is_fl
                  wrong_closing=D("11.00"))
     _, [st] = parse(fortuneo_statement_pdf(spec))
     assert st.confidence == "low" and any("ne tombent pas juste" in w for w in st.warnings)
+
+
+def test_web_validate_all_imports_what_is_obvious_in_one_click(client):
+    csrf = login(client)
+    # The recap comes first and the account does not exist yet: both wait for a green light.
+    upload(client, csrf, "frais.pdf", fortuneo_fees_pdf(FeesSpec()))
+    upload(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    page = client.get("/documents")
+    assert "À valider" in page.text and "Tout valider (2)" in page.text
+
+    done = client.post("/documents/validate-all", data={"csrf": csrf})
+    assert "2 document(s) validé(s)" in done.text
+    assert "Tout valider" not in done.text
+    with client.core.db.session() as s:
+        assert len(list(s.scalars(select(Account)))) == 1
+        assert s.scalar(select(FeeSummary)) is not None
+        assert len(list(s.scalars(select(Transaction)))) == len(fortuneo_entries())
+
+
+def test_web_validate_all_leaves_a_cut_joint_holder_name_to_the_user(client):
+    csrf = login(client)
+    long_name = "M PRENOMLONG NOMDEFAMILLE OU MME AUTRE NOM"
+    upload(client, csrf, "joint.pdf", fortuneo_statement_pdf(fortuneo_september(holder=long_name)))
+    done = client.post("/documents/validate-all", data={"csrf": csrf})
+    assert "0 document(s) validé(s)" in done.text and "1 à regarder un par un" in done.text
+    with client.core.db.session() as s:
+        assert s.scalar(select(Account)) is None

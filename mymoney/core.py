@@ -552,6 +552,61 @@ class MyMoney:
                 return None
             return statement_service.import_statement(s, doc, st, statement_service.default_import_form(plan))
 
+    def pending_documents(self) -> list[Document]:
+        """Documents read but not yet validated (the ones the user still has to look at), oldest period first."""
+        with self.db.session() as s:
+            docs = sorted((d for d in access.visible_documents(s) if d.status == "parsed"), key=lambda d: (_period_key(d), d.id))
+            for d in docs:
+                s.expunge(d)
+        return docs
+
+    def validate_pending(self) -> dict[str, int]:
+        """Validate in one go every document whose import needs no decision: the account is the one the document points to,
+        or a new account because nothing matches yet. What needs a person (cut holder names, several possible accounts,
+        a statement that repeats another, inconsistent balances, warnings) is left as it is. Returns counts."""
+        done, left = 0, 0
+        todo = [d.id for d in self.pending_documents()]
+        for _ in range(3):  # a document can wait for the account another one creates (a fees recap, a loan notice)
+            progress, remaining = False, []
+            for doc_id in todo:
+                try:
+                    if self._validate_if_obvious(doc_id):
+                        done += 1
+                        progress = True
+                    else:
+                        remaining.append(doc_id)
+                except Exception:
+                    remaining.append(doc_id)
+            todo = remaining
+            if not progress or not todo:
+                break
+        return {"imported": done, "left": len(todo)}
+
+    def _validate_if_obvious(self, doc_id: int) -> bool:
+        with self.db.session() as s:
+            doc = self._doc(s, doc_id)
+            result = doc.parse_result or {}
+            if doc.status != "parsed" or len(result.get("statements", [])) != 1:
+                return False
+            st = ParsedStatement.from_json(result["statements"][0])
+            if st.document_kind == "info":
+                statement_service.import_statement(s, doc, st, {})
+                return True
+            found = statement_service.find_accounts(s, st)
+            if len(found) > 1:
+                return False
+            plan = statement_service.plan_import(s, st, found[0] if found else None)
+            if plan.dedup is not None or plan.ask_holder:
+                return False
+            if plan.account is None:
+                creating = st.document_kind not in statement_service.DOCUMENT_ONLY_KINDS
+                if not (creating and st.confidence == "high" and not st.warnings and not plan.issues):
+                    return False
+            elif not plan.clean:
+                return False
+            statement_service.import_statement(s, doc, st, statement_service.default_import_form(plan))
+            return True
+
     def undo_import(self, doc_id: int) -> int:
         with self.db.session() as s:
             doc = s.get(Document, doc_id)
@@ -559,3 +614,8 @@ class MyMoney:
                 return 0
             self._doc(s, doc_id)
             return statement_service.undo_import(s, doc)
+
+
+def _period_key(doc: Document):
+    statements = (doc.parse_result or {}).get("statements") or [{}]
+    return str(statements[0].get("period_end") or statements[0].get("period_start") or "")

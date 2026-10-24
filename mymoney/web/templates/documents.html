@@ -13,6 +13,16 @@
   <small class="muted">Chaque fichier est chiffré (AES-256-GCM) dès son arrivée, puis reconnu automatiquement : l'adapter de l'établissement et du type de document est choisi tout seul. En cas de doute, l'application te demande. Les doublons sont signalés.</small>
   <button class="btn primary">Envoyer</button>
 </form>
+{% if pending %}
+<section class="card warn" id="a-valider">
+  <h2>À valider <span class="tag">{{ pending|length }}</span></h2>
+  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). Clique sur <strong>Tout valider</strong> : tout ce qui est évident est importé d'un coup, le reste (nom de titulaire à confirmer, doublon, incohérence) reste ici pour être regardé un par un.</p>
+  <form method="post" action="/documents/validate-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Tout valider ({{ pending|length }})</button></form>
+  <ul class="small">
+    {% for d in pending %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> · <a href="/documents/{{ d.id }}">ouvrir et valider</a></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
 {% if aside %}
 <section class="card dedup">
   <h2>Doublons écartés <span class="tag">{{ aside|length }}</span></h2>
