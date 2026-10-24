@@ -5,6 +5,9 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 ## Fonctionnalités
 
 - **Dépose un fichier, le bon adapter est choisi tout seul.** Chaque adapter lit un type de document d'un établissement ; un établissement peut en avoir plusieurs (relevé mensuel PDF, export CSV, relevé d'épargne…). En cas de doute (deux lectures plausibles, établissement reconnu mais document inconnu), l'application te demande laquelle utiliser.
+- **Copier ses coordonnées en un clic** : sur la fiche d'un compte, un bouton « Copier » à côté du titulaire, de l'adresse, de l'IBAN (copié sans espaces), du BIC et du RIB, et « Tout copier » pour envoyer titulaire + IBAN + BIC + RIB d'un coup. Même chose pour l'IBAN des contacts. (Sans HTTPS, le navigateur interdit l'accès direct au presse-papiers : l'application passe alors par la méthode de secours, qui marche aussi.)
+- **Masquer les données sensibles** : le bouton « Masquer » de la barre du haut floute les montants, les IBAN et RIB, les noms, adresses, libellés d'opérations, noms de fichiers et les graphiques (infobulles comprises), et empêche de les sélectionner. Le mode reste actif sur l'appareil jusqu'à « Afficher ».
+- **20 styles** (bouton « Style ») : 10 clairs (Clair, Neige, Sable, Menthe, Lavande, Ciel, Rose poudré, Papier, Solarized clair, Agrume) et 10 sombres (Sombre, Minuit, Ardoise, Charbon, Forêt, Aubergine, Nord, Dracula, Solarized sombre, Noir OLED), plus « Automatique » qui suit l'appareil. Le contraste de chaque style est vérifié par les tests (texte, liens, montants, graphiques). Le choix est gardé sur l'appareil. Les couleurs sont définies dans `mymoney/web/themes.py`.
 - **Tout est rendu cohérent et contrôlé** :
   - le solde initial + les opérations doivent donner le solde final du relevé ;
   - le relevé doit prolonger le précédent (soldes qui se suivent, pas de mois manquant) ;

@@ -1,3 +1,7 @@
+{# A button that copies `text` to the clipboard (attached by app.js: no inline script allowed). #}
+{% macro copy(text, label="Copier", title="Copier dans le presse-papiers") -%}
+<button type="button" class="btn small copy" data-copy="{{ text }}" title="{{ title }}" aria-label="{{ title }}">⧉ <span class="copy-label">{{ label }}</span></button>
+{%- endmacro %}
 {# Inline form to name an unknown counterparty: remembered by IBAN and by the name as the bank prints it. #}
 {% macro identify_form(g, next) %}
 <form method="post" action="/contacts/identify" class="inline-identify">
