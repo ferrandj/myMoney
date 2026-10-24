@@ -34,12 +34,13 @@
 <section class="card">
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Fichier</th><th>Lu avec</th><th>Ajouté</th><th>État</th><th></th></tr></thead>
+    <thead><tr><th>Fichier</th><th>Type</th><th>Établissement</th><th>Ajouté</th><th>État</th><th></th></tr></thead>
     <tbody>
     {% for d in documents %}
     <tr>
       <td><a href="/documents/{{ d.id }}">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
-      <td class="small muted">{{ d.adapter_id or '—' }}</td>
+      <td class="small">{{ DOC_KINDS.get(d.kind, 'Document') if d.adapter_id else '—' }}</td>
+      <td class="small">{{ (d.parse_result or {}).get('institution') or '—' }}</td>
       <td class="nowrap">{{ d.uploaded_at|frdate }}</td>
       <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
       <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>

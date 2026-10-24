@@ -119,7 +119,7 @@ def _pdf(lines: list[tuple[float, str]]) -> bytes:
 
 def test_pdf_statement_with_debit_credit_columns():
     rows = [
-        [(10, "FORTUNEO - Releve de compte courant")],
+        [(10, "BFORBANK - Releve de compte courant")],
         [(10, "Compte courant joint")],
         [(10, "IBAN : FR76 3000 1007 9412 3456 7890 185")],
         [(10, "Releve du 01/02/2026 au 28/02/2026")],
@@ -132,7 +132,7 @@ def test_pdf_statement_with_debit_credit_columns():
         [(10, "NOUVEAU SOLDE AU 28/02/2026"), (173, "2 215,70")],
     ]
     [st] = parse_document("releve.pdf", _pdf(rows))
-    assert st.institution == "Fortuneo"
+    assert st.institution == "BforBank"
     assert st.iban == "FR7630001007941234567890185"
     assert st.opening_balance == Decimal("1000.00")
     assert st.balance == Decimal("2215.70")

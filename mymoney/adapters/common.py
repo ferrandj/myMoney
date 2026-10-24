@@ -97,6 +97,21 @@ def parse_date(raw: str | None, default_year: int | None = None) -> date | None:
     return None
 
 
+_FRENCH_DATE = re.compile(r"(\d{1,2})(?:er)?\s+([^\W\d_]+)\.?\s+(\d{4})")
+
+
+def french_date(text: str | None) -> date | None:
+    """"31 AOÛT 2026", "1er janvier 2026": the first long French date found in the text."""
+    for m in _FRENCH_DATE.finditer(text or ""):
+        month = _MONTHS.get(strip_accents(m.group(2).lower()))
+        if month:
+            try:
+                return date(int(m.group(3)), month, int(m.group(1)))
+            except ValueError:
+                return None
+    return None
+
+
 _IBAN = re.compile(r"\b([A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,3})?)\b")
 
 

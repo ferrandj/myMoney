@@ -131,7 +131,7 @@ def test_a_statement_that_does_not_add_up_is_flagged():
 def test_other_documents_do_not_trigger_this_adapter():
     from .test_adapters_generic import _pdf
 
-    rows = [[(10, "FORTUNEO - Releve de compte courant")], [(10, "Date"), (30, "Libelle"), (140, "Debit"), (175, "Credit")]]
+    rows = [[(10, "BFORBANK - Releve de compte courant")], [(10, "Date"), (30, "Libelle"), (140, "Debit"), (175, "Credit")]]
     found = identify(SourceDocument("releve.pdf", _pdf(rows)))
     assert found.decision == "fallback"
     assert all(c.adapter.id != ADAPTER or c.score < 0.4 for c in found.candidates)

@@ -19,6 +19,8 @@ from decimal import Decimal
 from .. import pdftools
 from ..base import Adapter, ParsedStatement, SourceDocument, TransactionData
 from ..common import name_key, norm, parse_amount, parse_date
+from ..lines import describe, is_own, join_wrapped
+from ..lines import label as make_label
 
 DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 AMOUNT_RE = re.compile(r"^\d{1,3}(?:\.\d{3})*,\d{2}$|^\d+,\d{2}$")
@@ -27,11 +29,8 @@ REF_RE = re.compile(r"^R[^\W\d_]f\s*:?\s*(\S.*)$")  # "Réf : X", "Rèf : X", "R
 RUM_RE = re.compile(r"^RUM\s+(\S.*)$")
 CARD_RE = re.compile(r"^CARTE\s+(\d{2}/\d{2}/\d{2})\s+(.*?)(?:\s+CB\*(\d{4}))?\s*$")
 STREET_WORDS = {"rue", "avenue", "av", "bd", "boulevard", "chemin", "route", "impasse", "allee", "place", "quai", "residence", "lieu", "cours", "passage", "square"}
-# Words that show a transfer goes to / comes from one of the holder's own products rather than a person.
-OWN_PRODUCT_WORDS = {"livret", "epargne", "pel", "pea", "ldds", "ldd", "lep", "cel", "compte", "assurance"}
 DEFAULT_BOUNDARY = 486.0
 HOLDER_CUT = 28
-WRAP_WIDTH = 32  # a label line at least this long was probably wrapped by the bank, even in the middle of a word
 
 
 @dataclass
@@ -195,40 +194,6 @@ def _split_reference(lines: list[str]) -> tuple[list[str], str | None, str | Non
     return other, ref, rum
 
 
-def _describe(lines: list[str]) -> str | None:
-    """The line that says what the operation is for: not an identifier (long digit runs), and made of real words."""
-    for line in lines:
-        words = line.split()
-        if not any(re.search(r"\d{6,}", w) for w in words) and any(len(w) >= 3 and w.isalpha() for w in words):
-            return line
-    return lines[0] if lines else None
-
-
-def _join_wrapped(lines: list[str]) -> str:
-    """Join detail lines; a short lowercase fragment under a full-width line is the end of a word the bank cut ("Mathi" + "eu")."""
-    text, previous = "", ""
-    for line in (l.strip() for l in lines):
-        if not line:
-            continue
-        glued = bool(text) and len(previous) >= WRAP_WIDTH and " " not in line and line.islower() and len(line) <= 4
-        text = f"{text}{line}" if glued else f"{text} {line}".strip()
-        previous = line
-    return text
-
-
-def _label(primary: str | None, secondary: str | None) -> str:
-    parts = [p.strip() for p in (primary, secondary) if p and p.strip()]
-    return " — ".join(parts)[:300]
-
-
-def _is_own(name: str | None, holder_key: str | None) -> bool:
-    if not name:
-        return False
-    if holder_key and name_key(name) == holder_key:
-        return True
-    return bool(OWN_PRODUCT_WORDS & set(norm(name).split()))
-
-
 def _to_transaction(e: _Entry, currency: str, holder_key: str | None) -> TransactionData:
     raw = " | ".join([e.first, *e.cont])
     details: dict = {}
@@ -246,30 +211,30 @@ def _to_transaction(e: _Entry, currency: str, holder_key: str | None) -> Transac
         bought = parse_date(m.group(1))
         details.update(purchase_date=bought.isoformat() if bought else None, card_last4=m.group(3))
         memo = " ".join(others) or None
-        label = _label(counterparty, memo)
+        label = make_label(counterparty, memo)
     elif upper.startswith("PRLV"):
         kind = "direct_debit"
         counterparty = re.sub(r"^PRLV(\s+SEPA)?\s*", "", first, flags=re.I).strip() or None
         memo, reference = " ".join(others) or None, ref
         details["rum"] = rum
-        label = _label(counterparty, _describe(others))
+        label = make_label(counterparty, describe(others))
     elif m := re.match(r"^VIR\s+(SEPA|INST)\b\s*(.*)$", first, flags=re.I):
         kind = "instant_transfer" if m.group(1).upper() == "INST" else "transfer"
         counterparty = m.group(2).strip() or None
         memo, reference = " ".join(others) or None, ref
-        label = _label(counterparty or "Virement", _describe(others))
+        label = make_label(counterparty or "Virement", describe(others))
     elif upper.startswith("VIR"):
         # Transfers between Boursorama accounts: the first line is the reason, the last line the other party.
         kind, reference = "transfer", ref
         reason = first[3:].strip()
         if others:
             counterparty = others[-1]
-            memo = _join_wrapped([reason, *others[:-1]]) or None
+            memo = join_wrapped([reason, *others[:-1]]) or None
         elif reason and (reason.isupper() or (holder_key and name_key(reason) == holder_key)):
             counterparty = reason  # savings statements: "VIR <NAME>" with nothing below, the name is the other party
         else:
             memo = reason or None
-        label = _label(memo or "Virement", counterparty)
+        label = make_label(memo or "Virement", counterparty)
     elif m := re.match(r"^ECH\s+PRET\s*:?\s*(\S+)", first, flags=re.I):
         kind = "loan_payment"
         details["loan_number"] = m.group(1)
@@ -279,17 +244,17 @@ def _to_transaction(e: _Entry, currency: str, holder_key: str | None) -> Transac
     elif re.match(r"^(INT[EÉ]R[EÊ]TS?|CAPITALISATION)\b", first, flags=re.I):
         kind = "interest"
         memo = " ".join(others) or None
-        label = _label(first, memo)
+        label = make_label(first, memo)
     elif re.match(r"^\*?COTIS", first, flags=re.I):
         kind = "fee"
         memo = " ".join(others) or None
-        label = _label(first.lstrip("*"), memo)
+        label = make_label(first.lstrip("*"), memo)
     else:
         memo = " ".join(others) or None
-        label = _label(first, memo)
+        label = make_label(first, memo)
         reference = ref
 
-    if _is_own(counterparty, holder_key) and kind in ("transfer", "instant_transfer"):
+    if is_own(counterparty, holder_key) and kind in ("transfer", "instant_transfer"):
         details["internal"] = True
     external_id = ref if ref and ref.startswith("SCT") else None
     return TransactionData(
