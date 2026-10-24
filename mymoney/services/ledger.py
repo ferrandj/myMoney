@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..adapters.base import TransactionData
+from ..adapters.common import name_key
 from ..models import Account, Snapshot, Transaction
 
 
@@ -68,6 +69,67 @@ def classify(session: Session, account_id: int | None, transactions: list[Transa
         else:
             result.new.append((t, fp))
     return result
+
+
+_JOINT = re.compile(r"\s+(?:OU|ET)\s+", re.I)
+TRANSFER_KINDS = ("transfer", "instant_transfer")
+
+
+def own_name_keys(session: Session) -> set[str]:
+    """Names that stand for the user: the holder of an account held alone, and the holder line of every account as the
+    bank prints it (a transfer to the joint account shows that line, even cut)."""
+    keys: set[str] = set()
+    for holder, alias in session.execute(select(Account.holder_name, Account.holder_alias)):
+        if holder and len(_JOINT.split(holder)) == 1:
+            keys.add(name_key(holder))
+        if alias:
+            keys.add(name_key(alias))
+    return keys
+
+
+def mark_internal(session: Session) -> int:
+    """Flag the transfers whose other party is the user (their other accounts): they are not income nor spending."""
+    keys = own_name_keys(session)
+    if not keys:
+        return 0
+    marked = 0
+    for t in session.scalars(select(Transaction).where(Transaction.kind.in_(TRANSFER_KINDS), Transaction.counterparty_name.is_not(None))):
+        if not t.internal and name_key(t.counterparty_name) in keys:
+            t.details = {**(t.details or {}), "internal": True}
+            marked += 1
+    session.flush()
+    return marked
+
+
+def pair_transfers(session: Session) -> int:
+    """Match a transfer leaving one account with the one arriving on another account the same day (or the day after).
+
+    Names are unreliable (a statement may print the other account's label, or the holder who ordered the transfer), but an
+    opposite amount on two of the user's accounts on the same day is not: both lines are then "between my own accounts".
+    """
+    from collections import defaultdict
+
+    pool = [t for t in session.scalars(select(Transaction).where(Transaction.kind.in_(TRANSFER_KINDS)).order_by(Transaction.date, Transaction.id))
+            if not (t.details or {}).get("paired_with")]
+    by_amount: dict[Decimal, list[Transaction]] = defaultdict(list)
+    for t in pool:
+        by_amount[Decimal(t.amount)].append(t)
+    paired = 0
+    for t in pool:
+        if (t.details or {}).get("paired_with") or t.amount >= 0:
+            continue
+        candidates = [
+            c for c in by_amount.get(-Decimal(t.amount), [])
+            if c.account_id != t.account_id and abs((c.date - t.date).days) <= 1 and not (c.details or {}).get("paired_with")
+        ]
+        if not candidates:
+            continue
+        other = min(candidates, key=lambda c: (abs((c.date - t.date).days), c.id))
+        t.details = {**(t.details or {}), "internal": True, "paired_with": other.id}
+        other.details = {**(other.details or {}), "internal": True, "paired_with": t.id}
+        paired += 1
+    session.flush()
+    return paired
 
 
 def store(

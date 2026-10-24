@@ -29,6 +29,8 @@ class ImportPlan:
     overlaps: list[Statement] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)  # consistency problems with the neighbouring statements
     newer_balance: bool = True  # this statement ends after the balance currently stored
+    # The holder line looks cut by the bank and the full names were never given: ask once, before importing.
+    ask_holder: bool = False
 
     def statuses(self) -> list[str]:
         """For each line of the statement: new | exact (already stored) | probable (same day and amount as a stored line)."""
@@ -49,6 +51,7 @@ class ImportPlan:
             and not self.overlaps
             and self.already_imported is None
             and not self.classified.probable
+            and not self.ask_holder
         )
 
 
@@ -79,6 +82,7 @@ def plan_import(session: Session, st: ParsedStatement, account: Account | None) 
     candidates = find_accounts(session, st)
     classified = ledger.classify(session, account.id if account else None, st.transactions)
     plan = ImportPlan(st, account, candidates, classified, None)
+    plan.ask_holder = _holder_unconfirmed(st, account)
     if account is None:
         return plan
     existing = list(session.scalars(select(Statement).where(Statement.account_id == account.id).order_by(Statement.period_start)))
@@ -94,6 +98,13 @@ def plan_import(session: Session, st: ParsedStatement, account: Account | None) 
     if st.balance is not None and account.balance_date is not None and st.balance_date is not None:
         plan.newer_balance = st.balance_date >= account.balance_date.date()
     return plan
+
+
+def _holder_unconfirmed(st: ParsedStatement, account: Account | None) -> bool:
+    if not st.extra.get("holder_maybe_truncated"):
+        return False
+    # Once the user has typed the full names they differ from what the bank prints: never ask again for this account.
+    return account is None or not account.holder_name or account.holder_name == (account.holder_alias or st.holder_name)
 
 
 def _continuity(st: ParsedStatement, existing: list[Statement]) -> list[str]:
@@ -135,10 +146,14 @@ def _fill_identity(account: Account, st: ParsedStatement, latest: bool) -> None:
         value = getattr(st, attr)
         if value and not getattr(account, attr):
             setattr(account, attr, value)
-    # Holder and address change over time: the newest statement wins, older ones only fill the blanks.
+    if st.holder_name and not account.holder_alias:
+        account.holder_alias = st.holder_name
+    # Holder and address change over time: the newest statement wins, older ones only fill the blanks. Names the user
+    # completed by hand (different from the printed line) are never overwritten by the cut version of the bank.
+    edited = bool(account.holder_name and account.holder_alias and account.holder_name != account.holder_alias)
     for attr in ("holder_name", "holder_address"):
         value = getattr(st, attr)
-        if value and (latest or not getattr(account, attr)):
+        if value and (latest or not getattr(account, attr)) and not (attr == "holder_name" and edited):
             setattr(account, attr, value)
 
 
@@ -168,6 +183,9 @@ def import_statement(session: Session, doc: Document, st: ParsedStatement, form:
 
     latest = not any(s.period_end and st.period_end and s.period_end > st.period_end for s in account.statements)
     _fill_identity(account, st, latest)
+    full_names = " ".join((form.get("holder_name") or "").split())
+    if full_names:  # the user completed the names the bank cut
+        account.holder_name = full_names
 
     balance = _decimal(form.get("balance"))
     if form.get("update_balance") == "on" and balance is not None:
@@ -201,15 +219,23 @@ def import_statement(session: Session, doc: Document, st: ParsedStatement, form:
     doc.status = "imported"
     doc.account_id = account.id
     session.flush()
+    ledger.mark_internal(session)  # a new account (or new names) can turn earlier transfers into "between my own accounts"
+    ledger.pair_transfers(session)
     return {"account_id": account.id, "added": added, "skipped_exact": skipped_exact, "skipped_probable": skipped_probable}
 
 
 def undo_import(session: Session, doc: Document) -> int:
     """Remove what a document brought in (its operations and statement records). The document itself stays."""
+    gone = set(session.scalars(select(Transaction.id).where(Transaction.document_id == doc.id)))
+    for t in session.scalars(select(Transaction).where(Transaction.kind.in_(ledger.TRANSFER_KINDS))):
+        if (t.details or {}).get("paired_with") in gone:  # its other half is leaving: this line is free again
+            t.details = {k: v for k, v in t.details.items() if k not in ("paired_with", "internal")} or None
     removed = session.execute(delete(Transaction).where(Transaction.document_id == doc.id)).rowcount or 0
     session.execute(delete(Statement).where(Statement.document_id == doc.id))
     doc.status = "parsed" if (doc.parse_result or {}).get("statements") else "uploaded"
     doc.account_id = None
+    session.flush()
+    ledger.mark_internal(session)  # a line can still be internal by its name
     return removed
 
 

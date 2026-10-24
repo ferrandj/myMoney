@@ -11,7 +11,8 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
   - les **doublons sont signalés** : même fichier déposé deux fois, même relevé retéléchargé, relevés qui se chevauchent, opérations « probablement identiques » venues d'une autre source. Rien n'est ajouté deux fois, et tu vois ce qui a été ignoré ;
   - un import peut être **annulé** (les opérations qu'il a apportées sont retirées).
 - **Identité des comptes** lue dans les documents : titulaire, adresse, IBAN, BIC, RIB (banque, guichet, compte, clé), vérifiés (clé RIB, IBAN).
-- **Contacts** : à qui va l'argent, d'où il vient. Tu nommes une fois un IBAN ou un nom imprimé par la banque (avec un téléphone, des notes…) ; l'application le retient et le reconnaît dans tous les imports suivants, quelle que soit l'orthographe (« DUPONT Jean », « M Jean Dupont »). Les virements entre tes propres comptes sont repérés.
+- **Contacts** : à qui va l'argent, d'où il vient. Tu nommes une fois un IBAN ou un nom imprimé par la banque (avec un téléphone, des notes…) ; l'application le retient et le reconnaît dans tous les imports suivants, quelle que soit l'orthographe (« DUPONT Jean », « M Jean Dupont »). Les virements entre tes propres comptes sont repérés (par ton nom, et en appariant un montant opposé le même jour sur deux de tes comptes) : ils ne comptent ni comme revenu ni comme dépense dans les analyses.
+- **Comptes joints** : la banque coupe le nom du titulaire (« M DUPONT OU MME LEROY CLAIR… ») ; l'application te demande les noms complets une seule fois, les garde, et reconnaît quand même le nom coupé dans les relevés de tes autres comptes.
 - **Documents originaux conservés chiffrés** (illisibles sur le disque) et **téléchargeables** depuis l'application.
 - **Analyses** (onglet dédié, graphiques SVG générés sur le NAS, sans bibliothèque externe) :
   - *Évolution* : courbe du patrimoine, au total, par compte ou par catégorie, sur 1, 3, 6 mois, 1 an ou tout l'historique. L'historique de chaque compte est reconstitué à partir du solde des relevés et des opérations importées ;
@@ -27,7 +28,7 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 
 | Établissement | Adapter | Document |
 |---|---|---|
-| BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » (relevé mensuel du compte courant, avec RIB et IBAN) |
+| BoursoBank | `boursobank.statement_pdf` | PDF « Extrait de votre compte en EUR » : compte courant, compte joint, LDDS et autres livrets (même mise en page, avec RIB et IBAN ; le type du compte est lu sur la ligne « Compte d'épargne : … ») |
 | BoursoBank | `boursobank.savings_pdf` | PDF « Extrait de votre Plan Epargne Logement » (épargne : numéro de compte, sans RIB ni IBAN ; validé sur un PEL) |
 | Revolut | `revolut.statement_csv` | export CSV d'un compte |
 | tous | `generic.ofx`, `generic.qif` | fichiers OFX / QFX et QIF |
