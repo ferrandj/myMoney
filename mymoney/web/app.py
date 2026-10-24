@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -131,6 +132,8 @@ def frdate(value) -> str:
         return value.strftime("%d/%m/%Y %H:%M")
     if isinstance(value, date):
         return value.strftime("%d/%m/%Y")
+    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):  # a date kept as text in a document's details
+        return f"{value[8:]}/{value[5:7]}/{value[:4]}"
     return str(value)
 
 
@@ -187,7 +190,8 @@ def document_tree(documents: list) -> list[dict]:
     banks: dict[str, dict[str, list]] = {}
     for d in documents:
         institution = (d.parse_result or {}).get("institution") or "Autres documents"
-        kind = DOC_KINDS.get(d.kind, "Document") if d.adapter_id else "Non reconnu"
+        category = next((st.get("extra", {}).get("category") for st in (d.parse_result or {}).get("statements", []) if st.get("extra")), None)
+        kind = category or DOC_KINDS.get(d.kind, "Document") if d.adapter_id else "Non reconnu"
         banks.setdefault(institution, {}).setdefault(kind, []).append(d)
 
     def when(d) -> date:

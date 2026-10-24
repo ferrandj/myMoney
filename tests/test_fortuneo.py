@@ -17,7 +17,7 @@ from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures import Entry, Spec, boursobank_statement_pdf
 from .fixtures_fortuneo import (
     F_ACCOUNT, F_ADDRESS, F_BANK, F_BRANCH, F_HOLDER, F_IBAN, FeesSpec, FEntry, FSpec, fortuneo_entries, fortuneo_fees_pdf,
-    fortuneo_info_pdf, fortuneo_september, fortuneo_statement_pdf,
+    fortuneo_arbitrage_pdf, fortuneo_info_pdf, fortuneo_september, fortuneo_statement_pdf,
 )
 
 D = Decimal
@@ -419,3 +419,44 @@ def test_amounts_with_a_thousands_space_are_read_whole():
     assert st.balance == spec.closing
     assert st.extra["declared_totals"] == {"debit": "1000.50", "credit": "3234.56"}
     assert not st.warnings and st.confidence == "high"
+
+
+def test_life_insurance_arbitrage_is_read_and_filed():
+    found, parsed = parse(fortuneo_arbitrage_pdf())
+    assert found.decision == "auto" and found.chosen.adapter.id == "fortuneo.life_arbitrage_pdf"
+    st = parsed[0]
+    assert st.document_kind == "info" and st.institution == "Fortuneo" and st.confidence == "high" and not st.warnings
+    assert st.balance_date == date(2026, 9, 21) and st.extra["arbitrage_date"] == "2026-09-16"
+    assert (st.extra["gross"], st.extra["fees"], st.extra["net"]) == ("100.00", "0.00", "100.00")
+    assert st.extra["contract"] == "FORTUNEO VIE" and st.extra["contract_number"] == "000123456789012345"
+    assert [f["isin"] for f in st.extra["sold"]] == ["FR0000000001", "LU0000000002"]
+    assert [f["isin"] for f in st.extra["bought"]] == [None, "IE0000000003"]
+    assert sum(Decimal(f["amount"]) for f in st.extra["bought"]) == Decimal("100.00")
+
+
+def test_life_insurance_arbitrage_that_does_not_add_up_is_flagged():
+    _, parsed = parse(fortuneo_arbitrage_pdf(bought_total="70,00"))
+    st = parsed[0]
+    assert st.confidence == "medium" and any("achetés" in w for w in st.warnings)
+
+
+def test_web_the_arbitrage_is_filed_under_life_insurance(client):
+    csrf = login(client)
+    page = upload(client, csrf, "arbitrage.pdf", fortuneo_arbitrage_pdf())
+    assert "classé" in page.text.lower() or "Classé" in page.text
+    docs = client.get("/documents")
+    assert "Assurance-vie" in docs.text
+    doc = re.search(r"/documents/(\d+)", str(page.url)).group(1)
+    review = client.get(f"/documents/{doc}")
+    assert "Fonds vendus" in review.text and "FR0000000001" in review.text and "16/09/2026" in review.text
+
+
+def test_a_first_statement_covering_a_whole_year_keeps_all_its_operations():
+    D = Decimal
+    entries = [FEntry(date(2026, m, 3), ["VIR Virement avec Fortuneo Livre"], D("25.00")) for m in (1, 3, 6, 9)]
+    entries.append(FEntry(date(2026, 12, 31), ["INTERETS 2026"], D("1.12"), value_day=date(2027, 1, 1)))
+    spec = FSpec(entries, opening=D("0.00"), period_end=date(2026, 12, 31), first=True, livret=True)
+    _, parsed = parse(fortuneo_statement_pdf(spec))
+    st = parsed[0]
+    assert len(st.transactions) == 5 and not st.warnings and st.confidence == "high"
+    assert (st.period_start, st.period_end) == (date(2026, 1, 1), date(2026, 12, 31))
