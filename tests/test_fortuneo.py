@@ -460,3 +460,45 @@ def test_a_first_statement_covering_a_whole_year_keeps_all_its_operations():
     st = parsed[0]
     assert len(st.transactions) == 5 and not st.warnings and st.confidence == "high"
     assert (st.period_start, st.period_end) == (date(2026, 1, 1), date(2026, 12, 31))
+
+
+def test_web_an_imported_document_does_not_warn_about_being_imported_twice(client):
+    csrf = login(client)
+    page = upload(client, csrf, "releve.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    doc = re.search(r"/documents/(\d+)", str(page.url)).group(1)
+    client.post(f"/documents/{doc}/import/0", data={"csrf": csrf, "account_id": "new", "name": "Compte", "import_transactions": "on"})
+    review = client.get(f"/documents/{doc}")
+    assert "Relevé déjà importé" not in review.text and "doublon(s) exact(s)" not in review.text
+    assert "Valider l'import" not in review.text
+    assert "Importé" in review.text and "Invalider l'import" in review.text
+
+
+def test_web_rebuild_cancels_every_import_and_reads_the_files_again(client):
+    csrf = login(client)
+    D = Decimal
+    upload(client, csrf, "septembre.pdf", fortuneo_statement_pdf(fortuneo_september()))
+    upload(client, csrf, "frais.pdf", fortuneo_fees_pdf(FeesSpec()))
+    client.post("/documents/validate-all", data={"csrf": csrf})
+    # October does not pick up where September ended: imported by hand, it will not pass the checks a second time.
+    october = FSpec(
+        [FEntry(date(2026, 10, 5), ["VIR M MARTIN PAUL"], D("10.00"))], opening=D("999.00"), period_end=date(2026, 10, 31),
+        number="10 - 2026", title="octobre",
+    )
+    page = upload(client, csrf, "octobre.pdf", fortuneo_statement_pdf(october))
+    doc = re.search(r"/documents/(\d+)", str(page.url)).group(1)
+    client.post(f"/documents/{doc}/import/0", data={"csrf": csrf, "account_id": "1", "import_transactions": "on"})
+    with client.core.db.session() as s:
+        before = len(list(s.scalars(select(Transaction))))
+        assert before == len(fortuneo_entries()) + 1
+
+    assert "Tout relire depuis les fichiers" in client.get("/documents").text
+    result = client.post("/documents/rebuild", data={"csrf": csrf})
+    assert "2</strong> document(s) sur 3" in result.text
+    assert "octobre.pdf" in result.text and "pas</strong> été validés" in result.text
+    with client.core.db.session() as s:
+        assert len(list(s.scalars(select(Account)))) == 1  # the account keeps existing
+        assert len(list(s.scalars(select(Transaction)))) == len(fortuneo_entries())  # October is not back
+        assert s.scalar(select(FeeSummary)) is not None
+        october_doc = s.scalar(select(Document).where(Document.filename == "octobre.pdf"))
+        assert october_doc.status == "parsed"
+    assert "octobre.pdf" in client.get("/documents").text and "À regarder" in client.get("/documents").text

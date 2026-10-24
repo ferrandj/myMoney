@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Relecture des documents{% endblock %}
+{% block content %}
+<p><a href="/documents">← Documents</a></p>
+<h1>Relecture des documents</h1>
+<section class="card">
+  <p><strong>{{ outcome.validated }}</strong> document(s) sur {{ outcome.total }} relus et revalidés avec les contrôles actuels.</p>
+  {% if outcome.left %}
+  <p class="warn"><strong>{{ outcome.left|length }}</strong> ne passent plus tout seuls : ils n'ont <strong>pas</strong> été validés. Ouvre-les un par un pour décider.</p>
+  <div class="table-wrap"><table>
+    {% for d in outcome.left %}<tr><td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a></td><td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td><td class="small">{{ d.reason }}</td></tr>{% endfor %}
+  </table></div>
+  <div class="actions"><a class="btn primary" href="/documents/review">Passer en revue un par un</a> <a class="btn" href="/documents#a-valider">Voir la liste</a></div>
+  {% else %}
+  <p class="ok">✓ Tout a été relu et revalidé : aucun document ne demande ton attention.</p>
+  <div class="actions"><a class="btn" href="/documents">Retour aux documents</a></div>
+  {% endif %}
+</section>
+{% endblock %}
