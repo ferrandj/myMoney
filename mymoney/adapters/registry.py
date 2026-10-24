@@ -16,6 +16,7 @@ from .boursobank.statement_pdf import BoursoBankStatementPdf
 from .common import find_iban, find_institution
 from .fortuneo.deposit_guarantee_pdf import FortuneoDepositGuaranteePdf
 from .fortuneo.fees_pdf import FortuneoFeesPdf
+from .fortuneo.life_arbitrage_pdf import FortuneoLifeArbitragePdf
 from .fortuneo.loan_offer_pdf import FortuneoLoanOfferPdf
 from .fortuneo.loan_prepayment_pdf import FortuneoLoanPrepaymentPdf
 from .fortuneo.loan_schedule_pdf import FortuneoLoanSchedulePdf
@@ -32,6 +33,7 @@ ADAPTERS: list[type[Adapter]] = [
     FortuneoStatementPdf,
     FortuneoFeesPdf,
     FortuneoDepositGuaranteePdf,
+    FortuneoLifeArbitragePdf,
     FortuneoLoanOfferPdf,
     FortuneoLoanSchedulePdf,
     FortuneoLoanPrepaymentPdf,

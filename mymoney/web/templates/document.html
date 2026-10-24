@@ -77,8 +77,18 @@
     {% if st.holder_name %}<dt>Destinataire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
     {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
     {% if st.extra.get('issued_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
+    {% if st.extra.get('contract') %}<dt>Contrat</dt><dd><span class="sensitive">{{ st.extra.contract }}{% if st.extra.get('contract_number') %} · n° {{ st.extra.contract_number }}{% endif %}</span></dd>{% endif %}
+    {% if st.extra.get('arbitrage_date') %}<dt>Arbitrage du</dt><dd>{{ st.extra.arbitrage_date|frdate }}</dd>{% endif %}
+    {% if st.extra.get('net') %}<dt>Montant arbitré</dt><dd>{{ st.extra.net|money }}{% if st.extra.get('fees') and st.extra.fees != '0.00' %} (frais : {{ st.extra.fees|money }}){% else %} (aucun frais){% endif %}</dd>{% endif %}
     {% if st.extra.get('ceiling') %}<dt>Plafond de la garantie</dt><dd>{{ st.extra.ceiling }} par déposant et par établissement</dd>{% endif %}
   </dl>
+  {% if st.warnings %}<ul class="checks">{% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}</ul>{% endif %}
+  {% for title, funds in (('Fonds vendus', st.extra.get('sold')), ('Fonds achetés', st.extra.get('bought'))) if funds %}
+  <h3>{{ title }}</h3>
+  <div class="table-wrap"><table>
+    {% for f in funds %}<tr><td><span class="sensitive">{{ f.fund }}</span>{% if f.isin %} <span class="muted small">{{ f.isin }}</span>{% endif %}</td><td class="nowrap small">{{ f.date|frdate }}</td><td class="num">{{ f.amount|money }}</td></tr>{% endfor %}
+  </table></div>
+  {% endfor %}
   <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable).</p>
   {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec tes papiers.</p>
   {% else %}

@@ -223,7 +223,16 @@ def _resolve(day: int, month: int, st: ParsedStatement) -> date | None:
     anchor = st.period_end or st.balance_date
     if anchor is None:
         return None
-    start = st.period_start or anchor - timedelta(days=31)
+    if st.period_start is None:  # first statement: nothing says when it begins, and it can cover a whole year
+        for year in (anchor.year, anchor.year - 1):
+            try:
+                candidate = date(year, month, day)
+            except ValueError:
+                continue
+            if candidate <= anchor + timedelta(days=7):
+                return candidate
+        return None
+    start = st.period_start
     for year in (anchor.year, anchor.year - 1, anchor.year + 1):
         try:
             candidate = date(year, month, day)
