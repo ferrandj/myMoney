@@ -410,8 +410,10 @@ def test_web_drop_review_import_then_next_month_automatically(client):
     auto = upload(client, csrf, boursobank_statement_pdf(october(spec)))
     assert "Importé automatiquement" in auto.text and "2 opération(s) ajoutée(s)" in auto.text
 
-    again = upload(client, csrf, boursobank_statement_pdf(october(spec)), "copie.pdf")  # another download of the same statement
-    assert "Relevé déjà importé" in again.text and "doublon(s) exact(s)" in again.text
+    same_bytes = upload(client, csrf, boursobank_statement_pdf(october(spec)), "copie.pdf")  # the very same file again
+    assert "strictement identique" in same_bytes.text
+    again = upload(client, csrf, boursobank_statement_pdf(october(spec, title="second download")), "copie.pdf")  # another download
+    assert "Doublon : aucune différence" in again.text
 
 
 def test_web_same_file_twice_and_download(client):
