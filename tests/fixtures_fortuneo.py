@@ -230,6 +230,14 @@ def fortuneo_fees_pdf(spec: FeesSpec) -> bytes:
             if cat != category:
                 _text(pdf, 40, y, cat)
                 category, y = cat, y + 13
+            if "\n" in name:  # a long name wraps above and below the row of figures
+                first, second = name.split("\n")
+                _text(pdf, 52, y, first)
+                y += 6.7
+                _text(pdf, 250, y, str(used)); _text(pdf, 320, y, unit); _text(pdf, 400, y, str(billed)); _text(pdf, 480, y, total)
+                _text(pdf, 52, y + 6.7, second)
+                y += 6.7 + 13
+                continue
             _text(pdf, 40, y, name)
             _text(pdf, 250, y, str(used)); _text(pdf, 320, y, unit); _text(pdf, 400, y, str(billed)); _text(pdf, 480, y, total)
             y += 13

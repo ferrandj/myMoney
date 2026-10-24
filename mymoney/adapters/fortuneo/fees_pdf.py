@@ -20,6 +20,7 @@ from ..lines import identity_warnings
 from ._identity import read_address_block, read_identity
 
 AMOUNT_RE = re.compile(r"^\d{1,3}(?:[ .]\d{3})*,\d{2}$|^\d+,\d{2}$")
+SIGNED_AMOUNT_RE = re.compile(r"^-?(?:\d{1,3}(?:[ .]\d{3})*|\d+),\d{2}$")  # a refund is a negative total in the list of services
 PERIOD_RE = re.compile(r"(?i)du\s+(\d{1,2})(?:er)?\s+([^\W\d_]+)\s+au\s+(\d{1,2})(?:er)?\s+([^\W\d_]+)\s+(\d{4})")
 
 
@@ -112,15 +113,34 @@ class FortuneoFeesPdf(Adapter):
         if start is None or end is None:
             st.extra["services"] = services
             return
-        for row, text in zip(rows[start + 1 : end], texts[start + 1 : end]):
-            numbers = [w for w in row if w["x0"] >= 220 and (AMOUNT_RE.match(w["text"]) or w["text"].isdigit())]
-            name = " ".join(w["text"] for w in row if w["x0"] < 220).strip()
+        body = rows[start + 1 : end]
+        parsed = []
+        for row in body:
+            numbers = [w for w in row if w["x0"] >= 220 and (SIGNED_AMOUNT_RE.match(w["text"]) or w["text"].isdigit())]
+            parsed.append((numbers, " ".join(w["text"] for w in row if w["x0"] < 220).strip(), row[0]["top"]))
+
+        def beside(i: int) -> bool:
+            """Is the row i a piece of a long service name, printed just above or below the row that holds the numbers?"""
+            numbers, name, top = parsed[i]
+            if numbers or not name:
+                return False
+            return any(
+                0 <= j < len(parsed) and len(parsed[j][0]) >= 4 and not parsed[j][1] and abs(parsed[j][2] - top) < 12 for j in (i - 1, i + 1)
+            )
+
+        for i, row in enumerate(body):
+            numbers, name, top = parsed[i]
+            if len(numbers) >= 4 and not name:  # "REMBOURSEMENT(S)" / numbers / "EXCEPTIONNEL(S)": the name wraps around the figures
+                parts = [parsed[j][1] for j in (i - 1, i + 1) if 0 <= j < len(parsed) and beside(j) and abs(parsed[j][2] - top) < 12]
+                name = " ".join(parts)
             if len(numbers) >= 4 and name:
                 used, unit, billed, total = (n["text"] for n in numbers[:4])
                 services.append({
                     "category": category, "name": name, "used": int(used), "unit_price": str(parse_amount(unit)),
                     "billed": int(billed), "total": str(parse_amount(total)),
                 })
+            elif beside(i):
+                continue
             elif name and not numbers and norm(name) not in ("service", "frais") and len(row) <= 6 and row[0]["x0"] < 60:
                 category = name
         st.extra["services"] = services

@@ -602,3 +602,17 @@ def test_a_home_loan_payment_line_is_a_loan_payment():
     [t] = st.transactions
     assert t.kind == "loan_payment" and t.amount == D("-1931.81") and t.details["loan_number"] == "0000TEST00000001"
     assert not st.warnings
+
+
+def test_fees_summary_with_a_refund_whose_name_wraps_around_its_figures():
+    spec = FeesSpec(
+        total=Decimal("9.00"),
+        services=[
+            ("Cartes et espèces", "INACTIVITE CARTE EXEMPLE", 2, "9,00", 2, "18,00"),
+            ("Cartes et espèces", "REMBOURSEMENT(S)\nEXCEPTIONNEL(S)", 1, "9,00", 1, "-9,00"),
+        ],
+    )
+    _, [st] = parse(fortuneo_fees_pdf(spec))
+    assert [(s["name"], s["total"]) for s in st.extra["services"]] == [("INACTIVITE CARTE EXEMPLE", "18.00"), ("REMBOURSEMENT(S) EXCEPTIONNEL(S)", "-9.00")]
+    assert st.extra["fees_total"] == "9.00" and not st.warnings and st.confidence == "high"
+    assert [s["category"] for s in st.extra["services"]] == ["Cartes et espèces"] * 2
