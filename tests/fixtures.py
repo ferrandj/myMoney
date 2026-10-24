@@ -56,10 +56,16 @@ class Spec:
     garble: bool = False  # mimic fonts whose accents come out as other glyphs when the text is extracted
     wrong_closing: Decimal | None = None  # a closing balance that does not match, to test the consistency check
     title: str = ""  # document metadata only: gives the same statement a different file hash
+    product: str = ""  # savings accounts print "Compte d'épargne : <product>" under the title
 
     @property
     def closing(self) -> Decimal:
         return self.opening + sum((e.amount for e in self.entries), Decimal(0))
+
+
+# A joint account: the bank cuts the holder line at about 29 characters, and the address has a second line.
+JOINT_HOLDER = ["M DUPONT OU MME LEROY CLAIRE"]
+JOINT_ADDRESS = ["12 RUE DES LILAS", "BAT B APPT 12", "75011 PARIS"]
 
 
 def fr(amount: Decimal) -> str:
@@ -102,6 +108,8 @@ def boursobank_statement_pdf(spec: Spec) -> bytes:
             txt(320, 40, "Extrait de votre compte en EUR")
             txt(320, 52, "(Protégé par la Garantie des Dépôts www.garantiedesdepots.fr)")
             txt(322, 62, "BOURSOBANK")
+            if spec.product:
+                txt(320, 74, f"Compte d'épargne : {spec.product}")
             y = 198.0
             for line in [*spec.holder, *spec.address]:
                 txt(320, y, line)

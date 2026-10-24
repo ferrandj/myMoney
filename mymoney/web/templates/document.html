@@ -73,6 +73,7 @@
     {% for o in plan.overlaps %}<li class="bad">⚠ Chevauche un relevé déjà importé ({{ o.period_start|frdate }} → {{ o.period_end|frdate }}) : les opérations en double seront ignorées.</li>{% endfor %}
     {% if plan.classified.exact %}<li class="bad">⚠ <strong>{{ plan.classified.exact|length }} doublon(s) exact(s)</strong> : opérations déjà présentes dans le compte, elles seront ignorées.</li>{% endif %}
     {% if plan.classified.probable %}<li class="bad">⚠ <strong>{{ plan.classified.probable|length }} doublon(s) probable(s)</strong> : même jour et même montant qu'une opération déjà présente, mais un libellé différent (autre source). Ignorés par défaut, tu peux les importer quand même ci-dessous.</li>{% endif %}
+    {% if plan.ask_holder %}<li class="bad">⚠ <strong>Nom du titulaire coupé par la banque</strong> (« {{ st.holder_name }} ») : indique les noms complets ci-dessous, une seule fois.</li>{% endif %}
     {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre à ce relevé : choisis le bon ci-dessous.</li>{% endif %}
     {% if not st.warnings and not plan.issues and not plan.already_imported and not plan.overlaps and not plan.classified.exact and not plan.classified.probable %}<li class="ok">✓ Aucun doublon, aucune incohérence détectée avec les relevés déjà importés.</li>{% endif %}
   </ul>
@@ -85,6 +86,13 @@
         {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}{% if a.holder_name %} · {{ a.holder_name }}{% endif %}</option>{% endfor %}
       </select>
     </label>
+    {% if plan.ask_holder %}
+    <fieldset class="ask-names">
+      <legend>Noms complets des titulaires</legend>
+      <label>Titulaire(s) <input name="holder_name" value="{{ st.holder_name }}" required autocomplete="off">
+        <small>Sur ce document la banque tronque le nom (« {{ st.holder_name }} »). Écris-le en entier, par exemple « M PRÉNOM NOM OU MME PRÉNOM NOM ». Il sert à reconnaître tes virements entre comptes et n'est demandé qu'une fois.</small></label>
+    </fieldset>
+    {% endif %}
     <fieldset class="new-account">
       <legend>Nouveau compte</legend>
       <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>

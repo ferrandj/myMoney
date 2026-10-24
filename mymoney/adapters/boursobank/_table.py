@@ -30,6 +30,8 @@ STREET_WORDS = {"rue", "avenue", "av", "bd", "boulevard", "chemin", "route", "im
 # Words that show a transfer goes to / comes from one of the holder's own products rather than a person.
 OWN_PRODUCT_WORDS = {"livret", "epargne", "pel", "pea", "ldds", "ldd", "lep", "cel", "compte", "assurance"}
 DEFAULT_BOUNDARY = 486.0
+HOLDER_CUT = 28
+WRAP_WIDTH = 32  # a label line at least this long was probably wrapped by the bank, even in the middle of a word
 
 
 @dataclass
@@ -124,6 +126,9 @@ class BoursoBankTablePdf(Adapter):
         start = next((i for i, t in enumerate(block) if i > 0 and (t[0].isdigit() or STREET_WORDS & set(norm(t).split()))), max(len(block) - 2, 1))
         st.holder_name = " ".join(block[:start]) or None
         st.holder_address = "\n".join(block[start:]) or None
+        # The bank cuts the holder line at about 29 characters: such a line may be missing the end of a name.
+        if any(len(line) >= HOLDER_CUT for line in block[:start]):
+            st.extra["holder_maybe_truncated"] = True
 
     # ------------------------------------------------------------------------------------ consistency
     def _check(self, st: ParsedStatement, entries: list[_Entry]) -> None:
@@ -199,6 +204,18 @@ def _describe(lines: list[str]) -> str | None:
     return lines[0] if lines else None
 
 
+def _join_wrapped(lines: list[str]) -> str:
+    """Join detail lines; a short lowercase fragment under a full-width line is the end of a word the bank cut ("Mathi" + "eu")."""
+    text, previous = "", ""
+    for line in (l.strip() for l in lines):
+        if not line:
+            continue
+        glued = bool(text) and len(previous) >= WRAP_WIDTH and " " not in line and line.islower() and len(line) <= 4
+        text = f"{text}{line}" if glued else f"{text} {line}".strip()
+        previous = line
+    return text
+
+
 def _label(primary: str | None, secondary: str | None) -> str:
     parts = [p.strip() for p in (primary, secondary) if p and p.strip()]
     return " — ".join(parts)[:300]
@@ -247,7 +264,7 @@ def _to_transaction(e: _Entry, currency: str, holder_key: str | None) -> Transac
         reason = first[3:].strip()
         if others:
             counterparty = others[-1]
-            memo = " ".join([reason, *others[:-1]]).strip() or None
+            memo = _join_wrapped([reason, *others[:-1]]) or None
         elif reason and (reason.isupper() or (holder_key and name_key(reason) == holder_key)):
             counterparty = reason  # savings statements: "VIR <NAME>" with nothing below, the name is the other party
         else:

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 
+from ...services.rates import guess_account_type
 from ..base import Detection, ParsedStatement, SourceDocument
-from ..common import find_iban, iban_matches_rib, iban_valid, parse_date, rib_valid
+from ..common import find_iban, iban_matches_rib, iban_valid, norm, parse_date, rib_valid
 from ._table import PERIOD_RE, BoursoBankTablePdf
 
 RIB_ROW_RE = re.compile(r"\b(\d{5})\s+(\d{5})\s+([0-9A-Z]{11})\s+(\d{2})\s+([A-Z]{3})\b")
@@ -60,8 +61,15 @@ class BoursoBankStatementPdf(BoursoBankTablePdf):
             if "I.B.A.N" in text.upper() or "IBAN" in text.upper():
                 st.iban = find_iban(text) or st.iban
         self.read_holder(st, rows, texts)
+        # Savings accounts use the same layout, with one more line under the title: "Compte d'épargne : <product>".
+        product = next((t.split(":", 1)[1].strip() for t in texts if norm(t).startswith("compte d") and "pargne" in t and ":" in t), None)
+        if product:
+            st.extra["product"] = product
+            st.account_type = guess_account_type(product, "savings")
+        joint = bool(re.search(r"\b(OU|ET)\b", st.holder_name or ""))
         if st.account_number:
-            st.account_label = f"Compte BoursoBank …{st.account_number[-4:]}"
+            kind = product or ("Compte joint" if joint else "Compte")
+            st.account_label = f"{kind} BoursoBank …{st.account_number[-4:]}"
 
     def _check_identity(self, st: ParsedStatement) -> None:
         if st.iban and not iban_valid(st.iban):

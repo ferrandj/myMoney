@@ -7,7 +7,7 @@ from mymoney.adapters import SourceDocument, identify, parse_with
 from mymoney.adapters.common import iban_valid, name_key, rib_valid
 from mymoney.adapters.pdftools import fix_text
 
-from .fixtures import ACCOUNT, ADDRESS, BANK, BRANCH, IBAN, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, sample_entries
+from .fixtures import ACCOUNT, ADDRESS, BANK, BRANCH, IBAN, JOINT_ADDRESS, JOINT_HOLDER, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, sample_entries
 
 ADAPTER = "boursobank.statement_pdf"
 
@@ -206,3 +206,27 @@ def test_savings_debits_are_read_from_the_debit_column():
     st = parse_pel(spec)
     assert any(t.amount == Decimal("-500.00") for t in st.transactions)
     assert st.balance == spec.closing and st.confidence == "high"
+
+
+# --------------------------------------------------------------- savings account and joint account (same layout)
+def test_a_savings_account_in_the_current_account_layout_is_typed_from_its_product_line():
+    st = parse(Spec(sample_entries()[:3], product="Livret Developpement Durable Solidaire"))
+    assert st.account_type == "ldds" and st.extra["product"] == "Livret Developpement Durable Solidaire"
+    assert st.account_label == "Livret Developpement Durable Solidaire BoursoBank …5678"
+    assert st.holder_name == "M DUPONT JEAN" and st.holder_address == "\n".join(ADDRESS)  # the extra title line does not leak into them
+    assert st.iban == IBAN and st.confidence == "high"
+    assert parse(Spec(sample_entries()[:3])).account_type == "checking"
+
+
+def test_a_joint_account_is_labelled_and_its_cut_holder_line_is_flagged():
+    st = parse(Spec(sample_entries()[:3], holder=list(JOINT_HOLDER), address=list(JOINT_ADDRESS)))
+    assert st.holder_name == "M DUPONT OU MME LEROY CLAIRE" and st.extra["holder_maybe_truncated"] is True
+    assert st.holder_address == "12 RUE DES LILAS\nBAT B APPT 12\n75011 PARIS"  # the apartment line stays in the address
+    assert st.account_label == "Compte joint BoursoBank …5678" and st.account_type == "checking"
+    assert not parse(Spec(sample_entries()[:3])).extra.get("holder_maybe_truncated")
+
+
+def test_a_word_cut_by_the_bank_at_the_end_of_a_line_is_glued_back():
+    entry = Entry(date(2026, 9, 24), ["VIR Virement depuis BOURSORAMA Mathi", "eu", "DUPONT JEAN"], Decimal("50.00"))
+    [t] = parse(Spec([entry])).transactions
+    assert t.counterparty == "DUPONT JEAN" and t.memo == "Virement depuis BOURSORAMA Mathieu"

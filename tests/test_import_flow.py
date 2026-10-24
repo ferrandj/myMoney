@@ -15,7 +15,7 @@ from mymoney.services import counterparties
 from mymoney.web.app import create_app
 
 from .conftest import PASSWORD
-from .fixtures import ACCOUNT, BANK, BRANCH, IBAN, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, fake_iban, sample_entries
+from .fixtures import ACCOUNT, BANK, BRANCH, IBAN, JOINT_ADDRESS, JOINT_HOLDER, Entry, SavingsSpec, Spec, boursobank_savings_pdf, boursobank_statement_pdf, fake_iban, sample_entries
 
 D = Decimal
 
@@ -522,3 +522,79 @@ def test_a_savings_account_without_iban_is_recognised_by_its_account_number(core
     with core.db.session() as s:
         assert s.get(Account, result["account_id"]).balance == nxt.closing
         assert len(s.scalars(select(Account)).all()) == 2
+
+
+def test_joint_account_asks_for_the_full_names_once_and_recognises_transfers_between_my_accounts(core):
+    D_ = D
+    to_joint = Entry(date(2026, 9, 1), ["VIR Payer les factures", "M DUPONT OU MME LEROY CLAIRE"], D_("-50.00"))  # printed as the bank cuts it
+    to_partner = Entry(date(2026, 9, 2), ["VIR SEPA LEROY CLAIRE", "cadeau"], D_("-20.00"))
+    _, checking_id = first_import(core, Spec([to_joint, to_partner]))
+    assert not any(t.internal for t in transactions(core))  # the joint account is not known yet
+
+    joint = Spec(
+        [Entry(date(2026, 9, 1), ["VIR Payer les factures", "DUPONT JEAN"], D_("50.00")),
+         Entry(date(2026, 9, 3), ["VIR Virement depuis BoursoBank", "LEROY CLAIRE"], D_("200.00"))],
+        holder=list(JOINT_HOLDER), address=list(JOINT_ADDRESS), bank=BANK, branch="80999", account="00077777777",
+    )
+    doc_id, _, _ = drop(core, joint)
+    [plan] = core.review_document(doc_id)["plans"]
+    assert plan.account is None and plan.ask_holder and not plan.clean
+    result = core.import_statement(doc_id, 0, {
+        "account_id": "new", "name": "Compte joint", "import_transactions": "on", "update_balance": "on", "balance": str(joint.closing),
+        "holder_name": "M JEAN DUPONT OU MME CLAIRE LEROY",
+    })
+    with core.db.session() as s:
+        account = s.get(Account, result["account_id"])
+        assert account.holder_name == "M JEAN DUPONT OU MME CLAIRE LEROY"  # what the user typed
+        assert account.holder_alias == "M DUPONT OU MME LEROY CLAIRE"  # what the bank prints, kept to recognise it elsewhere
+        assert account.holder_address == "12 RUE DES LILAS\nBAT B APPT 12\n75011 PARIS"
+
+    by_name = {(t.account_id, t.counterparty_name): t for t in transactions(core)}
+    assert by_name[(checking_id, "M DUPONT OU MME LEROY CLAIRE")].internal  # the earlier transfer to the joint account is now "mine"
+    assert not by_name[(checking_id, "LEROY CLAIRE")].internal  # the partner's name is not the user's
+    assert by_name[(result["account_id"], "DUPONT JEAN")].internal  # "me" on the joint account, known from the other account's holder
+    assert not by_name[(result["account_id"], "LEROY CLAIRE")].internal
+
+    # Next month: no question any more, the full names survive, and it imports by itself.
+    nxt = Spec([Entry(date(2026, 10, 2), ["VIR SEPA ACME CONSULTING SAS", "Salaire"], D_("100.00"))], opening=joint.closing,
+               opening_date=date(2026, 9, 30), period=(date(2026, 10, 1), date(2026, 10, 31)), holder=list(JOINT_HOLDER),
+               address=list(JOINT_ADDRESS), bank=BANK, branch="80999", account="00077777777")
+    doc2, _, _ = drop(core, nxt)
+    [plan2] = core.review_document(doc2)["plans"]
+    assert plan2.account.id == result["account_id"] and not plan2.ask_holder
+    assert core.auto_import(doc2)["added"] == 1
+    with core.db.session() as s:
+        assert s.get(Account, result["account_id"]).holder_name == "M JEAN DUPONT OU MME CLAIRE LEROY"
+
+
+def test_opposite_transfers_on_two_of_my_accounts_are_paired_whatever_the_names(core):
+    D_ = D
+    out = Entry(date(2026, 9, 5), ["VIR Payer les factures", "COMPTE COMMUN"], D_("-50.00"))  # the other account is named by its label
+    stranger = Entry(date(2026, 9, 6), ["VIR SEPA PLOMBIER SARL", "facture"], D_("-90.00"))
+    _, checking_id = first_import(core, Spec([out, stranger]))
+    other = Spec(
+        [Entry(date(2026, 9, 6), ["VIR Virement depuis BoursoBank", "UN AUTRE NOM"], D_("50.00")),  # a day later: still the same transfer
+         Entry(date(2026, 9, 7), ["VIR SEPA GARAGISTE", "pneus"], D_("-90.00"))],  # same amount as the plumber but outgoing: not a pair
+        holder=["MME LEROY CLAIRE"], bank=BANK, branch="80999", account="00077777777",
+    )
+    doc_id, _, _ = drop(core, other)
+    result = core.import_statement(doc_id, 0, {"account_id": "new", "name": "Autre", "import_transactions": "on"})
+    rows = {(t.account_id, t.amount): t for t in transactions(core)}
+    sent, received = rows[(checking_id, D_("-50.00"))], rows[(result["account_id"], D_("50.00"))]
+    assert sent.internal and received.internal
+    assert sent.details["paired_with"] == received.id and received.details["paired_with"] == sent.id
+    assert not rows[(checking_id, D_("-90.00"))].internal and not rows[(result["account_id"], D_("-90.00"))].internal
+
+    core.undo_import(doc_id)  # the other half leaves: the transfer is no longer "internal" nor paired
+    freed = next(t for t in transactions(core) if t.id == sent.id)
+    assert not freed.internal and "paired_with" not in (freed.details or {})
+
+
+def test_web_review_asks_for_the_full_names_of_a_joint_account(client):
+    csrf = login(client)
+    spec = Spec(sample_entries()[:3], holder=list(JOINT_HOLDER), address=list(JOINT_ADDRESS))
+    page = upload(client, csrf, boursobank_statement_pdf(spec))
+    assert "Noms complets des titulaires" in page.text and "Nom du titulaire coupé par la banque" in page.text
+    assert 'name="holder_name"' in page.text and "Compte joint BoursoBank" in page.text
+    sole = upload(client, csrf, boursobank_statement_pdf(Spec(sample_entries()[:3], account="00099999999")))
+    assert 'name="holder_name"' not in sole.text  # a name that is not cut is not asked

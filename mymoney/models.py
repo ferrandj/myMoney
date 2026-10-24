@@ -98,6 +98,9 @@ class Account(Base):
     account_number: Mapped[str | None] = mapped_column(String(40))
     rib_key: Mapped[str | None] = mapped_column(String(4))
     holder_name: Mapped[str | None] = mapped_column(String(300))
+    # The holder line exactly as the bank prints it (possibly cut): other accounts' statements print the same text
+    # when they mention this account, which is how a transfer to it is recognised as "between my own accounts".
+    holder_alias: Mapped[str | None] = mapped_column(String(300))
     holder_address: Mapped[str | None] = mapped_column(Text)
     # Interest rate in % per year. None = use the reference rate of the account type.
     interest_rate: Mapped[Decimal | None] = mapped_column()
