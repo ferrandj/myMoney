@@ -403,3 +403,19 @@ def test_web_the_documents_show_their_reliability_and_can_be_reviewed_one_after_
     done = client.post(f"/documents/{other}/import/0", data={"csrf": csrf, "review": "1", "account_id": "new", "name": "Compte", "holder_name": "M A OU MME B", "import_transactions": "on"})
     assert "/accounts/" not in str(done.url)
     assert "Revue des documents à valider" in done.text or "Revue terminée" in done.text
+
+
+def test_amounts_with_a_thousands_space_are_read_whole():
+    D = Decimal
+    entries = [
+        FEntry(date(2026, 9, 2), ["VIR INST PAUL MARTIN", "Virement depuis une autre banque", "26138IP1RT393925364"], D("2000.00")),
+        FEntry(date(2026, 9, 5), ["VIR INST PAUL MARTIN", "Virement depuis une autre banque", "26138IP1RT393926934"], D("1234.56")),
+        FEntry(date(2026, 9, 9), ["PRLV SEPA ASSURANCE EXEMPLE"], D("-1000.50")),
+    ]
+    spec = FSpec(entries, opening=D("1320.92"))  # 4 digits already in the opening balance
+    st = parse(fortuneo_statement_pdf(spec))[1][0]
+    assert st.opening_balance == D("1320.92")
+    assert [t.amount for t in st.transactions] == [D("2000.00"), D("1234.56"), D("-1000.50")]
+    assert st.balance == spec.closing
+    assert st.extra["declared_totals"] == {"debit": "1000.50", "credit": "3234.56"}
+    assert not st.warnings and st.confidence == "high"
