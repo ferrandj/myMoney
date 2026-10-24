@@ -560,6 +560,18 @@ class MyMoney:
                 s.expunge(d)
         return docs
 
+    def next_pending(self, after_id: int | None = None) -> tuple[int | None, int]:
+        """(next document to review, how many are waiting). Walks the same order as `pending_documents`; with `after_id`
+        it continues after that document, even once that one has been validated."""
+        pending = self.pending_documents()
+        if after_id is None or not pending:
+            return (pending[0].id if pending else None), len(pending)
+        with self.db.session() as s:
+            current = s.get(Document, after_id)
+            key = (_period_key(current), current.id) if current is not None else None
+        later = [d for d in pending if key is None or (_period_key(d), d.id) > key]
+        return (later[0].id if later else None), len(pending)
+
     def validate_pending(self) -> dict[str, int]:
         """Validate in one go every document whose import needs no decision: the account is the one the document points to,
         or a new account because nothing matches yet. What needs a person (cut holder names, several possible accounts,

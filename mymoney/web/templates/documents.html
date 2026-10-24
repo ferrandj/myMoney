@@ -16,10 +16,11 @@
 {% if pending %}
 <section class="card warn" id="a-valider">
   <h2>À valider <span class="tag">{{ pending|length }}</span></h2>
-  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). Clique sur <strong>Tout valider</strong> : tout ce qui est évident est importé d'un coup, le reste (nom de titulaire à confirmer, doublon, incohérence) reste ici pour être regardé un par un.</p>
-  <form method="post" action="/documents/validate-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Tout valider ({{ pending|length }})</button></form>
+  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). <strong>Tout valider</strong> importe d'un coup tout ce qui est évident ; le reste (nom de titulaire à confirmer, doublon, incohérence) reste ici. <strong>Passer en revue</strong> t'ouvre les documents l'un après l'autre : tu vérifies, tu valides, le suivant s'affiche.</p>
+  <form method="post" action="/documents/validate-all"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="actions"><button class="btn primary">Tout valider ({{ pending|length }})</button>
+    <a class="btn" href="/documents/review">Passer en revue un par un</a></div></form>
   <ul class="small">
-    {% for d in pending %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> · <a href="/documents/{{ d.id }}">ouvrir et valider</a></li>{% endfor %}
+    {% for d in pending %}{% set rel = reliability(d) %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · <a href="/documents/{{ d.id }}">ouvrir et valider</a></li>{% endfor %}
   </ul>
 </section>
 {% endif %}
@@ -61,13 +62,14 @@
         <div class="table-wrap"><table class="doc-table">
           <tbody>
           {% for year, docs in kind.years %}
-            <tr class="doc-year"><th colspan="5">{{ year }}</th></tr>
+            <tr class="doc-year"><th colspan="6">{{ year }}</th></tr>
             {% for d, day in docs %}
             <tr>
               <td class="doc-check"><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Cocher pour télécharger"></td>
               <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
               <td class="nowrap small" title="Période ou date du document">{{ day|frdate }}</td>
               <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
+              {% set rel = reliability(d) %}<td class="nowrap"><span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span></td>
               <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
             </tr>
             {% endfor %}
