@@ -22,6 +22,13 @@ class Settings:
     auto_lock_minutes: int = field(default_factory=lambda: int(os.environ.get("MYMONEY_AUTO_LOCK_MINUTES", "15")))
     # Opt-in unattended unlock from a Docker secret file. Lowers security: see SECURITY.md.
     unlock_password_file: str | None = field(default_factory=lambda: os.environ.get("MYMONEY_UNLOCK_PASSWORD_FILE"))
+    # E-mail of the user whose password is in that file (needed once there are several users).
+    unlock_email: str | None = field(default_factory=lambda: os.environ.get("MYMONEY_UNLOCK_EMAIL"))
+    # Cloudflare Access: with both set, a request carrying a valid signed Access token signs in the user of its e-mail.
+    cf_team_domain: str | None = field(default_factory=lambda: os.environ.get("MYMONEY_CF_TEAM_DOMAIN"))
+    cf_audience: str | None = field(default_factory=lambda: os.environ.get("MYMONEY_CF_AUD"))
+    # Extra origins accepted for form posts (the public address behind a tunnel), separated by commas.
+    trusted_origins: str = field(default_factory=lambda: os.environ.get("MYMONEY_TRUSTED_ORIGINS", ""))
     max_upload_mb: int = field(default_factory=lambda: int(os.environ.get("MYMONEY_MAX_UPLOAD_MB", "25")))
     # Argon2id cost. Defaults fit a modest NAS; raise memory if the NAS has RAM to spare.
     argon2_memory_kib: int = field(default_factory=lambda: int(os.environ.get("MYMONEY_ARGON2_MEMORY_KIB", str(128 * 1024))))

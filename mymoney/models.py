@@ -79,11 +79,44 @@ class Base(DeclarativeBase):
     type_annotation_map = {Decimal: DecimalText()}
 
 
+class User(Base):
+    """A person who can sign in. Their password is not stored here: it opens their own key slot in the keystore."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True)  # lower case: the identity Cloudflare Access vouches for
+    name: Mapped[str | None] = mapped_column(String(200))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime)
+
+    @property
+    def label(self) -> str:
+        return self.name or self.email
+
+
+class AccountShare(Base):
+    """An account its owner shares with another user: read only, or read and edit."""
+
+    __tablename__ = "account_shares"
+    __table_args__ = (UniqueConstraint("account_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    can_edit: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    user: Mapped["User"] = relationship()
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     institution: Mapped[str | None] = mapped_column(String(200))
     account_type: Mapped[str] = mapped_column(String(40), default="checking")
     currency: Mapped[str] = mapped_column(String(10), default="EUR")
@@ -112,6 +145,8 @@ class Account(Base):
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     statements: Mapped[list["Statement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     loan: Mapped["Loan | None"] = relationship(back_populates="account", cascade="all, delete-orphan", uselist=False)
+    shares: Mapped[list["AccountShare"]] = relationship(cascade="all, delete-orphan", order_by="AccountShare.id")
+    owner: Mapped["User | None"] = relationship(foreign_keys=[owner_id])
 
     @property
     def rib(self) -> str | None:
@@ -157,6 +192,7 @@ class Document(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     filename: Mapped[str] = mapped_column(String(300))
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)  # who dropped it
     mime: Mapped[str | None] = mapped_column(String(100))
     size: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str] = mapped_column(String(64), unique=True)

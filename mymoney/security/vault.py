@@ -45,14 +45,14 @@ class Vault:
     def unlocked(self) -> bool:
         return self._dek is not None
 
-    def setup(self, password: str) -> str:
+    def setup(self, password: str, slot: str | None = None) -> str:
         check_password_strength(password)
-        dek, recovery = self.keystore.create(password)
+        dek, recovery = self.keystore.create(password, slot)
         self._open(dek)
         return recovery
 
-    def unlock(self, password: str) -> None:
-        self._open(self.keystore.unlock(password))
+    def unlock(self, password: str, slot: str | None = None) -> None:
+        self._open(self.keystore.unlock(password, slot))
 
     def unlock_with_recovery(self, code: str) -> None:
         self._open(self.keystore.unlock_with_recovery(code))
@@ -96,12 +96,20 @@ class Vault:
     def subkey(self, purpose: str) -> bytes:
         return crypto.hkdf(self._master(), f"mymoney/{purpose}")
 
-    def change_password(self, current: str, new: str) -> None:
+    def change_password(self, current: str, new: str, slot: str | None = None) -> None:
         check_password_strength(new)
-        dek = self.keystore.unlock(current)
+        dek = self.keystore.unlock(current, slot)
         if dek != self._master():
             raise VaultLocked()
-        self.keystore.set_password(dek, new)
+        self.keystore.set_password(dek, new, slot)
+
+    def add_user_slot(self, slot: str, password: str) -> None:
+        """Give a new user their own password to the same vault (the vault must be open)."""
+        check_password_strength(password)
+        self.keystore.add_slot(self._master(), slot, password)
+
+    def remove_user_slot(self, slot: str) -> None:
+        self.keystore.remove_slot(slot)
 
     def regenerate_recovery(self) -> str:
         return self.keystore.regenerate_recovery(self._master())

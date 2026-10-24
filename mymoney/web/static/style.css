@@ -255,3 +255,11 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
   .menu { position: static; }
   .menu-panel { position: fixed; left: 12px; right: 12px; top: 60px; width: auto; max-height: calc(100vh - 76px); }
 }
+.whoami { color: var(--muted); font-size: .85rem; white-space: nowrap; max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) { .whoami { display: none; } }
+.share-list { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.share-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inline-form { display: inline; margin: 0; }
+.user-table td form { display: inline; margin: 0; }
+/* The bar got busier (tools, name): below this width the menu takes a row of its own instead of being cut off. */
+@media (max-width: 1150px) { .topbar nav { order: 3; flex: 1 1 100%; } }

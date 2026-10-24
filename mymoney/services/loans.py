@@ -545,7 +545,7 @@ def rebuild(session: Session, loan: Loan, today: date | None = None) -> Plan:
 
 def refresh_all(session: Session, today: date | None = None) -> None:
     """The capital owed moves every month: bring the balance of every loan account up to date."""
-    for loan in session.scalars(select(Loan)):
+    for loan in session.scalars(select(Loan)):  # everyone's loans: only balances are updated, nothing is shown
         if loan.installments or loan.events:
             rebuild(session, loan, today)
 

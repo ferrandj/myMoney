@@ -16,7 +16,7 @@ from mymoney.services import statements as statement_service
 from mymoney.web.app import create_app
 from mymoney.adapters.base import ParsedStatement
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures import Entry, Spec, boursobank_statement_pdf
 
 D = Decimal
@@ -184,7 +184,7 @@ def csrf_of(html):
 
 
 def login(client):
-    client.post("/setup", data={"setup_token": client.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": client.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     return csrf_of(client.get("/documents").text)
 
 

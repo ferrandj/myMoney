@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..adapters.base import ParsedStatement, TransactionData
 from ..models import ACCOUNT_TYPES, Account, Document, FeeSummary, Holding, Statement, Transaction
-from . import counterparties, ledger, loans
+from . import access, counterparties, ledger, loans
 from . import coverage as coverage_service
 
 
@@ -100,8 +100,8 @@ class ImportPlan:
 def find_accounts(session: Session, st: ParsedStatement) -> list[Account]:
     """Accounts this statement can belong to, best match first. Identity comes from the document, not the label."""
     if st.document_kind in loans.LOAN_KINDS:
-        return loans.find_accounts(session, st)
-    accounts = list(session.scalars(select(Account)))
+        return access.only_editable(session, loans.find_accounts(session, st))
+    accounts = access.only_editable(session, list(session.scalars(select(Account))))  # an account one cannot edit is not a target
     scored: list[tuple[int, Account]] = []
     iban = (st.iban or "").replace(" ", "")
     for a in accounts:
@@ -277,6 +277,7 @@ def import_statement(session: Session, doc: Document, st: ParsedStatement, form:
     target = form.get("account_id") or "new"
     if target == "new":
         account = Account(
+            owner_id=access.owner_for_new(session),
             name=form.get("name") or st.account_label or doc.filename,
             account_type=form.get("account_type") if form.get("account_type") in ACCOUNT_TYPES else (st.account_type or "checking"),
             institution=form.get("institution") or st.institution,
@@ -288,6 +289,7 @@ def import_statement(session: Session, doc: Document, st: ParsedStatement, form:
         account = session.get(Account, int(target))
         if account is None:
             raise ValueError("Compte introuvable")
+        access.check_edit(session, account.id)
     if st.document_kind == "fees_summary":
         return _attach_fee_summary(session, doc, st, account, form)
     if st.document_kind in loans.LOAN_KINDS:

@@ -20,17 +20,20 @@ from sqlalchemy.orm import selectinload
 from ..adapters import ADAPTERS, catalog, get_adapter
 from ..config import Settings, settings as default_settings
 from ..core import QUARANTINE_HOURS, MyMoney
-from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, FeeSummary, Transaction
+from ..models import ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS, Account, Counterparty, Document, FeeSummary, Transaction, User
 from ..security.keystore import InvalidPassword
 from ..security.vault import VaultLocked
-from ..services import analytics
+from ..services import access, analytics
 from ..services import counterparties as contact_service
 from ..services import coverage as coverage_service
 from ..services import loans as loan_service
 from ..services import statements as statement_service
+from ..services import users as user_service
+from ..services.access import AccessDenied
 from ..services.rates import RATE_HISTORY, effective_rate
 from ..services.valuation import Valuator
 from . import charts, pwa, themes
+from .cloudflare import CloudflareAccess
 from .security import COOKIE, SECURITY_HEADERS, Sessions, verified_form
 
 log = logging.getLogger(__name__)
@@ -154,7 +157,8 @@ def fee_summaries(session, account) -> list[dict]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or default_settings
     core = MyMoney(settings)
-    sessions = Sessions(settings.auto_lock_minutes)
+    cf = CloudflareAccess(settings.cf_team_domain, settings.cf_audience)
+    sessions = Sessions(settings.auto_lock_minutes or 24 * 60)
     core.vault.on_lock(sessions.clear)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters.update(money=money, money_text=money_text, qty=quantity, frdate=frdate, iban=iban)
@@ -183,6 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.core = core
     app.state.sessions = sessions
+    app.state.cf = cf
     @app.get("/themes.css")
     async def themes_css():
         return Response(themes.stylesheet(), media_type="text/css")
@@ -192,23 +197,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def render(request: Request, name: str, status_code: int = 200, **context) -> HTMLResponse:
         session = getattr(request.state, "session", None)
-        context.update(request=request, csrf=session.csrf if session else "", unlocked=core.vault.unlocked, flash=request.query_params.get("msg"))
+        context.update(
+            request=request, csrf=session.csrf if session else "", unlocked=core.vault.unlocked, flash=request.query_params.get("msg"),
+            me=session.identity if session else None, cf_active=cf.enabled and bool(getattr(request.state, "cf_email", None)),
+        )
         return templates.TemplateResponse(request, name, context, status_code=status_code)
 
     def redirect(url: str, msg: str | None = None) -> RedirectResponse:
         if msg:
-            url += ("&" if "?" in url else "?") + "msg=" + quote(msg)
+            url, _, fragment = url.partition("#")  # the message goes in the query, before any #anchor
+            url += ("&" if "?" in url else "?") + "msg=" + quote(msg) + ("#" + fragment if fragment else "")
         return RedirectResponse(url, status_code=303)
+
+    def trusted_origin(request: Request) -> bool:
+        """A form post must come from this very site (or from the public address of the tunnel in front of it)."""
+        origin = request.headers.get("origin")
+        if not origin or origin == "null" or urlparse(origin).netloc == request.headers.get("host"):
+            return True
+        return origin.rstrip("/") in {o.strip().rstrip("/") for o in settings.trusted_origins.split(",") if o.strip()}
+
+    def https_in_front(request: Request) -> bool:
+        """The browser talks HTTPS even when the tunnel talks plain http to the app: the cookie can be marked Secure."""
+        forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        return request.url.scheme == "https" or forwarded == "https" or '"https"' in request.headers.get("cf-visitor", "")
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
         path = request.url.path
-        if request.method == "POST":
-            origin = request.headers.get("origin")
-            if origin and origin != "null" and urlparse(origin).netloc != request.headers.get("host"):
-                return Response("Origine refusée", status_code=403)
+        if request.method == "POST" and not trusted_origin(request):
+            return Response("Origine refusée", status_code=403)
         request.state.session = sessions.get(request.cookies.get(COOKIE))
+        request.state.cf_email = None
         public = path.startswith(PUBLIC_PATHS)
+        new_token = None
+        identity = request.state.session.identity if request.state.session else None
+
+        # Cloudflare Access: a valid signed token names the visitor, no password needed once the vault is open.
+        if cf.enabled and core.vault.initialized and not path.startswith(("/static/", "/icons/", "/themes.css", "/healthz")):
+            request.state.cf_email = await run_in_threadpool(cf.email_of, request.headers)
+            email = request.state.cf_email
+            if email and core.vault.unlocked and (identity is None or identity.email != email):
+                found = await run_in_threadpool(core.identity_for_email, email)
+                if found is not None:
+                    new_token = sessions.create(found)
+                    request.state.session = sessions.get(new_token)
+                    identity = found
+                elif await run_in_threadpool(core.has_users):
+                    response = render(request, "denied.html", 403, message=f"Ton adresse ({email}) n'a pas de compte sur myMoney : demande à un administrateur de la créer.", cf_email=email)
+                    for key, value in SECURITY_HEADERS.items():
+                        response.headers.setdefault(key, value)
+                    return response
+                # else: a vault from before users existed, whose first user is being named (/first-user)
+
         if not public:
             if not core.vault.initialized:
                 return RedirectResponse("/setup", status_code=303)
@@ -216,19 +256,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if request.state.session is not None:
                     sessions.drop(request.cookies.get(COOKIE))
                 return RedirectResponse("/login", status_code=303)
+            if identity is None and path not in ("/first-user", "/logout"):  # a vault from before users: name its first user
+                return RedirectResponse("/first-user", status_code=303)
             core.vault.touch()
         try:
-            response = await call_next(request)
+            with access.as_user(identity):
+                response = await call_next(request)
         except VaultLocked:
             response = RedirectResponse("/login", status_code=303)
+        if new_token:
+            response.set_cookie(COOKIE, new_token, httponly=True, samesite="strict", secure=settings.cookie_secure or https_in_front(request), path="/")
         for key, value in SECURITY_HEADERS.items():
             response.headers.setdefault(key, value)
-        if settings.cookie_secure:
+        if settings.cookie_secure or https_in_front(request):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
         return response
 
-    def start_session(response: Response) -> None:
-        response.set_cookie(COOKIE, sessions.create(), httponly=True, samesite="strict", secure=settings.cookie_secure, path="/")
+    @app.exception_handler(AccessDenied)
+    async def access_denied(request: Request, exc: AccessDenied):
+        return render(request, "denied.html", 404, message=str(exc))
+
+    def start_session(request: Request, response: Response, identity: access.Identity | None) -> None:
+        response.set_cookie(
+            COOKIE, sessions.create(identity), httponly=True, samesite="strict", secure=settings.cookie_secure or https_in_front(request), path="/"
+        )
+
+    def admin_only(request: Request) -> access.Identity:
+        me = request.state.session.identity if request.state.session else None
+        if me is None or not me.is_admin:
+            raise HTTPException(403, "Réservé aux administrateurs")
+        return me
 
     # ------------------------------------------------------------- auth
     @app.get("/healthz")
@@ -253,42 +310,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if password != confirm:
             return render(request, "setup.html", 400, error="Les deux mots de passe ne correspondent pas")
         try:
-            recovery = await run_in_threadpool(core.vault.setup, password)
+            recovery = await run_in_threadpool(core.setup, str(form.get("email", "")), str(form.get("name", "")), password)
         except ValueError as exc:
             return render(request, "setup.html", 400, error=str(exc))
+        identity = await run_in_threadpool(core.identity_for_email, str(form.get("email", "")))
+        request.state.session = None
         response = render(request, "recovery.html", recovery=recovery)
-        start_session(response)
+        start_session(request, response, identity)
         return response
 
     @app.get("/login")
     async def login_page(request: Request):
         if not core.vault.initialized:
             return redirect("/setup")
-        return render(request, "login.html")
+        session = request.state.session
+        if session is not None and session.identity is not None and core.vault.unlocked:
+            return redirect("/")
+        return render(request, "login.html", legacy=core.legacy_login, cf_email=request.state.cf_email, locked=not core.vault.unlocked)
 
     @app.post("/login")
     async def login(request: Request):
         form = await request.form()
+        email = str(form.get("email", "")).strip()
+        identity = None
         try:
             if form.get("recovery"):
-                await run_in_threadpool(core.vault.unlock_with_recovery, str(form["recovery"]))
-            else:
+                identity = await run_in_threadpool(core.authenticate_recovery, str(form["recovery"]))
+            elif core.legacy_login and not email:
                 await run_in_threadpool(core.check_password, str(form.get("password", "")))
+            else:
+                identity = await run_in_threadpool(core.authenticate, email, str(form.get("password", "")))
         except InvalidPassword:
-            return render(request, "login.html", 401, error="Mot de passe incorrect")
+            return render(request, "login.html", 401, error="E-mail ou mot de passe incorrect", legacy=core.legacy_login, cf_email=request.state.cf_email, locked=not core.vault.unlocked)
         except PermissionError as exc:
-            return render(request, "login.html", 429, error=str(exc))
-        response = redirect("/settings?recovered=1" if form.get("recovery") else "/")
-        start_session(response)
+            return render(request, "login.html", 429, error=str(exc), legacy=core.legacy_login, cf_email=request.state.cf_email, locked=not core.vault.unlocked)
+        if identity is None:
+            target = "/first-user"
+        else:
+            target = "/settings?recovered=1" if form.get("recovery") else "/"
+        response = redirect(target)
+        start_session(request, response, identity)
         return response
+
+    @app.get("/first-user")
+    async def first_user_page(request: Request):
+        if await run_in_threadpool(core.has_users):
+            return redirect("/")
+        return render(request, "first_user.html", cf_email=request.state.cf_email or "")
+
+    @app.post("/first-user")
+    async def first_user(request: Request):
+        form = await verified_form(request)
+        try:
+            identity = await run_in_threadpool(core.create_first_user, form.get("email", ""), form.get("name"))
+        except ValueError as exc:
+            return render(request, "first_user.html", 400, error=str(exc), cf_email=form.get("email", ""))
+        request.state.session.identity = identity
+        return redirect("/", "Compte administrateur créé : les comptes et documents existants sont à toi")
 
     @app.post("/logout")
     async def logout(request: Request):
         form = await verified_form(request)
+        me = request.state.session.identity
         sessions.drop(request.cookies.get(COOKIE))
-        if form.get("lock") == "1" and not settings.unlock_password_file:
+        lock = form.get("lock") == "1" and me is not None and me.is_admin and not settings.unlock_password_file
+        if lock:
             core.vault.lock()
-        response = redirect("/login", "Coffre verrouillé" if form.get("lock") == "1" else "Déconnecté")
+        if request.state.cf_email and not lock:  # signed in by Cloudflare: end that session too, or the next page signs back in
+            response = RedirectResponse(cf.logout_url, status_code=303)
+        else:
+            response = redirect("/login", "Coffre verrouillé" if lock else "Déconnecté")
         response.delete_cookie(COOKIE, path="/")
         return response
 
@@ -422,6 +513,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             account = s.get(Account, account_id)
             if account is None:
                 raise HTTPException(404)
+            my_role = access.role(s, account)  # AccessDenied (404) for an account the user cannot see
+            shares = [(sh.user, sh.can_edit) for sh in account.shares]
+            owner = account.owner
+            sharable = [u for u in user_service.all_users(s) if u.id != account.owner_id and all(sh.user_id != u.id for sh in account.shares)] if my_role == "owner" else []
             _ = account.holdings
             per_page = 100
             total_tx = s.scalar(select(func.count()).select_from(Transaction).where(Transaction.account_id == account_id))
@@ -453,7 +548,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             page=page, pages=max(1, -(-total_tx // per_page)), total_tx=total_tx, statements=statements, chain_issues=chain_issues, fee_rows=fee_rows,
             open_gaps=[g for g in all_gaps if not g.acknowledged], acked_gaps=[g for g in all_gaps if g.acknowledged],
             to_identify=to_identify, loan=loan, loan_plan=loan_plan, loan_docs=loan_docs,
+            role=my_role, shares=shares, owner=owner, sharable=sharable,
         )
+
+    @app.post("/accounts/{account_id}/shares")
+    async def share_add(request: Request, account_id: int):
+        """The owner shares the account with one other user, read only or with the right to edit."""
+        form = await verified_form(request)
+        try:
+            with core.db.session() as s:
+                access.check_owner(s, account_id)
+                account = s.get(Account, account_id)
+                target = s.get(User, int(form.get("user_id") or 0))
+                if target is None:
+                    raise ValueError("Choisis la personne avec qui partager")
+                user_service.share(s, account, target, form.get("mode") == "edit")
+                label = target.label
+        except ValueError as exc:
+            return redirect(f"/accounts/{account_id}#partage", str(exc))
+        return redirect(f"/accounts/{account_id}#partage", f"Compte partagé avec {label}")
+
+    @app.post("/accounts/{account_id}/shares/{user_id}/delete")
+    async def share_remove(request: Request, account_id: int, user_id: int):
+        """The owner stops sharing; the person it is shared with can also leave a share."""
+        await verified_form(request)
+        me = request.state.session.identity
+        with core.db.session() as s:
+            access.check_read(s, account_id)
+            if user_id != me.id:
+                access.check_owner(s, account_id)
+            account = s.get(Account, account_id)
+            user_service.unshare(s, account, user_id)
+        if user_id == me.id:
+            return redirect("/", "Tu n'as plus accès à ce compte")
+        return redirect(f"/accounts/{account_id}#partage", "Partage retiré")
 
     @app.post("/accounts/{account_id}/loan/first-due")
     async def loan_first_due(request: Request, account_id: int):
@@ -467,6 +595,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             account = s.get(Account, account_id)
             if account is None or account.loan is None:
                 raise HTTPException(404)
+            access.check_edit(s, account_id)
             loan_service.set_first_due(s, account.loan, day)
         return redirect(f"/accounts/{account_id}", "Date de la première échéance enregistrée")
 
@@ -476,6 +605,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             account = s.get(Account, account_id)
             if account is None:
                 raise HTTPException(404)
+            access.check_edit(s, account_id)
         return render(request, "account_form.html", account=account)
 
     @app.post("/accounts/{account_id}/edit")
@@ -517,12 +647,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 with core.db.session() as s:
                     account = s.get(Account, account_id)
-                    if account is not None:
+                    if account is not None and account.id in (access.readable_ids(s) if access.restricted() else {account.id}):
                         missing = {"account": account.name, "label": coverage_service.describe(date.fromisoformat(start), date.fromisoformat(end))}
             except ValueError:
                 missing = None
         with core.db.session() as s:
-            everything = list(s.scalars(select(Document).order_by(Document.uploaded_at.desc())))
+            everything = access.visible_documents(s)
             names = {d.id: d.filename for d in everything}
         documents = [d for d in everything if d.status != "duplicate"]
         aside = [(d, names.get(d.duplicate_of)) for d in everything if d.status == "duplicate"]
@@ -545,6 +675,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return redirect("/documents", f"{upload.filename} dépasse {settings.max_upload_mb} Mo")
             doc_id, existing = await run_in_threadpool(core.store_document, upload.filename or "document", data)
             if existing:
+                if not await run_in_threadpool(core.document_visible, doc_id):
+                    return redirect("/documents", "Ce fichier est déjà dans le coffre (déposé par quelqu'un d'autre) : rien n'est ajouté")
                 outcomes.append((doc_id, "existing", None))
                 continue
             status = await run_in_threadpool(core.analyze_document, doc_id, None, data)
@@ -746,13 +878,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if contact is None:
                 raise HTTPException(404)
             _ = contact.identifiers
-            transactions = list(
-                s.scalars(
+            visible = access.readable_ids(s)
+            transactions = [
+                t for t in s.scalars(
                     select(Transaction).where(Transaction.counterparty_id == contact_id)
-                    .order_by(Transaction.date.desc(), Transaction.id.desc()).limit(200)
-                )
-            )
-            account_names = {a.id: a.name for a in s.scalars(select(Account))}
+                    .order_by(Transaction.date.desc(), Transaction.id.desc()).limit(2000)
+                ) if visible is None or t.account_id in visible
+            ][:200]
+            account_names = {a.id: a.name for a in access.only_readable(s, list(s.scalars(select(Account))))}
             others = list(s.scalars(select(Counterparty).where(Counterparty.id != contact_id).order_by(Counterparty.name)))
         return render(request, "contact.html", contact=contact, transactions=transactions, others=others, account_names=account_names)
 
@@ -803,18 +936,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/settings")
     async def settings_page(request: Request):
         rates = sorted(RATE_HISTORY, key=lambda r: r[0], reverse=True)
+        me = request.state.session.identity
+        with core.db.session() as s:
+            people = user_service.all_users(s) if me.is_admin else []
+            owned = {u.id: s.scalar(select(func.count()).select_from(Account).where(Account.owner_id == u.id)) for u in people}
         return render(
-            request, "settings.html", rates=rates, settings=settings,
+            request, "settings.html", rates=rates, settings=settings, people=people, owned=owned,
             coingecko_key=bool(core.get_setting("coingecko_api_key")), recovered=request.query_params.get("recovered"),
+            cf_enabled=cf.enabled, cf_host=cf.host,
         )
 
     @app.post("/settings/password")
     async def settings_password(request: Request):
+        """Everyone changes their own password: it is the key slot of this user, the others are not touched."""
         form = await verified_form(request)
+        me = request.state.session.identity
         if form.get("new") != form.get("confirm"):
             return redirect("/settings", "Les deux nouveaux mots de passe ne correspondent pas")
         try:
-            await run_in_threadpool(core.vault.change_password, form.get("current", ""), form.get("new", ""))
+            await run_in_threadpool(core.vault.change_password, form.get("current", ""), form.get("new", ""), user_service.slot_id(me.email))
         except InvalidPassword:
             return redirect("/settings", "Mot de passe actuel incorrect")
         except ValueError as exc:
@@ -824,16 +964,84 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/settings/recovery")
     async def settings_recovery(request: Request):
         form = await verified_form(request)
+        me = admin_only(request)
         try:
-            await run_in_threadpool(core.check_password, form.get("current", ""))
+            await run_in_threadpool(core.check_password, form.get("current", ""), me.email)
         except (InvalidPassword, PermissionError):
             return redirect("/settings", "Mot de passe incorrect")
         recovery = await run_in_threadpool(core.vault.regenerate_recovery)
         return render(request, "recovery.html", recovery=recovery)
 
+    @app.post("/settings/users")
+    async def settings_user_add(request: Request):
+        """An administrator gives someone access: their e-mail (the one Cloudflare vouches for) and a first password."""
+        form = await verified_form(request)
+        admin_only(request)
+        try:
+            with core.db.session() as s:
+                user = user_service.add_with_password(
+                    s, core.vault, form.get("email", ""), form.get("name"), form.get("password", ""), form.get("is_admin") == "on"
+                )
+                label = user.label
+        except ValueError as exc:
+            return redirect("/settings#utilisateurs", str(exc))
+        return redirect("/settings#utilisateurs", f"{label} peut maintenant se connecter (par Cloudflare ou avec son mot de passe)")
+
+    @app.post("/settings/users/{user_id}/delete")
+    async def settings_user_delete(request: Request, user_id: int):
+        await verified_form(request)
+        me = admin_only(request)
+        try:
+            with core.db.session() as s:
+                user, heir = s.get(User, user_id), s.get(User, me.id)
+                if user is None:
+                    raise ValueError("Utilisateur introuvable")
+                label = user.label
+                moved = user_service.remove(s, core.vault, user, heir)
+        except ValueError as exc:
+            return redirect("/settings#utilisateurs", str(exc))
+        sessions.drop_user(user_id)
+        return redirect("/settings#utilisateurs", f"{label} supprimé" + (f" : ses {moved} compte(s) sont maintenant à toi" if moved else ""))
+
+    @app.post("/settings/users/{user_id}/role")
+    async def settings_user_role(request: Request, user_id: int):
+        form = await verified_form(request)
+        me = admin_only(request)
+        make_admin = form.get("is_admin") == "on"
+        with core.db.session() as s:
+            user = s.get(User, user_id)
+            if user is None:
+                raise HTTPException(404)
+            if user.is_admin and not make_admin and sum(1 for u in user_service.all_users(s) if u.is_admin) <= 1:
+                return redirect("/settings#utilisateurs", "Il doit rester au moins un administrateur")
+            user.is_admin = make_admin
+            identity = user_service.identity(user)
+        sessions.update_identity(identity)
+        return redirect("/settings#utilisateurs", "Rôle modifié")
+
+    @app.post("/settings/users/{user_id}/password")
+    async def settings_user_password(request: Request, user_id: int):
+        """Forgotten password: the administrator sets a new one for that user's key slot."""
+        form = await verified_form(request)
+        admin_only(request)
+        try:
+            from ..security.vault import check_password_strength
+
+            check_password_strength(form.get("password", ""))
+            with core.db.session() as s:
+                user = s.get(User, user_id)
+                if user is None:
+                    raise HTTPException(404)
+                core.keystore.set_password(core.vault._master(), form["password"], user_service.slot_id(user.email))
+                label = user.label
+        except ValueError as exc:
+            return redirect("/settings#utilisateurs", str(exc))
+        return redirect("/settings#utilisateurs", f"Nouveau mot de passe défini pour {label}")
+
     @app.post("/settings/general")
     async def settings_general(request: Request):
         form = await verified_form(request)
+        admin_only(request)
         if form.get("coingecko_api_key"):
             core.set_setting("coingecko_api_key", form["coingecko_api_key"].strip())
         if form.get("clear_coingecko") == "on":

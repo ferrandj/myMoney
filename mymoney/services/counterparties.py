@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..adapters.common import iban_valid, name_key
 from ..models import COUNTERPARTY_KINDS, Counterparty, CounterpartyIdentifier, Transaction
+from . import access
 
 # Card payments are shops: listing each merchant as "someone to identify" would drown the people and organisations
 # that matter. They are still matched when an identifier exists, and can be shown on request.
@@ -61,7 +62,10 @@ def unresolved(
         query = query.where(Transaction.document_id == document_id)
     if account_id is not None:
         query = query.where(Transaction.account_id == account_id)
+    visible = access.readable_ids(session)
     for t in session.scalars(query):
+        if visible is not None and t.account_id not in visible:
+            continue
         if t.internal or (t.kind in SHOP_KINDS and not include_shops and not t.counterparty_iban):
             continue
         iban = normalize_iban(t.counterparty_iban)
@@ -214,9 +218,12 @@ def summaries(session: Session) -> list[ContactSummary]:
     contacts = list(session.scalars(select(Counterparty).order_by(Counterparty.name)))
     for c in contacts:
         stats[c.id] = ContactSummary(c, 0, Decimal(0), Decimal(0), None)
-    for cid, amount, day in session.execute(
-        select(Transaction.counterparty_id, Transaction.amount, Transaction.date).where(Transaction.counterparty_id.is_not(None))
+    visible = access.readable_ids(session)
+    for cid, amount, day, account_id in session.execute(
+        select(Transaction.counterparty_id, Transaction.amount, Transaction.date, Transaction.account_id).where(Transaction.counterparty_id.is_not(None))
     ):
+        if visible is not None and account_id not in visible:
+            continue
         s = stats[cid]
         s.count += 1
         if amount >= 0:

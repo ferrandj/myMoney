@@ -59,7 +59,7 @@
     {% for v in values %}
     <tr>
       <td><a href="/accounts/{{ v.account.id }}">{{ v.account.name }}</a>
-        <div class="muted small">{{ [v.account.institution, v.account.type_label]|select|join(' · ') }}{% if v.account.holder_name %} · <span class="sensitive">{{ v.account.holder_name }}</span>{% endif %}</div>
+        <div class="muted small">{{ [v.account.institution, v.account.type_label]|select|join(' · ') }}{% if v.account.holder_name %} · <span class="sensitive">{{ v.account.holder_name }}</span>{% endif %}{% if me and v.account.owner_id != me.id %} · <span class="tag">partagé par <span class="sensitive">{{ v.account.owner.label if v.account.owner else '?' }}</span></span>{% endif %}</div>
         {% for w in v.warnings %}<div class="warn small">⚠ {{ w }}</div>{% endfor %}
       </td>
       <td class="num">{{ v.total|money }}</td>

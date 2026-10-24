@@ -72,7 +72,7 @@ Le plus simple : `docker-compose.nas.yml`. Rien à construire ni à préparer à
 1. Copie `docker-compose.nas.yml` dans un dossier du NAS (ex. `/volume1/docker/mymoney/`) et adapte le chemin du dossier `data` si besoin.
 2. Lance `docker compose -f docker-compose.nas.yml up -d` (Synology : Container Manager → Projet → Créer, colle le fichier).
 3. Récupère le code d'installation : `docker logs mymoney`.
-4. Ouvre `http://IP-DU-NAS:10458`, crée ton mot de passe maître et **note le code de secours**.
+4. Ouvre `http://IP-DU-NAS:10458`, crée ton compte administrateur (e-mail et mot de passe) et **note le code de secours**.
 
 L'image `ghcr.io/ferrandj/mymoney` est publiée par la CI GitHub (amd64 et arm64). Chaque push sur `main` dont les tests passent devient une release (`v1.0.0`, `v1.0.1`…) avec les tags `latest`, `1`, `1.0` et `1.0.1`. Pour monter de version mineure ou majeure, mets `[minor]` ou `[major]` dans la première ligne du message de commit, ou lance le workflow à la main. Si le `pull` est refusé, rends le paquet public (GitHub → Packages → mymoney → Package settings) ou fais un `docker login ghcr.io`.
 
@@ -93,7 +93,38 @@ Ensuite, mets `MYMONEY_COOKIE_SECURE=true` (et `MYMONEY_TRUSTED_PROXIES` si un p
 
 ### Accès à distance
 
-N'ouvre **pas** le port sur Internet. Utilise un VPN (Tailscale ou WireGuard, souvent disponibles sur le NAS). Pour le HTTPS en local, place l'app derrière le reverse proxy du NAS et passe `MYMONEY_COOKIE_SECURE=true`.
+N'ouvre **pas** le port sur Internet. Utilise un VPN (Tailscale ou WireGuard, souvent disponibles sur le NAS) ou un tunnel Cloudflare avec Cloudflare Access (ci-dessous). Pour le HTTPS en local, place l'app derrière le reverse proxy du NAS et passe `MYMONEY_COOKIE_SECURE=true`.
+
+## Plusieurs utilisateurs
+
+- **Un utilisateur = une adresse e-mail + son propre mot de passe** vers le même coffre. Le premier compte (créé à l'installation) est administrateur ; il ajoute les autres dans **Paramètres → Utilisateurs** (e-mail, nom, mot de passe de départ), peut nommer d'autres administrateurs, redéfinir le mot de passe d'un utilisateur qui l'a oublié, ou supprimer un utilisateur (ses comptes passent à l'administrateur qui le supprime).
+- **Chacun ne voit que ses comptes** et ceux qu'on lui partage : portefeuille, analyses, documents, opérations, trous de relevés. Un virement entre deux personnes n'est pas un « virement entre mes comptes ».
+- **Partager un compte, un par un** : sur la page du compte, « Partage » → choisis la personne et les droits, *lecture seule* (voir solde, opérations, IBAN, documents) ou *lecture et modification* (déposer des relevés, corriger). Le propriétaire seul supprime le compte et gère le partage ; la personne peut quitter un partage. Un compte partagé compte dans le patrimoine de chacun.
+- **Les contacts (bénéficiaires) forment un carnet commun** ; leurs statistiques ne comptent que les opérations que tu peux voir.
+- Tout est protégé par **une seule clé de données**, enveloppée séparément par le mot de passe de chaque personne (comme les emplacements de clé d'un disque chiffré) : changer son mot de passe ne touche pas aux autres. La séparation entre utilisateurs est assurée par l'application, pas par le chiffrement : l'administrateur du NAS peut techniquement tout lire (voir [SECURITY.md](SECURITY.md)).
+- **Mise à jour depuis la version à un seul mot de passe** : à la première connexion, entre ton mot de passe habituel ; l'application te demande ton e-mail et ton nom, tu deviens administrateur, tes comptes et documents te sont attribués, et ton mot de passe reste le même.
+
+### Connexion automatique avec Cloudflare Access
+
+Tu mets l'application derrière un tunnel Cloudflare (`cloudflared`) protégé par Cloudflare Access (liste d'e-mails autorisés). Cloudflare ajoute à chaque requête un **jeton signé** qui contient l'e-mail vérifié du visiteur : l'application le vérifie et connecte directement l'utilisateur correspondant, **sans mot de passe**. Un accès direct sur le réseau local (`http://adresse-du-nas:10458`) continue de demander e-mail et mot de passe.
+
+1. **Tunnel** (Zero Trust → Networks → Tunnels) : un *Public hostname* `mymoney.ton-domaine.xyz` → service `HTTP` → `ADRESSE-DU-NAS:10458` (l'adresse IP du NAS et le port, séparés par `:`, sans `/` avant le port).
+2. **Application Access** (Zero Trust → Access → Applications → *Self-hosted*) pour le même nom d'hôte, avec une règle **Allow** sur les e-mails (un par un, ou un domaine). Cloudflare gère la connexion (code par e-mail, Google…).
+3. Dans cette application Access, note l'**Application Audience (AUD) Tag** (Overview) ; le **nom de ton équipe** est celui de `https://<équipe>.cloudflareaccess.com` (Zero Trust → Settings → Custom pages).
+4. Donne-les à l'application (docker compose, voir `docker-compose.nas.yml`) :
+   ```yaml
+   MYMONEY_CF_TEAM_DOMAIN: "mon-equipe"          # ou mon-equipe.cloudflareaccess.com
+   MYMONEY_CF_AUD: "<l'AUD tag de l'étape 3>"
+   MYMONEY_TRUSTED_ORIGINS: "https://mymoney.ton-domaine.xyz"
+   ```
+   puis `docker compose up -d`. Dans **Paramètres → Cloudflare Access** l'application indique « Activé ».
+5. **Crée chaque utilisateur** dans Paramètres → Utilisateurs avec **la même adresse e-mail** que dans Cloudflare Access. Une adresse que Cloudflare autorise mais qui n'a pas de compte voit « n'a pas de compte sur myMoney ».
+
+À savoir :
+- **Seul le jeton signé compte**, jamais l'en-tête `Cf-Access-Authenticated-User-Email` : l'application répond aussi sur ton réseau local, où n'importe qui pourrait envoyer un faux en-tête. Le jeton est vérifié (signature avec les clés publiques de Cloudflare, application visée, émetteur, expiration). Elle doit pouvoir joindre `https://<équipe>.cloudflareaccess.com` pour récupérer ces clés.
+- **Le coffre doit être ouvert** pour que Cloudflare fasse entrer quelqu'un : la clé de données n'existe en mémoire qu'une fois un mot de passe saisi (ou le déverrouillage automatique). Après un redémarrage du NAS, la première personne entre son mot de passe (la page le propose, e-mail prérempli) ; ensuite tout le monde entre par Cloudflare. Pour que le coffre ne se referme pas tout seul au bout de 15 minutes d'inactivité, mets `MYMONEY_AUTO_LOCK_MINUTES: "0"` (jamais) : la clé reste alors en mémoire jusqu'au redémarrage. Le déverrouillage automatique au démarrage (`MYMONEY_UNLOCK_PASSWORD_FILE` + `MYMONEY_UNLOCK_EMAIL`) évite même cette saisie mais range le mot de passe sur le NAS (voir SECURITY.md).
+- Le bouton **Verrouiller** (administrateur) ferme le coffre pour tout le monde ; les autres utilisateurs ont « Déconnexion ». Déconnecté via Cloudflare, tu es aussi déconnecté d'Access.
+- Le cookie de session est marqué *Secure* automatiquement quand Cloudflare indique que le navigateur est en HTTPS (`X-Forwarded-Proto`), et pas en accès direct en `http` local : tu n'as pas besoin de choisir.
 
 ### Sauvegardes
 
@@ -133,7 +164,7 @@ mymoney/
                    loan_offer_pdf.py, loan_prepayment_pdf.py, loan_schedule_pdf.py (prêt)
     revolut/       statement_csv.py : export CSV
     generic/       OFX, QIF, CSV et PDF « devinés »
-  services/    import (doublons, cohérence), prêts (reconstitution et contrôles), contacts, prix, valorisation, taux réglementés
+  services/    import (doublons, cohérence), prêts (reconstitution et contrôles), utilisateurs, droits et partages (`access.py`, `users.py`), contacts, prix, valorisation, taux réglementés
   web/         interface (FastAPI + Jinja, sans JavaScript externe)
 ```
 

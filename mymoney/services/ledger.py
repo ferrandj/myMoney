@@ -75,26 +75,28 @@ _JOINT = re.compile(r"\s+(?:OU|ET)\s+", re.I)
 TRANSFER_KINDS = ("transfer", "instant_transfer")
 
 
-def own_name_keys(session: Session) -> set[str]:
-    """Names that stand for the user: the holder of an account held alone, and the holder line of every account as the
-    bank prints it (a transfer to the joint account shows that line, even cut)."""
-    keys: set[str] = set()
-    for holder, alias in session.execute(select(Account.holder_name, Account.holder_alias)):
+def own_name_keys(session: Session) -> dict[int | None, set[str]]:
+    """Per owner, the names that stand for them: the holder of an account held alone, and the holder line of every account
+    as the bank prints it (a transfer to the joint account shows that line, even cut). Another user's name is not "me"."""
+    keys: dict[int | None, set[str]] = {}
+    for owner, holder, alias in session.execute(select(Account.owner_id, Account.holder_name, Account.holder_alias)):
+        mine = keys.setdefault(owner, set())
         if holder and len(_JOINT.split(holder)) == 1:
-            keys.add(name_key(holder))
+            mine.add(name_key(holder))
         if alias:
-            keys.add(name_key(alias))
+            mine.add(name_key(alias))
     return keys
 
 
 def mark_internal(session: Session) -> int:
     """Flag the transfers whose other party is the user (their other accounts): they are not income nor spending."""
     keys = own_name_keys(session)
-    if not keys:
+    if not any(keys.values()):
         return 0
+    owners = {i: o for i, o in session.execute(select(Account.id, Account.owner_id))}
     marked = 0
     for t in session.scalars(select(Transaction).where(Transaction.kind.in_(TRANSFER_KINDS), Transaction.counterparty_name.is_not(None))):
-        if not t.internal and name_key(t.counterparty_name) in keys:
+        if not t.internal and name_key(t.counterparty_name) in keys.get(owners.get(t.account_id), set()):
             t.details = {**(t.details or {}), "internal": True}
             marked += 1
     session.flush()
@@ -109,6 +111,7 @@ def pair_transfers(session: Session) -> int:
     """
     from collections import defaultdict
 
+    owners = {i: o for i, o in session.execute(select(Account.id, Account.owner_id))}  # two people's accounts are not "my own accounts"
     pool = [t for t in session.scalars(select(Transaction).where(Transaction.kind.in_(TRANSFER_KINDS)).order_by(Transaction.date, Transaction.id))
             if not (t.details or {}).get("paired_with")]
     by_amount: dict[Decimal, list[Transaction]] = defaultdict(list)
@@ -120,7 +123,8 @@ def pair_transfers(session: Session) -> int:
             continue
         candidates = [
             c for c in by_amount.get(-Decimal(t.amount), [])
-            if c.account_id != t.account_id and abs((c.date - t.date).days) <= 1 and not (c.details or {}).get("paired_with")
+            if c.account_id != t.account_id and owners.get(c.account_id) == owners.get(t.account_id)
+            and abs((c.date - t.date).days) <= 1 and not (c.details or {}).get("paired_with")
         ]
         if not candidates:
             continue

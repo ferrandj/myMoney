@@ -13,7 +13,7 @@ from mymoney.core import MyMoney
 from mymoney.models import Account, Document, FeeSummary, Transaction
 from mymoney.web.app import create_app
 
-from .conftest import PASSWORD
+from .conftest import ADMIN_EMAIL, PASSWORD
 from .fixtures import Entry, Spec, boursobank_statement_pdf
 from .fixtures_fortuneo import (
     F_ACCOUNT, F_ADDRESS, F_BANK, F_BRANCH, F_HOLDER, F_IBAN, FeesSpec, FEntry, FSpec, fortuneo_entries, fortuneo_fees_pdf,
@@ -257,7 +257,7 @@ def csrf_of(html):
 
 
 def login(client):
-    client.post("/setup", data={"setup_token": client.core.setup_token, "password": PASSWORD, "confirm": PASSWORD})
+    client.post("/setup", data={"setup_token": client.core.setup_token, "email": ADMIN_EMAIL, "password": PASSWORD, "confirm": PASSWORD})
     return csrf_of(client.get("/documents").text)
 
 
