@@ -63,6 +63,8 @@ def find_accounts(session: Session, st: ParsedStatement) -> list[Account]:
             score = 3
         elif st.account_number and st.bank_code and (a.bank_code, a.account_number) == (st.bank_code, st.account_number):
             score = 3
+        elif st.account_number and a.account_number == st.account_number and (not st.institution or a.institution == st.institution):
+            score = 3  # documents without IBAN (savings plans): the account number is unique within a bank
         elif st.account_number and (
             (a.iban and st.account_number in a.iban) or (a.account_number and a.account_number.endswith(st.account_number[-6:]))
         ):

@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 
 from .base import Adapter, ParsedStatement, SourceDocument
+from .boursobank.savings_pdf import BoursoBankSavingsPdf
 from .boursobank.statement_pdf import BoursoBankStatementPdf
 from .common import find_iban, find_institution
 from .generic import GenericCsv, GenericOfx, GenericPdf, GenericQif
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 # One entry per kind of document per institution. To support a new one: write the adapter, add it here.
 ADAPTERS: list[type[Adapter]] = [
     BoursoBankStatementPdf,
+    BoursoBankSavingsPdf,
     RevolutStatementCsv,
     GenericOfx,
     GenericQif,
