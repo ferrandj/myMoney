@@ -130,7 +130,9 @@ def fortuneo_statement_pdf(spec: FSpec) -> bytes:
     _text(pdf, 54, y, "ANCIEN SOLDE" if spec.first else f"ANCIEN SOLDE CRÉDITEUR AU {long_date(opening_date).upper()}")
     _text(pdf, 0, y, fr_space(spec.opening), right=546 if spec.opening >= 0 else 463)
     y += 22
-    for e in spec.entries:
+    for n, e in enumerate(spec.entries):
+        if n == 1:
+            _text(pdf, 29, y, "simÉ")  # the mirrored margin watermark ("Émis le...") lands on the same row as an operation
         _text(pdf, 54, y, e.day.strftime("%d/%m")); _text(pdf, 88, y, (e.value_day or e.day).strftime("%d/%m/%Y")); _text(pdf, 136, y, e.lines[0])
         _text(pdf, 0, y, fr_space(e.amount), right=546 if e.amount > 0 else 463)
         for extra in e.lines[1:]:
@@ -149,6 +151,7 @@ def fortuneo_statement_pdf(spec: FSpec) -> bytes:
         _text(pdf, 0, y, fr_space(credits), right=546)
     y += 24
     closing = spec.wrong_closing if spec.wrong_closing is not None else spec.closing
+    _text(pdf, 29, y, "simÉ")
     _text(pdf, 54, y, f"NOUVEAU SOLDE {'CRÉDITEUR' if closing >= 0 else 'DÉBITEUR'} AU {long_date(end).upper()}")
     _text(pdf, 0, y, fr_space(closing), right=546 if closing >= 0 else 463)
     _text(pdf, 50, y + 40, "Garantie de vos dépôts")

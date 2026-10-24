@@ -586,3 +586,19 @@ def test_web_an_imported_document_read_by_an_older_version_says_so(client):
     assert "version plus ancienne" in review.text and "myMoney dev · lecture " in review.text
     with client.core.db.session() as s:
         assert s.get(Document, int(doc)).parse_result["reader"] == "old00000"  # an import is never rewritten silently
+
+
+def test_the_margin_watermark_does_not_hide_the_closing_balance_or_an_operation():
+    # The fixtures print the mirrored "Émis le" watermark on the closing row and on one operation row.
+    _, [st] = parse(fortuneo_statement_pdf(fortuneo_september()))
+    assert st.balance == fortuneo_september().closing and len(st.transactions) == len(fortuneo_entries())
+    assert not st.warnings and st.confidence == "high"
+
+
+def test_a_home_loan_payment_line_is_a_loan_payment():
+    D = Decimal
+    entries = [FEntry(date(2026, 9, 26), ["CREDIT LOGT 0000TEST00000001"], D("-1931.81"))]
+    _, [st] = parse(fortuneo_statement_pdf(FSpec(entries, opening=D("5000.00"))))
+    [t] = st.transactions
+    assert t.kind == "loan_payment" and t.amount == D("-1931.81") and t.details["loan_number"] == "0000TEST00000001"
+    assert not st.warnings

@@ -25,6 +25,7 @@ from ._identity import read_address_block, read_identity
 
 DAY_MONTH_RE = re.compile(r"^(\d{2})/(\d{2})$")
 FULL_DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+MARGIN_X = 40.0  # nothing of the statement starts left of this
 AMOUNT_RE = re.compile(r"^\d{1,3}(?:[ .]\d{3})*,\d{2}$|^\d+,\d{2}$")
 CARD_RE = re.compile(r"^CARTE\s+(\d{2}/\d{2})\s+(.*)$", re.I)
 ICS_RE = re.compile(r"^[A-Z]{2}\d{2}ZZZ[A-Z0-9]+$")
@@ -80,7 +81,9 @@ class FortuneoStatementPdf(Adapter):
         closing_seen = False
 
         for page_no, words in enumerate(doc.words(1.0)):
-            rows = pdftools.lines(words, join_amounts=True)
+            # The bank prints a mirrored watermark ("Émis le ...") along the left margin: it can land on the same line as an
+            # operation or as the closing balance and would otherwise become the first word of that line.
+            rows = [row for row in pdftools.lines([w for w in words if w["x0"] >= MARGIN_X], join_amounts=True) if row]
             texts_by_row = [" ".join(w["text"] for w in row) for row in rows]
             if page_no == 0:
                 self._read_header(st, rows, texts_by_row)
@@ -284,6 +287,10 @@ def _to_transaction(e: _Entry, st: ParsedStatement, holder_key: str | None) -> T
         kind, reference = "loan_payment", m.group(1)
         details["loan_number"] = m.group(1)
         label = f"Échéance de prêt …{m.group(1)[-4:]}"
+    elif m := re.match(r"^CR[EÉ]DIT\s+LOGT\s+(\S+)", first, flags=re.I):  # a payment on the home loan, same number as "ECH PRET"
+        kind, reference = "loan_payment", m.group(1)
+        details["loan_number"] = m.group(1)
+        label = f"Prêt logement …{m.group(1)[-4:]}"
     elif FEE_RE.match(first):
         kind = "fee"
         label = make_label(first, memo)
