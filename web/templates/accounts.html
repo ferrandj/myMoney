@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Comptes{% endblock %}
+{% from "_macros.html" import copy with context %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="muted">Comptes</p>
+    <p class="big">{{ total|money }}</p>
+    <p class="muted small">Tous tes comptes, leurs informations, leurs titulaires et leurs documents. « Modifier » ouvre la fiche complète ; « Renommer » change le nom, l'établissement et le type sur place (les fichiers du compte sont renommés en conséquence).</p>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="/documents">⇪ Déposer un document</a>
+    <a class="btn" href="/accounts/new">+ Compte manuel</a>
+  </div>
+</section>
+
+{% if not groups and not archived %}
+<section class="card empty"><p>Aucun compte pour l'instant. <a href="/documents">Dépose un document</a> ou <a href="/accounts/new">saisis un compte à la main</a>.</p></section>
+{% endif %}
+
+{% macro account_card(r) %}
+{% set a = r.account %}
+<article class="account-card">
+  <header>
+    <div>
+      <h3><a href="/accounts/{{ a.id }}">{{ a.name }}</a></h3>
+      <p class="muted small">{{ [a.institution, a.type_label]|select|join(' · ') }}{% if me and a.owner_id != me.id %} · <span class="tag">partagé par <span class="sensitive">{{ a.owner.label if a.owner else '?' }}</span></span>{% endif %}{% if a.archived %} · <span class="tag">archivé</span>{% endif %}</p>
+    </div>
+    <p class="account-total">{{ r.total|money(a.currency) }}</p>
+  </header>
+  <dl class="kv">
+    <dt>Titulaire(s)</dt>
+    <dd>{% if a.people %}{% for p in a.people %}<div class="sensitive person">{{ [p.civility, p.last_names|join(' '), p.first_names|join(' ')]|select|join(' ') }}{% if p.birth_names %} <span class="muted small">(né(e) {{ p.birth_names|join(' ') }})</span>{% endif %}</div>{% endfor %}{% else %}<span class="muted">non renseigné</span>{% endif %}</dd>
+    {% if a.iban %}<dt>IBAN</dt><dd><code class="sensitive">{{ a.iban|iban }}</code> {{ copy(a.iban|replace(' ', ''), '', 'Copier l\'IBAN') }}</dd>{% endif %}
+    {% if a.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ a.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+    <dt>Documents</dt><dd>{% if r.docs %}<a href="/documents">{{ r.docs }} fichier{{ 's' if r.docs > 1 }}</a>{% else %}aucun{% endif %}</dd>
+  </dl>
+  <div class="actions">
+    <a class="btn" href="/accounts/{{ a.id }}">Ouvrir</a>
+    {% if r.editable %}
+    <a class="btn" href="/accounts/{{ a.id }}/edit">Modifier</a>
+    <details class="quick-edit">
+      <summary class="btn ghost">Renommer</summary>
+      <form method="post" action="/accounts/{{ a.id }}/quick" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>Nom <input name="name" value="{{ a.name }}" required></label>
+        <label>Établissement <input name="institution" value="{{ a.institution or '' }}"></label>
+        <label>Type
+          <select name="account_type">
+            {% for cat_code, cat_label in CATEGORIES.items() %}
+            <optgroup label="{{ cat_label }}">
+              {% for code, (label, cat) in ACCOUNT_TYPES.items() if cat == cat_code %}<option value="{{ code }}" {% if a.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </optgroup>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn primary">Enregistrer</button>
+      </form>
+    </details>
+    {% endif %}
+  </div>
+</article>
+{% endmacro %}
+
+{% for code, label, rows in groups %}
+<section class="card">
+  <h2>{{ label }} <span class="tag">{{ rows|length }}</span></h2>
+  <div class="account-grid">{% for r in rows %}{{ account_card(r) }}{% endfor %}</div>
+</section>
+{% endfor %}
+
+{% if archived %}
+<section class="card">
+  <h2>Archivés <span class="tag">{{ archived|length }}</span></h2>
+  <div class="account-grid">{% for r in archived %}{{ account_card(r) }}{% endfor %}</div>
+</section>
+{% endif %}
+{% endblock %}

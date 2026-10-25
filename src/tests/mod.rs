@@ -18,3 +18,4 @@ mod cloudflare;
 mod holders;
 mod naming;
 mod refresh;
+mod accounts_page;

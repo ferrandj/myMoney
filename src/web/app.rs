@@ -272,6 +272,7 @@ const TEMPLATES: &[(&str, &str)] = template_sources!(
     "_macros.html",
     "account.html",
     "account_form.html",
+    "accounts.html",
     "analytics.html",
     "base.html",
     "contact.html",
@@ -318,6 +319,8 @@ enum R {
     Analytics,
     AnalyticsCategorize,
     AccountNew,
+    AccountList,
+    AccountQuick,
     AccountCreate,
     AccountDetail,
     ShareAdd,
@@ -385,7 +388,9 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/gaps/{ack_id}/restore", R::GapRestore),
     ("GET", "/analytics", R::Analytics),
     ("POST", "/analytics/categorize", R::AnalyticsCategorize),
+    ("GET", "/accounts", R::AccountList),
     ("GET", "/accounts/new", R::AccountNew),
+    ("POST", "/accounts/{account_id}/quick", R::AccountQuick),
     ("POST", "/accounts/new", R::AccountCreate),
     ("GET", "/accounts/{account_id}", R::AccountDetail),
     ("POST", "/accounts/{account_id}/shares", R::ShareAdd),
@@ -811,6 +816,8 @@ impl Web {
             R::GapRestore => self.gap_restore(cx),
             R::Analytics => self.analytics_page(cx),
             R::AnalyticsCategorize => self.analytics_categorize(cx),
+            R::AccountList => self.accounts_page(cx),
+            R::AccountQuick => self.account_quick(cx),
             R::AccountNew => self.page(cx, "account_form.html", vec![("account", Value::None)]),
             R::AccountCreate => self.account_create(cx),
             R::AccountDetail => self.account_detail(cx),
@@ -1963,6 +1970,56 @@ impl Web {
             Ok(_) => msg(&format!("/accounts/{account_id}"), "Compte mis à jour"),
             Err(e) => msg(&format!("/accounts/{account_id}/edit"), format!("Valeur invalide : {}", str_of(&e))),
         }
+    }
+
+    fn account_quick(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let account_id = p.path_int(0, "account_id");
+        p.check()?;
+        let form = self.verified_form(cx)?;
+        let get = |k: &str| form.get(k).cloned().unwrap_or_default();
+        match self.core.quick_edit_account(account_id, &get("name"), &get("institution"), &get("account_type")) {
+            Ok(()) => msg("/accounts", "Compte mis à jour"),
+            Err(e) => msg("/accounts", format!("Modification impossible : {}", str_of(&e))),
+        }
+    }
+
+    /// Every account the user can see, with its details, its documents and the quick edits.
+    fn accounts_page(&self, cx: &Cx) -> Out {
+        let portfolio = self.core.portfolio(false)?;
+        let values = self.account_values(&portfolio.accounts)?;
+        let (archived, counts, editable) = self.core.session(|c| {
+            let archived = access::only_readable(c, Account::query(c, "WHERE archived = 1 ORDER BY institution, name", [])?)?;
+            let mut counts: HashMap<i64, i64> = HashMap::new();
+            let mut st = c.prepare("SELECT account_id, COUNT(*) FROM documents WHERE account_id IS NOT NULL GROUP BY account_id")?;
+            for row in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))? {
+                let (id, n) = row?;
+                counts.insert(id, n);
+            }
+            Ok((archived, counts, access::editable_ids(c)?))
+        })?;
+        let row = |account: Value, id: i64, total: Value| {
+            Value::sdict(vec![
+                ("account", account),
+                ("total", total),
+                ("docs", counts.get(&id).copied().unwrap_or(0).into()),
+                ("editable", editable.as_ref().map(|e| e.contains(&id)).unwrap_or(true).into()),
+            ])
+        };
+        let mut groups: Vec<(&str, Vec<Value>)> = vec![];
+        for (v, value) in portfolio.accounts.iter().zip(values.iter()) {
+            let r = row(value.attr("account").unwrap_or(Value::None), v.account.id, v.total().into());
+            match groups.iter_mut().find(|(c, _)| *c == v.account.category()) {
+                Some((_, list)) => list.push(r),
+                None => groups.push((v.account.category(), vec![r])),
+            }
+        }
+        let groups: Vec<Value> = CATEGORIES
+            .iter()
+            .filter_map(|(code, label)| groups.iter().find(|(c, _)| c == code).map(|(_, list)| Value::tuple(vec![Value::str(code), Value::str(label), Value::list(list.clone())])))
+            .collect();
+        let archived: Vec<Value> = archived.iter().map(|a| row(views::account_with(a, Value::None, vec![]), a.id, a.balance.into())).collect();
+        self.page(cx, "accounts.html", vec![("groups", Value::list(groups)), ("archived", Value::list(archived)), ("total", portfolio.total.into())])
     }
 
     fn account_delete(&self, cx: &Cx) -> Out {

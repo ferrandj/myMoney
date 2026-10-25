@@ -20,6 +20,7 @@
     <a class="brand" href="/" aria-label="myMoney, accueil"><img class="logo" src="/static/logo.svg" alt="" width="30" height="30"><span class="wordmark">my<b>Money</b></span></a>
     <nav>
       <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Patrimoine</a>
+      <a href="/accounts" {% if request.url.path == '/accounts' or (request.url.path.startswith('/accounts/') and request.url.path != '/accounts/new') %}aria-current="page"{% endif %}>Comptes</a>
       <a href="/analytics" {% if request.url.path.startswith('/analytics') %}aria-current="page"{% endif %}>Analyses</a>
       <a href="/documents" {% if request.url.path.startswith('/documents') %}aria-current="page"{% endif %}>Documents</a>
       <a href="/contacts" {% if request.url.path.startswith('/contacts') %}aria-current="page"{% endif %}>Contacts</a>

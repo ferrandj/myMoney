@@ -526,6 +526,25 @@ impl MyMoney {
         })
     }
 
+    /// The three fields the accounts list edits in place; everything else on the account is left as it is.
+    pub fn quick_edit_account(&self, account_id: i64, name: &str, institution: &str, account_type_code: &str) -> AppResult<()> {
+        self.session(|c| {
+            access::check_edit(c, account_id)?;
+            let before = Account::get(c, account_id)?.ok_or_else(|| AppError::Other("Compte introuvable".into()))?;
+            let mut account = before.clone();
+            if !py::strip(name).is_empty() {
+                account.name = py::strip(name).to_string();
+            }
+            account.institution = Some(py::strip(institution).to_string()).filter(|s| !s.is_empty());
+            if account_type(account_type_code).is_some() {
+                account.account_type = account_type_code.to_string();
+            }
+            account.save(c, &before)?;
+            naming::rename_account_documents(c, account.id)?;
+            Ok(())
+        })
+    }
+
     pub fn delete_account(&self, account_id: i64) -> AppResult<()> {
         self.session(|c| {
             access::check_owner(c, account_id)?;
