@@ -333,6 +333,7 @@ enum R {
     DocumentsDownload,
     DocumentsUpload,
     DocumentsRebuild,
+    DocumentsRefresh,
     DocumentsReview,
     Document,
     DocumentAnalyze,
@@ -340,6 +341,7 @@ enum R {
     DocumentDedup,
     DocumentKeep,
     DocumentUndo,
+    DocumentRefresh,
     DocumentDownload,
     DocumentDelete,
     Contacts,
@@ -399,6 +401,7 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/documents/download", R::DocumentsDownload),
     ("POST", "/documents", R::DocumentsUpload),
     ("POST", "/documents/rebuild", R::DocumentsRebuild),
+    ("POST", "/documents/refresh", R::DocumentsRefresh),
     ("GET", "/documents/review", R::DocumentsReview),
     ("GET", "/documents/{doc_id}", R::Document),
     ("POST", "/documents/{doc_id}/analyze", R::DocumentAnalyze),
@@ -406,6 +409,7 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/documents/{doc_id}/dedup/{index}", R::DocumentDedup),
     ("POST", "/documents/{doc_id}/keep", R::DocumentKeep),
     ("POST", "/documents/{doc_id}/undo", R::DocumentUndo),
+    ("POST", "/documents/{doc_id}/refresh", R::DocumentRefresh),
     ("GET", "/documents/{doc_id}/download", R::DocumentDownload),
     ("POST", "/documents/{doc_id}/delete", R::DocumentDelete),
     ("GET", "/contacts", R::Contacts),
@@ -540,6 +544,7 @@ impl Web {
         g.insert("KIND_LABELS".into(), views::str_map(KIND_LABELS));
         g.insert("DOCUMENT_STATUS".into(), views::str_map(DOCUMENT_STATUS));
         g.insert("DOC_KINDS".into(), views::str_map(views::DOC_KINDS));
+        g.insert("BLANK_HOLDERS".into(), Value::from(&crate::services::holders::form_blocks(&[], 2)));
         g.insert("LOAN_KINDS".into(), Value::tuple(loan_service::LOAN_KINDS.iter().map(|k| Value::str(k)).collect()));
         g.insert(
             "THEME_GROUPS".into(),
@@ -822,6 +827,7 @@ impl Web {
             R::DocumentsDownload => self.documents_download(cx),
             R::DocumentsUpload => self.documents_upload(cx),
             R::DocumentsRebuild => self.documents_rebuild(cx),
+            R::DocumentsRefresh => self.documents_refresh(cx),
             R::DocumentsReview => self.documents_review(cx),
             R::Document => self.document_review(cx),
             R::DocumentAnalyze => self.document_analyze(cx),
@@ -829,6 +835,7 @@ impl Web {
             R::DocumentDedup => self.document_dedup(cx),
             R::DocumentKeep => self.document_keep(cx),
             R::DocumentUndo => self.document_undo(cx),
+            R::DocumentRefresh => self.document_refresh(cx),
             R::DocumentDownload => self.document_download(cx),
             R::DocumentDelete => self.document_delete(cx),
             R::Contacts => self.contacts_page(cx),
@@ -2051,6 +2058,8 @@ impl Web {
             .map(|(inst, adapters)| Value::tuple(vec![inst.into(), Value::list(adapters.into_iter().map(adapter_value).collect())]))
             .collect();
         let imported_count = documents.iter().filter(|d| d.status == "imported").count();
+        let accounts: HashMap<i64, Account> = self.core.session(|c| Ok(Account::query(c, "", [])?.into_iter().map(|a| (a.id, a)).collect()))?;
+        let stale_count = self.core.stale_documents()?.len();
         self.page(
             cx,
             "documents.html",
@@ -2060,7 +2069,8 @@ impl Web {
                 ("missing", missing),
                 ("max_mb", self.settings.max_upload_mb.into()),
                 ("catalog", Value::list(catalog)),
-                ("tree", tree_with_reliability(&documents)),
+                ("tree", tree_with_reliability(&documents, &accounts)),
+                ("stale_count", stale_count.into()),
                 ("pending", Value::list(pending)),
                 ("reasons", reasons),
                 ("imported_count", imported_count.into()),
@@ -2074,7 +2084,8 @@ impl Web {
         let scope = form.get("scope").map(field_str).unwrap_or_default();
         let (imported, groups) = self.core.session(|c| {
             let imported: Vec<Document> = access::visible_documents(c)?.into_iter().filter(|d| d.status == "imported").collect();
-            let groups: Vec<(i64, (String, String))> = imported.iter().map(|d| (d.id, views::document_group(d))).collect();
+            let accounts: HashMap<i64, Account> = Account::query(c, "", [])?.into_iter().map(|a| (a.id, a)).collect();
+            let groups: Vec<(i64, (String, String))> = imported.iter().map(|d| (d.id, (views::institution_of(d, &accounts), views::document_group(d).1))).collect();
             Ok((imported, groups))
         })?;
         let ids: Vec<i64> = if scope == "all" {
@@ -2084,6 +2095,13 @@ impl Web {
         } else if let Some(rest) = scope.strip_prefix("kind:") {
             let (bank, kind) = rest.split_once("::").unwrap_or((rest, ""));
             groups.iter().filter(|(_, (b, k))| b == bank && k == kind).map(|(i, _)| *i).collect()
+        } else if let Some(id) = scope.strip_prefix("account:") {
+            let id = py::py_int(id).unwrap_or(0);
+            imported.iter().filter(|d| d.account_id == Some(id)).map(|d| d.id).collect()
+        } else if let Some(rest) = scope.strip_prefix("akind:") {
+            let (id, kind) = rest.split_once("::").unwrap_or((rest, ""));
+            let id = py::py_int(id).unwrap_or(0);
+            imported.iter().zip(groups.iter()).filter(|(d, (_, (_, k)))| d.account_id.unwrap_or(0) == id && k == kind).map(|(d, _)| d.id).collect()
         } else {
             let chosen: BTreeSet<i64> = form
                 .getlist("ids")
@@ -2203,6 +2221,28 @@ impl Web {
         self.verified_form(cx)?;
         let outcome = self.core.rebuild_imports()?;
         self.page(cx, "rebuild.html", vec![("outcome", Value::from(&serde_json::Value::Object(outcome)))])
+    }
+
+    /// "Actualiser à la dernière version": every document read by an older version (validated or not) is read again.
+    fn documents_refresh(&self, cx: &Cx) -> Out {
+        self.verified_form(cx)?;
+        let (done, failed) = self.core.refresh_documents(None)?;
+        let mut text = if done > 0 { format!("{done} document(s) actualisé(s) à la dernière version") } else { "Aucun document à actualiser".to_string() };
+        if failed > 0 {
+            text += &format!(" · {failed} n'ont pas pu être relus (leur ancienne lecture est conservée)");
+        }
+        msg("/documents", text)
+    }
+
+    fn document_refresh(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let doc_id = p.path_int(0, "doc_id");
+        p.check()?;
+        self.verified_form(cx)?;
+        match self.core.refresh_document(doc_id) {
+            Ok(_) => msg(&format!("/documents/{doc_id}"), "Document actualisé à la dernière version"),
+            Err(e) => msg(&format!("/documents/{doc_id}"), format!("Actualisation impossible : {}", str_of(&e))),
+        }
     }
 
     fn documents_review(&self, cx: &Cx) -> Out {
@@ -2470,9 +2510,9 @@ fn doc_value(d: &Document) -> Value {
     views::obj("Document", d.fields(), vec![("__reliability", views::reliability(d))])
 }
 
-fn tree_with_reliability(documents: &[Document]) -> Value {
+fn tree_with_reliability(documents: &[Document], accounts: &HashMap<i64, Account>) -> Value {
     // the tree's documents are the same objects as the list: keep their reliability with them
-    let tree = views::document_tree(documents);
+    let tree = views::document_tree(documents, accounts);
     let by_id: HashMap<i64, Value> = documents.iter().map(|d| (d.id, doc_value(d))).collect();
     replace_docs(&tree, &by_id)
 }

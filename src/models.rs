@@ -360,6 +360,8 @@ table!(Account, "accounts", true, {
     holder_name: Option<String> = None,
     holder_alias: Option<String> = None,
     holder_address: Option<String> = None,
+    // the people behind the account (civility, names, birth names, first names) as JSON; see services::holders
+    holders: Json = None,
     interest_rate: Option<Decimal> = None,
     archived: bool = false,
     notes: Option<String> = None,
@@ -408,6 +410,8 @@ impl Holding {
 
 table!(Document, "documents", false, {
     filename: String = String::new(),
+    // the name the file had when it was dropped; `filename` becomes the standard name once it is imported
+    original_filename: Option<String> = None,
     owner_id: Option<i64> = None,
     mime: Option<String> = None,
     size: i64 = 0,

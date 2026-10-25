@@ -40,10 +40,17 @@
   </table></div>
 </section>
 {% endif %}
+{% if stale_count %}
+<form method="post" action="/documents/refresh" class="card warn" id="actualiser">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p><strong>{{ stale_count }} document(s)</strong> ont été lus par une version plus ancienne de l'application (validés ou non). L'actualisation les relit avec la dernière version, remet leurs informations et leur nom au format actuel, et <strong>ne touche pas aux opérations</strong> déjà importées.</p>
+  <button class="btn primary">Actualiser à la dernière version ({{ stale_count }})</button>
+</form>
+{% endif %}
 {% if tree %}
 <section class="card" id="bibliotheque">
   <h2>Mes documents <span class="tag">{{ documents|length }}</span></h2>
-  <p class="small muted">Clique sur l'établissement, puis sur le type de document. Coche les fichiers voulus (ou toute une catégorie) pour les télécharger d'un coup.</p>
+  <p class="small muted">Clique sur l'établissement, puis sur le compte et le type de document. Coche les fichiers voulus (ou tout un groupe) pour les télécharger d'un coup.</p>
   <form method="post" action="/documents/download" id="download-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="doc-toolbar">
@@ -59,28 +66,34 @@
     <details class="doc-bank" {% if tree|length == 1 or loop.first %}open{% endif %}>
       <summary><strong>{{ bank.label }}</strong> <span class="tag">{{ bank.count }}</span>
         {% if bank.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="bank:{{ bank.label }}" data-confirm="Invalider les {{ bank.imported }} import(s) de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ bank.imported }})</button>{% endif %}</summary>
-      {% for kind in bank.kinds %}
-      <details class="doc-kind" {% if bank.kinds|length == 1 %}open{% endif %}>
-        <summary>{{ kind.label }} <span class="tag">{{ kind.count }}</span>
-          {% if kind.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="kind:{{ bank.label }}::{{ kind.label }}" data-confirm="Invalider les {{ kind.imported }} import(s) « {{ kind.label }} » de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ kind.imported }})</button>{% endif %}
-          <label class="check doc-all" title="Cocher tout ce groupe"><input type="checkbox" data-check-group aria-label="Tout cocher : {{ bank.label }}, {{ kind.label }}"> tout</label></summary>
-        <div class="table-wrap"><table class="doc-table">
-          <tbody>
-          {% for year, docs in kind.years %}
-            <tr class="doc-year"><th colspan="6">{{ year }}</th></tr>
-            {% for d, day in docs %}
-            <tr>
-              <td class="doc-check"><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Cocher pour télécharger"></td>
-              <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
-              <td class="nowrap small" title="Période ou date du document">{{ day|frdate }}</td>
-              <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
-              {% set rel = reliability(d) %}<td class="nowrap"><span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span></td>
-              <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
-            </tr>
+      {% for account in bank.accounts %}
+      <details class="doc-account" {% if bank.accounts|length == 1 %}open{% endif %}>
+        <summary><strong class="sensitive">{{ account.label }}</strong>{% if account.subtitle %} <span class="muted small">{{ account.subtitle }}</span>{% endif %} <span class="tag">{{ account.count }}</span>
+          {% if account.id and account.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="account:{{ account.id }}" data-confirm="Invalider les {{ account.imported }} import(s) du compte « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ account.imported }})</button>{% endif %}</summary>
+        {% for kind in account.kinds %}
+        <details class="doc-kind" {% if account.kinds|length == 1 %}open{% endif %}>
+          <summary>{{ kind.label }} <span class="tag">{{ kind.count }}</span>
+            {% if kind.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="akind:{{ account.id or 0 }}::{{ kind.label }}" data-confirm="Invalider les {{ kind.imported }} import(s) « {{ kind.label }} » de « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ kind.imported }})</button>{% endif %}
+            <label class="check doc-all" title="Cocher tout ce groupe"><input type="checkbox" data-check-group aria-label="Tout cocher : {{ bank.label }}, {{ account.label }}, {{ kind.label }}"> tout</label></summary>
+          <div class="table-wrap"><table class="doc-table">
+            <tbody>
+            {% for year, docs in kind.years %}
+              <tr class="doc-year"><th colspan="7">{{ year }}</th></tr>
+              {% for d, day, names in docs %}
+              <tr>
+                <td class="doc-check"><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Cocher pour télécharger"></td>
+                <td class="nowrap"><a class="doc-link" href="/documents/{{ d.id }}">{{ kind.label }} - {{ day|frdate }}</a></td>
+                <td class="small">{% if names %}<span class="sensitive">{{ names }}</span>{% endif %}<div class="muted"><span class="sensitive">{{ d.filename }}</span> · {{ (d.size / 1024)|round(0)|int }} Ko</div></td>
+                <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
+                {% set rel = reliability(d) %}<td class="nowrap"><span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span></td>
+                <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
+              </tr>
+              {% endfor %}
             {% endfor %}
-          {% endfor %}
-          </tbody>
-        </table></div>
+            </tbody>
+          </table></div>
+        </details>
+        {% endfor %}
       </details>
       {% endfor %}
     </details>

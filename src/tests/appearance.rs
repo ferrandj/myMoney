@@ -190,7 +190,7 @@ fn test_identifiers_names_and_labels_carry_the_sensitive_class() {
     assert!(page.matches("class=\"sensitive\"").count() >= 10); // amounts, holder, address, operation labels
     assert!(page.contains("<code>FR76")); // IBAN and RIB are in <code>, blurred by the privacy rule
     assert!(Regex::new(r#"<td class="sensitive-cell"><span class="sensitive">"#).unwrap().is_match(&page));
-    assert!(client.get("/documents").text().contains("class=\"sensitive\">releve.pdf"));
+    assert!(client.get("/documents").text().contains("class=\"sensitive\">BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf"));
 }
 
 // ----------------------------------------------------------------------------------------- copy buttons

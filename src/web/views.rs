@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use super::jinja::value::{to_decimal, Result};
@@ -14,6 +13,7 @@ use crate::models::{Account, Counterparty, CounterpartyIdentifier, Document, Fee
 use crate::py::{self, PyDec};
 use crate::services::access::Identity;
 use crate::services::coverage::Gap;
+use crate::services::holders::{self, Person};
 use crate::services::loans;
 use crate::services::statements::ImportPlan;
 
@@ -58,11 +58,24 @@ pub fn account(c: &Connection, a: &Account) -> AppResult<Value> {
     Ok(account_with(a, owner, holdings.iter().map(holding).collect()))
 }
 
+fn person(p: &Person) -> Value {
+    Value::sdict(vec![
+        ("civility", p.civility.clone().into()),
+        ("last_names", Value::list(p.last_names.iter().map(|s| s.clone().into()).collect())),
+        ("birth_names", Value::list(p.birth_names.iter().map(|s| s.clone().into()).collect())),
+        ("first_names", Value::list(p.first_names.iter().map(|s| s.clone().into()).collect())),
+    ])
+}
+
 pub fn account_with(a: &Account, owner: Value, holdings: Vec<Value>) -> Value {
+    let people = holders::of_account(a);
     obj(
         "Account",
         a.fields(),
         vec![
+            ("people", Value::list(people.iter().map(person).collect())),
+            ("holder_blocks", Value::from(&holders::form_blocks(&people, 2))),
+            ("holder_shown", people.len().max(1).into()),
             ("type_label", a.type_label().into()),
             ("category", a.category().into()),
             ("rib", a.rib().into()),
@@ -241,9 +254,15 @@ pub fn plan(c: &Connection, p: &ImportPlan) -> AppResult<Value> {
         None => Value::None,
     };
     let candidates = p.candidates.iter().map(|a| account(c, a)).collect::<AppResult<Vec<_>>>()?;
+    // The holders the form offers: the account's own, else a reading of the line the bank prints.
+    let known = p.account.as_ref().map(holders::of_account).unwrap_or_default();
+    let people = if known.is_empty() { holders::parse_printed(st.holder_name.as_deref().unwrap_or("")) } else { known };
+    let shown = if p.ask_holder || people.len() >= 2 { people.len().max(2) } else { 1 };
     Ok(Value::obj(
         "ImportPlan",
         vec![
+            ("holder_blocks", Value::from(&holders::form_blocks(&people, 2))),
+            ("holder_shown", shown.into()),
             ("statement", parsed_statement(st)),
             ("account", chosen),
             ("candidates", Value::list(candidates)),
@@ -505,67 +524,44 @@ pub fn fee_summaries(c: &Connection, account: &Account) -> AppResult<Vec<Value>>
     Ok(rows)
 }
 
-pub const DOC_KINDS: &[(&str, &str)] = &[
-    ("statement", "Relevé de compte"),
-    ("savings_statement", "Relevé d'épargne"),
-    ("fees_summary", "Récapitulatif des frais"),
-    ("info", "Information"),
-    ("loan_offer", "Offre de prêt"),
-    ("loan_event", "Remboursement anticipé"),
-    ("loan_schedule", "Tableau d'amortissement"),
-    ("pdf", "Relevé (lecture générique)"),
-    ("csv", "Relevé (CSV)"),
-    ("ofx", "Relevé (OFX)"),
-    ("qif", "Relevé (QIF)"),
-];
+pub use crate::services::naming::{document_day, document_group, DOC_KINDS};
 
-fn parse_statements(d: &Document) -> Vec<serde_json::Value> {
+/// The institution a document is filed under: its account's, else the one its reading names.
+pub fn institution_of(d: &Document, accounts: &HashMap<i64, Account>) -> String {
+    d.account_id.and_then(|i| accounts.get(&i)).and_then(|a| a.institution.clone()).filter(|i| !i.is_empty()).unwrap_or_else(|| document_group(d).0)
+}
+
+/// The names a document is about, as a line: its account's holders, else the ones its own reading names.
+pub fn document_names(d: &Document, account: Option<&Account>) -> String {
+    if let Some(a) = account {
+        if let Some(h) = a.holder_name.as_deref().filter(|h| !h.is_empty()) {
+            return h.to_string();
+        }
+    }
+    parse_statements_json(d).iter().find_map(|st| st.get("holder_name").and_then(|h| h.as_str()).filter(|h| !h.is_empty()).map(|h| h.to_string())).unwrap_or_default()
+}
+
+fn parse_statements_json(d: &Document) -> Vec<serde_json::Value> {
     d.parse_result.as_ref().and_then(|r| r.get("statements")).and_then(|s| s.as_array()).cloned().unwrap_or_default()
 }
 
-/// (institution, type of document) as the library shows them.
-pub fn document_group(d: &Document) -> (String, String) {
-    let institution = d
-        .parse_result
-        .as_ref()
-        .and_then(|r| r.get("institution"))
-        .filter(|v| crate::models::truthy(v))
-        .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
-        .unwrap_or_else(|| "Autres documents".into());
-    let category = parse_statements(d)
-        .iter()
-        .find(|st| st.get("extra").map(crate::models::truthy).unwrap_or(false))
-        .and_then(|st| st.get("extra").and_then(|e| e.get("category")).cloned())
-        .filter(crate::models::truthy);
-    let kind = if d.adapter_id.as_deref().map(|a| !a.is_empty()).unwrap_or(false) {
-        match category {
-            Some(c) => c.as_str().map(|s| s.to_string()).unwrap_or_else(|| c.to_string()),
-            None => DOC_KINDS.iter().find(|(k, _)| *k == d.kind).map(|(_, l)| l.to_string()).unwrap_or_else(|| "Document".into()),
-        }
-    } else {
-        "Non reconnu".into()
-    };
-    (institution, kind)
-}
-
-fn document_day(d: &Document) -> NaiveDate {
-    for st in parse_statements(d) {
-        for key in ["period_end", "balance_date"] {
-            if let Some(v) = st.get(key).filter(|v| crate::models::truthy(v)) {
-                if let Some(day) = v.as_str().and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()) {
-                    return day;
-                }
-            }
-        }
+/// Documents grouped for browsing: institution, then account, then type of document, then year, newest first. A
+/// document that belongs to no account (a letter, a document still waiting) goes in "Sans compte", last.
+pub fn document_tree(documents: &[Document], accounts: &HashMap<i64, Account>) -> Value {
+    struct Kind<'a> {
+        label: String,
+        docs: Vec<&'a Document>,
     }
-    d.uploaded_at.date()
-}
-
-/// Documents grouped for browsing: institution, then type of document, then year, newest first.
-pub fn document_tree(documents: &[Document]) -> Value {
-    let mut banks: Vec<(String, Vec<(String, Vec<&Document>)>)> = vec![];
+    struct Acc<'a> {
+        id: Option<i64>,
+        label: String,
+        subtitle: String,
+        kinds: Vec<Kind<'a>>,
+    }
+    let mut banks: Vec<(String, Vec<Acc>)> = vec![];
     for d in documents {
-        let (institution, kind) = document_group(d);
+        let account = d.account_id.and_then(|i| accounts.get(&i));
+        let (institution, kind) = (institution_of(d, accounts), document_group(d).1);
         let bank = match banks.iter().position(|(b, _)| *b == institution) {
             Some(i) => i,
             None => {
@@ -573,45 +569,73 @@ pub fn document_tree(documents: &[Document]) -> Value {
                 banks.len() - 1
             }
         };
-        let kinds = &mut banks[bank].1;
-        match kinds.iter_mut().find(|(k, _)| *k == kind) {
-            Some((_, docs)) => docs.push(d),
-            None => kinds.push((kind, vec![d])),
+        let (id, label, subtitle) = match account {
+            Some(a) => (Some(a.id), a.name.clone(), a.type_label()),
+            None => (None, "Sans compte".to_string(), String::new()),
+        };
+        let accs = &mut banks[bank].1;
+        let slot = match accs.iter().position(|x| x.id == id) {
+            Some(i) => i,
+            None => {
+                accs.push(Acc { id, label, subtitle, kinds: vec![] });
+                accs.len() - 1
+            }
+        };
+        let kinds = &mut accs[slot].kinds;
+        match kinds.iter_mut().find(|k| k.label == kind) {
+            Some(k) => k.docs.push(d),
+            None => kinds.push(Kind { label: kind, docs: vec![d] }),
         }
     }
     let plain = |t: &str| py::lower(&crate::adapters::common::strip_accents(t));
     banks.sort_by_key(|(b, _)| (b == "Autres documents", plain(b)));
     let mut tree = vec![];
-    for (institution, mut kinds) in banks {
-        kinds.sort_by_key(|(k, _)| (k == "Non reconnu", plain(k)));
-        let mut kind_values = vec![];
+    for (institution, mut accs) in banks {
+        accs.sort_by_key(|a| (a.id.is_none(), plain(&a.label), a.id));
         let (mut bank_count, mut bank_imported) = (0usize, 0usize);
-        for (kind, mut docs) in kinds {
-            docs.sort_by(|a, b| (document_day(b), b.id).cmp(&(document_day(a), a.id)));
-            let mut years: Vec<(i32, Vec<Value>)> = vec![];
-            for d in &docs {
-                let day = document_day(d);
-                let year = chrono::Datelike::year(&day);
-                if years.last().map(|(y, _)| *y != year).unwrap_or(true) {
-                    years.push((year, vec![]));
+        let mut account_values = vec![];
+        for mut acc in accs {
+            acc.kinds.sort_by_key(|k| (k.label == "Non reconnu", plain(&k.label)));
+            let (mut acc_count, mut acc_imported) = (0usize, 0usize);
+            let mut kind_values = vec![];
+            for mut kind in acc.kinds {
+                kind.docs.sort_by(|a, b| (document_day(b), b.id).cmp(&(document_day(a), a.id)));
+                let mut years: Vec<(i32, Vec<Value>)> = vec![];
+                for d in &kind.docs {
+                    let day = document_day(d);
+                    let year = chrono::Datelike::year(&day);
+                    if years.last().map(|(y, _)| *y != year).unwrap_or(true) {
+                        years.push((year, vec![]));
+                    }
+                    let names = document_names(d, d.account_id.and_then(|i| accounts.get(&i)));
+                    years.last_mut().unwrap().1.push(Value::tuple(vec![document(d), day.into(), names.into()]));
                 }
-                years.last_mut().unwrap().1.push(Value::tuple(vec![document(d), day.into()]));
+                let imported = kind.docs.iter().filter(|d| d.status == "imported").count();
+                acc_count += kind.docs.len();
+                acc_imported += imported;
+                kind_values.push(Value::sdict(vec![
+                    ("label", kind.label.clone().into()),
+                    ("count", kind.docs.len().into()),
+                    ("imported", imported.into()),
+                    ("years", Value::list(years.into_iter().map(|(y, ds)| Value::tuple(vec![(y as i64).into(), Value::list(ds)])).collect())),
+                ]));
             }
-            let imported = docs.iter().filter(|d| d.status == "imported").count();
-            bank_count += docs.len();
-            bank_imported += imported;
-            kind_values.push(Value::sdict(vec![
-                ("label", kind.into()),
-                ("count", docs.len().into()),
-                ("imported", imported.into()),
-                ("years", Value::list(years.into_iter().map(|(y, ds)| Value::tuple(vec![(y as i64).into(), Value::list(ds)])).collect())),
+            bank_count += acc_count;
+            bank_imported += acc_imported;
+            account_values.push(Value::sdict(vec![
+                ("id", acc.id.map(Value::from).unwrap_or(Value::None)),
+                ("label", acc.label.into()),
+                ("subtitle", acc.subtitle.into()),
+                ("count", acc_count.into()),
+                ("imported", acc_imported.into()),
+                ("kinds", Value::list(kind_values)),
             ]));
         }
         tree.push(Value::sdict(vec![
             ("label", institution.into()),
             ("count", bank_count.into()),
             ("imported", bank_imported.into()),
-            ("kinds", Value::list(kind_values)),
+            ("accounts", Value::list(account_values)),
         ]));
     }
     Value::list(tree)

@@ -642,12 +642,18 @@ fn test_web_account_identity_can_be_corrected_by_hand() {
     let account_id = capture(&done, r"/accounts/(\d+)");
     let form_page = client.get(&format!("/accounts/{account_id}/edit"));
     let text = form_page.text();
-    assert!(form_page.status == 200 && text.contains("M DUPONT JEAN") && text.contains("75011 PARIS") && text.contains("name=\"rib_key\""));
+    // the holder is offered person by person, read from the statement: civility, last name, first name
+    assert!(form_page.status == 200 && text.contains("75011 PARIS") && text.contains("name=\"rib_key\""));
+    assert!(text.contains("name=\"holder_0_last_0\" value=\"DUPONT\"") && text.contains("name=\"holder_0_first_0\" value=\"JEAN\""));
     let r = client.post(
         &format!("/accounts/{account_id}/edit"),
-        &[("csrf", &csrf), ("name", "Compte courant"), ("account_type", "checking"), ("holder_name", "M DUPONT JEAN ET MME DUPONT ANNE"), ("holder_address", "3 PLACE DU MARCHE\n69001 LYON"), ("iban", &iban()), ("bic", "BOUSFRPPXXX")],
+        &[
+            ("csrf", &csrf), ("name", "Compte courant"), ("account_type", "checking"), ("holder_address", "3 PLACE DU MARCHE\n69001 LYON"), ("iban", &iban()), ("bic", "BOUSFRPPXXX"),
+            ("holder_0_civility", "M"), ("holder_0_last_0", "DUPONT"), ("holder_0_first_0", "JEAN"),
+            ("holder_1_civility", "MME"), ("holder_1_last_0", "DUPONT"), ("holder_1_birth_0", "MARTIN"), ("holder_1_first_0", "ANNE"),
+        ],
     );
-    assert!(r.status == 200 && r.text().contains("M DUPONT JEAN ET MME DUPONT ANNE") && r.text().contains("69001 LYON"));
+    assert!(r.status == 200 && r.text().contains("M DUPONT JEAN OU MME DUPONT ANNE") && r.text().contains("69001 LYON"));
 }
 
 #[test]
@@ -818,10 +824,11 @@ fn test_web_review_asks_for_the_full_names_of_a_joint_account() {
     let spec = Spec { holder: joint_holder(), address: joint_address(), ..Spec::new(sample_entries()[..3].to_vec()) };
     let page = upload(&mut client, &csrf, &boursobank_statement_pdf(&spec), "releve.pdf");
     let text = page.text();
-    assert!(text.contains("Noms complets des titulaires") && text.contains("Nom du titulaire coupé par la banque"));
-    assert!(text.contains("name=\"holder_name\"") && text.contains("Compte joint BoursoBank"));
+    assert!(text.contains("Titulaire(s) du compte") && text.contains("Nom du titulaire coupé par la banque") && text.contains("Compte joint BoursoBank"));
+    // one block per person, prefilled from the statement: the two people of the joint account are both offered
+    assert!(text.contains("name=\"holder_0_last_0\" value=\"DUPONT\"") && text.contains("name=\"holder_1_last_0\" value=\"LEROY\"") && text.contains("name=\"holder_1_first_0\" value=\"CLAIRE\""));
     let sole = upload(&mut client, &csrf, &boursobank_statement_pdf(&Spec { account: "00099999999".into(), ..Spec::new(sample_entries()[..3].to_vec()) }), "releve.pdf");
-    assert!(!sole.text().contains("name=\"holder_name\"")); // a name that is not cut is not asked
+    assert!(!sole.text().contains("Nom du titulaire coupé par la banque") && sole.text().contains("name=\"holder_0_last_0\" value=\"DUPONT\"")); // a name that is not cut is not asked
 }
 
 // ---------------------------------------------------------------------------------- duplicate files
@@ -943,7 +950,7 @@ fn test_replacing_the_old_file_swaps_it_and_what_it_brought() {
     core.check_duplicate(doc2).unwrap();
     let files = blobs(&core);
     let result = core.replace_document(doc2, 0).unwrap();
-    assert_eq!((result["replaced"].clone(), num(&result, "removed"), num(&result, "added")), (json!("releve.pdf"), n as i64, n as i64 + 1));
+    assert_eq!((result["replaced"].clone(), num(&result, "removed"), num(&result, "added")), (json!("BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf"), n as i64, n as i64 + 1));
     db(&core, |c| {
         assert!(Document::get(c, first)?.is_none()); // the old file is gone...
         let doc = Document::get(c, doc2)?.unwrap();
@@ -1044,7 +1051,7 @@ fn test_web_file_with_differences_offers_replace_keep_or_discard() {
     let replaced = client.post(&format!("/documents/{new_id}/dedup/0"), &[("csrf", &csrf), ("action", "replace")]);
     assert!(replaced.text().contains("remplacé") && replaced.text().contains("LIBRAIRIE DU COIN"));
     let names = client.get("/documents").text();
-    assert_eq!(names.matches("releve.pdf").count(), 1); // one file left: the new one took the old one's place
+    assert_eq!(names.matches("BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf").count(), 1); // one file left: the new one took the old one's place
 
     // Discarding a differing file leaves the old one untouched.
     let n = sample_entries().len();
