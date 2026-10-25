@@ -14,6 +14,10 @@
   </div>
 </section>
 
+<nav class="tabs" aria-label="Comptes et personnes">
+  <a href="/accounts" aria-current="page">Comptes</a><a href="/people">Personnes</a>
+</nav>
+
 {% if not groups and not archived %}
 <section class="card empty"><p>Aucun compte pour l'instant. <a href="/documents">Dépose un document</a> ou <a href="/accounts/new">saisis un compte à la main</a>.</p></section>
 {% endif %}
@@ -30,7 +34,7 @@
   </header>
   <dl class="kv">
     <dt>Titulaire(s)</dt>
-    <dd>{% if a.people %}{% for p in a.people %}<div class="sensitive person">{{ [p.civility, p.last_names|join(' '), p.first_names|join(' ')]|select|join(' ') }}{% if p.birth_names %} <span class="muted small">(né(e) {{ p.birth_names|join(' ') }})</span>{% endif %}</div>{% endfor %}{% else %}<span class="muted">non renseigné</span>{% endif %}</dd>
+    <dd>{% if a.people %}{% for p in a.people %}<div class="sensitive person">{% if p.id %}<a href="/people/{{ p.id }}">{% endif %}{{ [p.civility, p.last_names|join(' '), p.first_names|join(' ')]|select|join(' ') }}{% if p.id %}</a>{% endif %}{% if p.birth_names %} <span class="muted small">(né(e) {{ p.birth_names|join(' ') }})</span>{% endif %}</div>{% endfor %}{% else %}<span class="muted">non renseigné</span>{% endif %}</dd>
     {% if a.iban %}<dt>IBAN</dt><dd><code class="sensitive">{{ a.iban|iban }}</code> {{ copy(a.iban|replace(' ', ''), '', 'Copier l\'IBAN') }}</dd>{% endif %}
     {% if a.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ a.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
     <dt>Documents</dt><dd>{% if r.docs %}<a href="/documents">{{ r.docs }} fichier{{ 's' if r.docs > 1 }}</a>{% else %}aucun{% endif %}</dd>

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Personnes{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="muted">Personnes</p>
+    <p class="big">{{ rows|length }} fiche{{ 's' if rows|length > 1 }}</p>
+    <p class="muted small">Une fiche par personne (civilité, noms, noms de naissance, prénoms). Rattache-la à un ou plusieurs comptes, joints ou non : plus besoin de retaper les noms, et tu vois d'un coup les comptes de chacun.</p>
+  </div>
+  <div class="actions"><a class="btn primary" href="/people/new">+ Nouvelle personne</a></div>
+</section>
+
+<nav class="tabs" aria-label="Comptes et personnes">
+  <a href="/accounts">Comptes</a><a href="/people" aria-current="page">Personnes</a>
+</nav>
+
+{% if not rows %}
+<section class="card empty"><p>Aucune fiche pour l'instant. Elles se créent toutes seules quand tu valides les titulaires d'un compte, ou à la main avec « Nouvelle personne ».</p></section>
+{% endif %}
+
+<div class="account-grid">
+  {% for r in rows %}
+  <article class="account-card person-card">
+    <header>
+      <div>
+        <h3><a href="/people/{{ r.card.id }}"><span class="sensitive">{{ r.card.label }}</span></a></h3>
+        {% if r.card.birth %}<p class="muted small sensitive">né(e) {{ r.card.birth|join(' ') }}</p>{% endif %}
+      </div>
+      <p class="account-total">{{ r.total|money }}</p>
+    </header>
+    {% if r.accounts %}
+    <ul class="person-accounts">
+      {% for x in r.accounts %}
+      <li><span><a href="/accounts/{{ x.account.id }}">{{ x.account.name }}</a>{% if x.joint %} <span class="tag">joint</span>{% endif %}{% if x.account.archived %} <span class="tag">archivé</span>{% endif %}</span><span class="num">{{ x.total|money(x.account.currency) }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted small">Aucun compte rattaché.</p>{% endif %}
+    <div class="actions">
+      <a class="btn" href="/people/{{ r.card.id }}">Ouvrir</a>
+      {% if r.ids %}<a class="btn" href="/analytics?periode=tout{% for i in r.ids %}&c={{ i }}{% endfor %}">Analyses</a>{% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% endblock %}

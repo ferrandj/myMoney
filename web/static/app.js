@@ -267,3 +267,31 @@ if (downloadForm) {
   );
   refresh();
 }
+
+// Holders: picking a person already registered fills the boxes of the block; typing in them afterwards makes it a new
+// person again (the hidden field carries the card's number, empty for a person typed from scratch).
+document.addEventListener("change", (event) => {
+  const select = event.target.closest(".person-pick");
+  if (!select) return;
+  const block = select.closest(".holder-block");
+  const option = select.selectedOptions[0];
+  const split = (text) => (text ? text.split("|") : []);
+  const fill = (kind, values) => block.querySelectorAll(`input[name*="_${kind}_"]`).forEach((input, i) => (input.value = values[i] || ""));
+  block.querySelector('select[name$="_civility"]').value = option.dataset.civility || "";
+  fill("last", split(option.dataset.last));
+  fill("birth", split(option.dataset.birth));
+  fill("first", split(option.dataset.first));
+  block.querySelector('input[name$="_person"]').value = select.value;
+});
+function forgetPerson(event) {
+  const block = event.target.closest(".holder-block");
+  if (!block || event.target.classList.contains("person-pick")) return;
+  const hidden = block.querySelector('input[name$="_person"]');
+  const pick = block.querySelector(".person-pick");
+  if (hidden && hidden.value) {
+    hidden.value = "";
+    if (pick) pick.value = "";
+  }
+}
+document.addEventListener("input", forgetPerson);
+document.addEventListener("change", forgetPerson);

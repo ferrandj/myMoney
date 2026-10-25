@@ -10,7 +10,7 @@ use crate::testkit::{db, form, num};
 
 fn person(civility: &str, last: &[&str], birth: &[&str], first: &[&str]) -> Person {
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    Person { civility: civility.into(), last_names: v(last), birth_names: v(birth), first_names: v(first) }
+    Person { id: None, civility: civility.into(), last_names: v(last), birth_names: v(birth), first_names: v(first) }
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn people_typed_when_importing_become_the_holders() {
         let account = Account::get(c, num(&result, "account_id"))?.unwrap();
         assert_eq!(account.holder_name.as_deref(), Some("M DUPONT JEAN OU MME LEROY CLAIRE MARIE"));
         assert_eq!(account.holder_alias.as_deref(), Some("M DUPONT OU MME LEROY CLAIRE")); // what the bank prints, to recognise it
-        let people = holders::of_account(&account);
+        let people: Vec<Person> = holders::of_account(&account).into_iter().map(|mut p| { p.id = None; p }).collect(); // each also has a card
         assert_eq!(people, vec![person("M", &["DUPONT"], &["MARTIN"], &["JEAN"]), person("MME", &["LEROY"], &[], &["CLAIRE", "MARIE"])]);
         Ok(())
     });

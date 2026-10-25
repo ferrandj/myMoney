@@ -95,8 +95,19 @@ pub(crate) fn create_all(c: &Connection) -> rusqlite::Result<()> {
             c.execute_batch(ix)?;
         }
     }
+    for (name, ddl) in EXTRA_TABLES {
+        if !table_exists(c, name)? {
+            c.execute_batch(ddl)?;
+        }
+    }
     Ok(())
 }
+
+/// Tables added since the Python models were frozen (the Python version ignores them).
+const EXTRA_TABLES: &[(&str, &str)] = &[(
+    "people",
+    "CREATE TABLE people (id INTEGER NOT NULL, owner_id INTEGER, civility VARCHAR(10) NOT NULL, last_names TEXT, birth_names TEXT, first_names TEXT, notes TEXT, created_at DATETIME NOT NULL, PRIMARY KEY (id))",
+)];
 
 /// Columns added since the Python models were frozen (nullable, so the Python version still opens the same database).
 const EXTRA_COLUMNS: &[(&str, &str, &str, bool)] = &[("accounts", "holders", "TEXT", true), ("documents", "original_filename", "VARCHAR(300)", true)];

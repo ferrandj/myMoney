@@ -15,7 +15,7 @@ use crate::adapters::base::ParsedStatement;
 use crate::error::{value_err, AppError, AppResult};
 use crate::models::{account_type, Account, Document, FeeSummary, Holding, Statement, Transaction};
 use crate::py;
-use crate::services::{access, coverage, holders, ledger, loans, naming};
+use crate::services::{access, coverage, holders, ledger, loans, naming, people};
 
 pub type Form = HashMap<String, String>;
 
@@ -507,8 +507,8 @@ fn apply_holders(c: &Connection, account: &mut Account, st: &ParsedStatement, fo
     if nonempty(&st.holder_name).is_some() && nonempty(&account.holder_alias).is_none() {
         account.holder_alias = st.holder_name.clone();
     }
-    account.holders = Some(holders::to_json(&people));
-    account.holder_name = Some(holders::compose(&people));
+    let people = people::resolve(c, people)?; // each person gets (or reuses) a card
+    people::link(account, &people);
     account.save(c, &before)?;
     Ok(())
 }

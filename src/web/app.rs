@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{Account, AccountShare, Counterparty, Document, Holding, Loan, LoanEvent, LoanInstallment, Transaction, User, ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS};
 use crate::py::{self, PyDec};
 use crate::services::access::{self, Identity};
-use crate::services::{analytics, categories as category_service, counterparties as contact_service, coverage as coverage_service, loans as loan_service, rates, users as user_service};
+use crate::services::{analytics, people as people_service, categories as category_service, counterparties as contact_service, coverage as coverage_service, loans as loan_service, rates, users as user_service};
 
 const PUBLIC_PATHS: &[&str] = &["/static/", "/themes.css", "/healthz", "/login", "/setup", "/manifest.webmanifest", "/sw.js", "/icons/"];
 
@@ -272,6 +272,8 @@ const TEMPLATES: &[(&str, &str)] = template_sources!(
     "account.html",
     "account_form.html",
     "accounts.html",
+    "people.html",
+    "person.html",
     "analytics.html",
     "base.html",
     "contact.html",
@@ -320,6 +322,12 @@ enum R {
     AnalyticsCategorize,
     AccountNew,
     AccountList,
+    PeopleList,
+    PersonNew,
+    PersonCreate,
+    PersonDetail,
+    PersonUpdate,
+    PersonDelete,
     AccountQuick,
     AccountCreate,
     AccountDetail,
@@ -389,6 +397,12 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("GET", "/analytics", R::Analytics),
     ("POST", "/analytics/categorize", R::AnalyticsCategorize),
     ("GET", "/accounts", R::AccountList),
+    ("GET", "/people", R::PeopleList),
+    ("GET", "/people/new", R::PersonNew),
+    ("POST", "/people/new", R::PersonCreate),
+    ("GET", "/people/{person_id}", R::PersonDetail),
+    ("POST", "/people/{person_id}", R::PersonUpdate),
+    ("POST", "/people/{person_id}/delete", R::PersonDelete),
     ("GET", "/accounts/new", R::AccountNew),
     ("POST", "/accounts/{account_id}/quick", R::AccountQuick),
     ("POST", "/accounts/new", R::AccountCreate),
@@ -595,6 +609,11 @@ impl Web {
         context.insert("flash".into(), cx.q("msg").map(Value::str).unwrap_or(Value::None));
         context.insert("me".into(), cx.me().map(|i| views::identity(&i)).unwrap_or(Value::None));
         context.insert("cf_active".into(), Value::Bool(self.cf.enabled() && cx.cf_email.as_deref().map(|e| !e.is_empty()).unwrap_or(false)));
+        if matches!(name, "account_form.html" | "document.html") && self.core.vault.unlocked() {
+            // the people a holder can be picked from
+            let cards = self.core.session(|c| people_service::visible(c))?;
+            context.insert("people_options".into(), Value::list(cards.iter().map(views::person_card).collect()));
+        }
         let body = self.env.render(name, self.globals(), context)?;
         Ok(html(status, body))
     }
@@ -817,6 +836,12 @@ impl Web {
             R::Analytics => self.analytics_page(cx),
             R::AnalyticsCategorize => self.analytics_categorize(cx),
             R::AccountList => self.accounts_page(cx),
+            R::PeopleList => self.people_page(cx),
+            R::PersonNew => self.person_page(cx, None),
+            R::PersonCreate => self.person_create(cx),
+            R::PersonDetail => self.person_detail(cx),
+            R::PersonUpdate => self.person_update(cx),
+            R::PersonDelete => self.person_delete(cx),
             R::AccountQuick => self.account_quick(cx),
             R::AccountNew => self.page(cx, "account_form.html", vec![("account", Value::None)]),
             R::AccountCreate => self.account_create(cx),
@@ -2023,6 +2048,121 @@ impl Web {
             Ok(_) => msg(&format!("/accounts/{account_id}"), "Compte mis à jour"),
             Err(e) => msg(&format!("/accounts/{account_id}/edit"), format!("Valeur invalide : {}", str_of(&e))),
         }
+    }
+
+    /// A card with its accounts and what they are worth.
+    fn person_value(&self, c: &rusqlite::Connection, card: &crate::models::PersonCard, totals: &HashMap<i64, Decimal>) -> AppResult<Value> {
+        let accounts = people_service::accounts_of(c, card.id)?;
+        let mut sum = Decimal::ZERO;
+        let mut rows = vec![];
+        for a in &accounts {
+            let total = totals.get(&a.id).copied().unwrap_or(a.balance);
+            if !a.archived {
+                sum += total;
+            }
+            let joint = crate::services::holders::of_account(a).len() > 1;
+            rows.push(Value::sdict(vec![("account", views::account_with(a, Value::None, vec![])), ("total", total.into()), ("joint", joint.into())]));
+        }
+        Ok(Value::sdict(vec![
+            ("card", views::person_card(card)),
+            ("accounts", Value::list(rows)),
+            ("total", sum.into()),
+            ("ids", Value::list(accounts.iter().filter(|a| !a.archived).map(|a| Value::Int(a.id)).collect())),
+            ("editable", people_service::can_edit(c, card)?.into()),
+        ]))
+    }
+
+    fn people_totals(&self) -> AppResult<HashMap<i64, Decimal>> {
+        let portfolio = self.core.portfolio(false)?;
+        Ok(portfolio.accounts.iter().map(|v| (v.account.id, v.total())).collect())
+    }
+
+    fn people_page(&self, cx: &Cx) -> Out {
+        let totals = self.people_totals()?;
+        let rows = self.core.session(|c| {
+            people_service::backfill(c)?; // accounts typed before the cards existed get theirs
+            let cards = people_service::visible(c)?;
+            cards.iter().map(|k| self.person_value(c, k, &totals)).collect::<AppResult<Vec<_>>>()
+        })?;
+        self.page(cx, "people.html", vec![("rows", Value::list(rows))])
+    }
+
+    fn person_page(&self, cx: &Cx, id: Option<i64>) -> Out {
+        let totals = self.people_totals()?;
+        let found = self.core.session(|c| match id {
+            Some(id) => {
+                let card = people_service::get_visible(c, id).map_err(|_| AppError::Other("__404__".into()))?;
+                Ok((self.person_value(c, &card, &totals)?, crate::services::holders::form_blocks(&[people_service::person_of(&card)], 1)))
+            }
+            None => Ok((Value::None, crate::services::holders::form_blocks(&[], 1))),
+        });
+        let (value, blocks) = match found {
+            Err(AppError::Other(m)) if m == "__404__" => return Err(not_found()),
+            other => other?,
+        };
+        self.page(cx, "person.html", vec![("person", value), ("blocks", Value::from(&blocks))])
+    }
+
+    fn person_detail(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let id = p.path_int(0, "person_id");
+        p.check()?;
+        self.person_page(cx, Some(id))
+    }
+
+    /// The first person of the form (`holder_0_*`) is the card's content.
+    fn card_form(form: &HashMap<String, String>) -> Option<crate::services::holders::Person> {
+        crate::services::holders::from_form(form).and_then(|v| v.into_iter().next()).filter(|p| !p.is_empty())
+    }
+
+    fn person_create(&self, cx: &Cx) -> Out {
+        let form = self.verified_form(cx)?;
+        let Some(p) = Self::card_form(&form) else { return msg("/people/new", "Indique au moins un nom") };
+        let id = self.core.session(|c| {
+            let mut card = crate::models::PersonCard { owner_id: access::owner_for_new(c)?, notes: Some(py::strip(get_or(&form, "notes", "")).to_string()).filter(|s| !s.is_empty()), ..Default::default() };
+            people_service::apply(&mut card, &p);
+            Ok(card.insert(c)?)
+        })?;
+        msg(&format!("/people/{id}"), "Personne enregistrée")
+    }
+
+    fn person_update(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let id = p.path_int(0, "person_id");
+        p.check()?;
+        let form = self.verified_form(cx)?;
+        let Some(person) = Self::card_form(&form) else { return msg(&format!("/people/{id}"), "Indique au moins un nom") };
+        let done = self.core.session(|c| {
+            let mut card = people_service::get_visible(c, id)?;
+            if !people_service::can_edit(c, &card)? {
+                return Err(AppError::Denied("Cette fiche t'est partagée en lecture seule".into()));
+            }
+            let before = card.clone();
+            people_service::apply(&mut card, &person);
+            card.notes = Some(py::strip(get_or(&form, "notes", "")).to_string()).filter(|s| !s.is_empty());
+            card.save(c, &before)?;
+            people_service::sync(c, id)?; // the accounts, and the names of their files, follow
+            Ok(())
+        });
+        match done {
+            Ok(()) => msg(&format!("/people/{id}"), "Fiche mise à jour (comptes et fichiers renommés)"),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn person_delete(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let id = p.path_int(0, "person_id");
+        p.check()?;
+        self.verified_form(cx)?;
+        self.core.session(|c| {
+            let card = people_service::get_visible(c, id)?;
+            if !people_service::can_edit(c, &card)? {
+                return Err(AppError::Denied("Cette fiche t'est partagée en lecture seule".into()));
+            }
+            people_service::delete(c, id)
+        })?;
+        msg("/people", "Fiche supprimée (les comptes gardent les noms, sans lien)")
     }
 
     fn account_quick(&self, cx: &Cx) -> Out {

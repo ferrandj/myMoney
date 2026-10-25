@@ -320,3 +320,11 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
   .ranking li { grid-template-columns: minmax(110px, 1.3fr) 1fr 10.5rem; }
 }
 .bar-value { text-align: right; }
+
+/* Fiches de personnes */
+.holder-pick { margin-bottom: 4px; }
+.person-card { display: flex; flex-direction: column; gap: .5rem; }
+.person-card header { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.person-card h3 { margin: 0; font-size: 1.05rem; }
+.person-card ul.person-accounts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.person-card ul.person-accounts li { display: flex; justify-content: space-between; gap: 12px; }

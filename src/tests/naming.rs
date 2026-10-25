@@ -13,7 +13,7 @@ use crate::testkit::{db, drop_file, form, num};
 const STD: &str = "BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf";
 
 fn person(civility: &str, last: &str, first: &str) -> Person {
-    Person { civility: civility.into(), last_names: vec![last.into()], birth_names: vec![], first_names: if first.is_empty() { vec![] } else { vec![first.into()] } }
+    Person { id: None, civility: civility.into(), last_names: vec![last.into()], birth_names: vec![], first_names: if first.is_empty() { vec![] } else { vec![first.into()] } }
 }
 
 fn parts<'a>(people: &'a [Person], day: NaiveDate) -> NameParts<'a> {
