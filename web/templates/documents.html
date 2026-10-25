@@ -68,7 +68,7 @@
         {% if bank.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="bank:{{ bank.label }}" data-confirm="Invalider les {{ bank.imported }} import(s) de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ bank.imported }})</button>{% endif %}</summary>
       {% for account in bank.accounts %}
       <details class="doc-account" {% if bank.accounts|length == 1 %}open{% endif %}>
-        <summary><strong class="sensitive">{{ account.label }}</strong>{% if account.subtitle %} <span class="muted small">{{ account.subtitle }}</span>{% endif %} <span class="tag">{{ account.count }}</span>
+        <summary><strong class="sensitive">{{ account.label }}</strong>{% if account.subtitle %} <span class="muted small">{{ account.subtitle }}</span>{% endif %}{% if account.holder %} <span class="muted small sensitive">· {{ account.holder }}</span>{% endif %} <span class="tag">{{ account.count }}</span>
           {% if account.id and account.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="account:{{ account.id }}" data-confirm="Invalider les {{ account.imported }} import(s) du compte « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ account.imported }})</button>{% endif %}</summary>
         {% for kind in account.kinds %}
         <details class="doc-kind" {% if account.kinds|length == 1 %}open{% endif %}>

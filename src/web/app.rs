@@ -2191,6 +2191,12 @@ impl Web {
             }
             Ok((archived, counts, access::editable_ids(c)?))
         })?;
+        let filtre = cx.qs("filtre");
+        let keep = |account: &Value| match filtre.as_str() {
+            "joints" => account.attr("joint").map(|j| j.truthy()).unwrap_or(false),
+            "individuels" => !account.attr("joint").map(|j| j.truthy()).unwrap_or(false),
+            _ => true,
+        };
         let row = |account: Value, id: i64, total: Value| {
             Value::sdict(vec![
                 ("account", account),
@@ -2201,7 +2207,11 @@ impl Web {
         };
         let mut groups: Vec<(&str, Vec<Value>)> = vec![];
         for (v, value) in portfolio.accounts.iter().zip(values.iter()) {
-            let r = row(value.attr("account").unwrap_or(Value::None), v.account.id, v.total().into());
+            let account = value.attr("account").unwrap_or(Value::None);
+            if !keep(&account) {
+                continue;
+            }
+            let r = row(account, v.account.id, v.total().into());
             match groups.iter_mut().find(|(c, _)| *c == v.account.category()) {
                 Some((_, list)) => list.push(r),
                 None => groups.push((v.account.category(), vec![r])),
@@ -2211,8 +2221,8 @@ impl Web {
             .iter()
             .filter_map(|(code, label)| groups.iter().find(|(c, _)| c == code).map(|(_, list)| Value::tuple(vec![Value::str(code), Value::str(label), Value::list(list.clone())])))
             .collect();
-        let archived: Vec<Value> = archived.iter().map(|a| row(views::account_with(a, Value::None, vec![]), a.id, a.balance.into())).collect();
-        self.page(cx, "accounts.html", vec![("groups", Value::list(groups)), ("archived", Value::list(archived)), ("total", portfolio.total.into())])
+        let archived: Vec<Value> = archived.iter().map(|a| (views::account_with(a, Value::None, vec![]), a)).filter(|(v, _)| keep(v)).map(|(v, a)| row(v, a.id, a.balance.into())).collect();
+        self.page(cx, "accounts.html", vec![("groups", Value::list(groups)), ("archived", Value::list(archived)), ("total", portfolio.total.into()), ("filtre", filtre.into())])
     }
 
     fn account_delete(&self, cx: &Cx) -> Out {

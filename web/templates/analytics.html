@@ -236,20 +236,21 @@
 <section class="card">
   <h2>Comptes</h2>
   <div class="table-wrap"><table data-sortable>
-    <thead><tr><th>Compte</th><th>Établissement</th><th>Type</th><th class="num">Valeur au {{ end|frdate }}</th><th class="num">Part</th><th class="num">Depuis le {{ start|frdate }}</th></tr></thead>
+    <thead><tr><th>Compte</th><th>Établissement</th><th>Type</th><th>Titulaire(s)</th><th class="num">Valeur au {{ end|frdate }}</th><th class="num">Part</th><th class="num">Depuis le {{ start|frdate }}</th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr>
         <td data-sort="{{ r.account.name|lower }}"><a href="/accounts/{{ r.account.id }}">{{ r.account.name }}</a></td>
         <td class="small" data-sort="{{ (r.account.institution or '')|lower }}">{{ r.account.institution or '' }}</td>
         <td class="small" data-sort="{{ r.account.type_label|lower }}">{{ r.account.type_label }}</td>
+        <td class="small sensitive" data-sort="{{ (r.account.holder_name or '')|lower }}">{{ r.account.holder_name or '' }}</td>
         <td class="num" data-sort="{{ r.total }}">{{ r.total|money }}</td>
         <td class="num small" data-sort="{{ r.share if r.share is not none else -1 }}">{{ ('%.1f'|format(r.share)|replace('.', ',') ~ ' %') if r.share is not none else '' }}</td>
         <td class="num small {{ 'pos' if r.delta and r.delta > 0 else '' }}" data-sort="{{ r.delta if r.delta is not none else 0 }}">{% if r.delta is not none %}{{ r.delta|money }} <span class="muted">{{ r.pct|pct }}</span>{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
-    <tfoot><tr><th colspan="3">Total de la sélection</th><th class="num">{{ total|money }}</th><th></th><th class="num">{% if variation %}{{ variation.delta|money }}{% endif %}</th></tr></tfoot>
+    <tfoot><tr><th colspan="4">Total de la sélection</th><th class="num">{{ total|money }}</th><th></th><th class="num">{% if variation %}{{ variation.delta|money }}{% endif %}</th></tr></tfoot>
   </table></div>
 </section>
 {% endif %}
