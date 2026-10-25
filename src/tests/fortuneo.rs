@@ -859,6 +859,6 @@ fn test_web_the_bank_fees_are_shown_next_to_the_spending() {
     assert!(page.contains("Frais d'après les récapitulatifs") && page.contains("Frais dans les opérations"));
     assert!(page.contains("1 opération(s)")); // the fee line of the statement
     assert!(page.contains("Détail des services (2)") && page.contains("INACTIVITE CARTE EXEMPLE"));
-    // No fees to show for another direction or inside one category.
-    assert!(!client.get("/analytics?vue=depenses&periode=tout&sens=entrees").text().contains("id=\"frais\""));
+    // No fees to show inside one category.
+    assert!(!client.get("/analytics?vue=depenses&periode=tout&cat=courses").text().contains("id=\"frais\""));
 }

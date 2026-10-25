@@ -292,3 +292,31 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .holder-boxes { display: flex; gap: 8px; flex-wrap: wrap; }
 .holder-boxes input { flex: 1 1 150px; min-width: 0; }
 .more-holders > summary { cursor: pointer; color: var(--primary); padding: 4px 0; }
+
+/* Comptes */
+.account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1rem; }
+.account-card { border: 1px solid var(--border); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: .6rem; background: var(--surface); }
+.account-card header { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+.account-card h3 { margin: 0; font-size: 1.05rem; }
+.account-card .account-total { margin: 0; font-weight: 700; white-space: nowrap; }
+.account-card .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-start; margin-top: auto; }
+.quick-edit { flex-basis: 100%; }
+.quick-edit form { margin-top: .5rem; }
+.person { line-height: 1.5; }
+
+/* Analyses : dates, deux colonnes dépenses / revenus, barres alignées */
+.dates { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
+.dates label { display: inline-flex; flex-direction: row; gap: 6px; align-items: center; font-size: .9rem; color: var(--muted); font-weight: 400; }
+.dates input[type="date"] { width: auto; }
+.dates input[type="date"] { padding: 4px 8px; }
+.dates.active input[type="date"] { border-color: var(--primary); }
+.duo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+@media (max-width: 1100px) { .duo { grid-template-columns: minmax(0, 1fr); } }
+.duo-side { min-width: 0; }
+.duo-side .split { gap: 16px; }
+.duo-side .donut-box { width: 200px; }
+@media (min-width: 641px) {
+  .bars li { grid-template-columns: 130px 1fr 10.5rem; }
+  .ranking li { grid-template-columns: minmax(110px, 1.3fr) 1fr 10.5rem; }
+}
+.bar-value { text-align: right; }

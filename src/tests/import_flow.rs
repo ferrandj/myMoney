@@ -824,11 +824,11 @@ fn test_web_review_asks_for_the_full_names_of_a_joint_account() {
     let spec = Spec { holder: joint_holder(), address: joint_address(), ..Spec::new(sample_entries()[..3].to_vec()) };
     let page = upload(&mut client, &csrf, &boursobank_statement_pdf(&spec), "releve.pdf");
     let text = page.text();
-    assert!(text.contains("Titulaire(s) du compte") && text.contains("Nom du titulaire coupé par la banque") && text.contains("Compte joint BoursoBank"));
+    assert!(text.contains("Titulaire(s) du compte") && text.contains("Titulaire(s) à confirmer") && text.contains("Compte joint BoursoBank"));
     // one block per person, prefilled from the statement: the two people of the joint account are both offered
     assert!(text.contains("name=\"holder_0_last_0\" value=\"DUPONT\"") && text.contains("name=\"holder_1_last_0\" value=\"LEROY\"") && text.contains("name=\"holder_1_first_0\" value=\"CLAIRE\""));
     let sole = upload(&mut client, &csrf, &boursobank_statement_pdf(&Spec { account: "00099999999".into(), ..Spec::new(sample_entries()[..3].to_vec()) }), "releve.pdf");
-    assert!(!sole.text().contains("Nom du titulaire coupé par la banque") && sole.text().contains("name=\"holder_0_last_0\" value=\"DUPONT\"")); // a name that is not cut is not asked
+    assert!(!sole.text().contains("Titulaire(s) à confirmer") && sole.text().contains("name=\"holder_0_last_0\" value=\"DUPONT\"")); // a name that is not cut is not asked
 }
 
 // ---------------------------------------------------------------------------------- duplicate files

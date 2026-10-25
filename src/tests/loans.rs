@@ -496,3 +496,41 @@ fn test_web_first_due_form() {
     assert!(ok.text().contains("Date de la première échéance enregistrée") && ok.text().contains("15/03/2025"));
     assert_eq!(client.post("/accounts/999/loan/first-due", &[("csrf", &csrf), ("first_due", "2025-03-15")]).status, 404);
 }
+
+#[test]
+fn the_debt_of_a_loan_is_drawn_from_its_plan_not_from_the_day_it_was_imported() {
+    use crate::services::analytics;
+    let core = core();
+    let spec = LoanSpec::new();
+    let account_id = full_loan(&core, &spec, &["offer", "event", "schedule"]);
+    let (loan, plan) = plan_of(&core, account_id);
+    let history = db(&core, |c| {
+        let account = Account::get(c, account_id)?.unwrap();
+        analytics::account_history(c, &account, &[], account.balance, today())
+    });
+    let first_due = loan.first_due_date.unwrap();
+    let (first_day, first_value) = history.iter().next().map(|(d, v)| (*d, *v)).unwrap();
+    assert!(first_day < first_due && first_day >= loans::add_months(first_due, -1), "the debt starts the month before the first instalment");
+    assert_eq!(first_value, -loan.principal.unwrap(), "it starts at the amount borrowed");
+    let (last_day, last_value) = history.iter().next_back().map(|(d, v)| (*d, *v)).unwrap();
+    assert_eq!(last_day, today());
+    assert_eq!(last_value, -plan.summary.as_ref().unwrap().owed.unwrap(), "and ends at what is owed today");
+    // the debt only shrinks as time goes by
+    let values: Vec<Decimal> = history.values().copied().collect();
+    assert!(values.windows(2).all(|w| w[1] >= w[0]));
+}
+
+#[test]
+fn test_web_the_evolution_can_leave_the_debts_out_of_the_lines() {
+    let mut client = client();
+    let csrf = client.login();
+    let spec = LoanSpec::new();
+    let review = client.post_files("/documents", &[("csrf", &csrf)], &[Upload { field: "files", filename: "offre.pdf", data: &offer_pdf(&spec), content_type: "application/pdf" }]);
+    let doc = Regex::new(r"/documents/(\d+)").unwrap().captures(&review.url).unwrap()[1].to_string();
+    client.post(&format!("/documents/{doc}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Prêt"), ("account_type", "mortgage")]);
+    client.post("/accounts/new", &[("csrf", &csrf), ("name", "Livret A"), ("account_type", "livret_a"), ("balance", "5000")]);
+    let all = client.get("/analytics?vue=evolution&par=compte&periode=tout").text();
+    assert!(all.contains("Masquer les dettes") && all.contains("Prêt"));
+    let without = client.get("/analytics?vue=evolution&par=compte&periode=tout&sans_dettes=1").text();
+    assert!(without.contains("checked") && !without.contains("legend-label\">Prêt"));
+}

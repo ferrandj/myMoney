@@ -23,7 +23,16 @@
 </section>
 {% endif %}
 
-{% if chart %}<a class="card chart" href="/analytics" aria-label="Voir les analyses">{{ chart|safe }}</a>{% endif %}
+{% if chart %}
+<section class="card">
+  <div class="toolbar">
+    <h2><a href="/analytics?periode={{ periode }}">Évolution du patrimoine</a></h2>
+    <div class="seg" aria-label="Période">{% for code, label, href in periods %}<a href="{{ href }}" {% if code == periode %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}</div>
+    <a class="btn small" href="/analytics?periode={{ periode }}&par=compte">Voir par compte</a>
+  </div>
+  {{ chart|safe }}
+</section>
+{% endif %}
 
 {% if portfolio.by_category %}
 <section class="card">

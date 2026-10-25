@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import unresolved_table, copy, holder_fields with context %}
+{% from "_macros.html" import unresolved_table, copy, holder_fields, holders_section with context %}
 {% block title %}{{ doc.filename }}{% endblock %}
 {% block content %}
 <p><a href="/documents">← Documents</a></p>
@@ -146,6 +146,7 @@
     {% if plan.loan_existing and doc.status != 'imported' %}<li class="bad">⚠ <strong>Déjà importé</strong> : {{ plan.loan_existing }}.</li>{% endif %}
     {% if plan.loan_unverified and doc.status != 'imported' %}<li class="bad">⚠ {{ plan.loan_unverified }}</li>{% endif %}
     {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs prêts pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
+    {% if plan.ask_holder %}<li class="bad">⚠ <strong>Emprunteur(s) à confirmer</strong> (« {{ st.holder_name }} ») : vérifie les noms et prénoms ci-dessous, une seule fois.</li>{% endif %}
     {% if plan.account and plan.candidates|length == 1 and not plan.loan_existing and not plan.loan_unverified %}<li class="ok">✓ Rattaché au prêt « {{ plan.account.name }} ».</li>{% endif %}
   </ul>
   {% if doc.status != 'imported' %}
@@ -157,6 +158,7 @@
         {% for a in accounts if a.account_type in ('mortgage', 'loan') %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
       </select>
     </label>
+    {{ holders_section(plan, st) }}
     <fieldset class="new-account">
       <legend>Nouveau prêt</legend>
       <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
@@ -204,6 +206,7 @@
     {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
     {% if plan.fee_existing %}<li class="bad">⚠ <strong>Déjà rattaché</strong> : ce compte a déjà un récapitulatif des frais pour cette période (importé le {{ plan.fee_existing.imported_at|frdate }}).</li>{% endif %}
     {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
+    {% if plan.ask_holder %}<li class="bad">⚠ <strong>Titulaire(s) à confirmer</strong> (« {{ st.holder_name }} ») : compte joint ou nom peu clair. Vérifie les noms, prénoms et le type de compte ci-dessous, une seule fois.</li>{% endif %}
   </ul>
   {% if doc.status != 'imported' %}
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
@@ -214,6 +217,7 @@
         {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
       </select>
     </label>
+    {{ holders_section(plan, st) }}
     <fieldset class="new-account">
       <legend>Nouveau compte</legend>
       <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
@@ -259,7 +263,7 @@
     {% for o in plan.overlaps %}<li class="bad">⚠ Chevauche un relevé déjà importé ({{ o.period_start|frdate }} → {{ o.period_end|frdate }}) : les opérations en double seront ignorées.</li>{% endfor %}
     {% if plan.classified.exact %}<li class="bad">⚠ <strong>{{ plan.classified.exact|length }} doublon(s) exact(s)</strong> : opérations déjà présentes dans le compte, elles seront ignorées.</li>{% endif %}
     {% if plan.classified.probable %}<li class="bad">⚠ <strong>{{ plan.classified.probable|length }} doublon(s) probable(s)</strong> : même jour et même montant qu'une opération déjà présente, mais un libellé différent (autre source). Ignorés par défaut, tu peux les importer quand même ci-dessous.</li>{% endif %}
-    {% if plan.ask_holder %}<li class="bad">⚠ <strong>Nom du titulaire coupé par la banque</strong> (« {{ st.holder_name }} ») : indique les noms complets ci-dessous, une seule fois.</li>{% endif %}
+    {% if plan.ask_holder %}<li class="bad">⚠ <strong>Titulaire(s) à confirmer</strong> (« {{ st.holder_name }} ») : {% if st.extra.get('holder_maybe_truncated') %}la banque coupe le nom{% else %}compte joint ou nom peu clair{% endif %}. Vérifie les noms, prénoms et le type de compte ci-dessous, une seule fois.</li>{% endif %}
     {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre à ce relevé : choisis le bon ci-dessous.</li>{% endif %}
     {% if not st.warnings and not plan.issues and not plan.already_imported and not plan.overlaps and not plan.classified.exact and not plan.classified.probable %}<li class="ok">✓ Aucun doublon, aucune incohérence détectée avec les relevés déjà importés.</li>{% endif %}
     {% endif %}
@@ -321,12 +325,7 @@
         {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}{% if a.holder_name %} · {{ a.holder_name }}{% endif %}</option>{% endfor %}
       </select>
     </label>
-    <fieldset class="holders{{ ' ask-names' if plan.ask_holder }}">
-      <legend>Titulaire(s) du compte</legend>
-      {% if plan.ask_holder %}<small>Sur ce document la banque tronque le nom (« {{ st.holder_name }} »). Complète ici les noms et prénoms de chaque titulaire. Ils servent à reconnaître tes virements entre comptes et ne sont demandés qu'une fois.</small>
-      {% else %}<small class="muted">Préremplis d'après le document : corrige si besoin. Pour un compte joint, ajoute le cotitulaire ; plusieurs cases quand un document demande un nom ou les deux, ou plusieurs prénoms.</small>{% endif %}
-      {{ holder_fields(plan.holder_blocks, plan.holder_shown, plan.ask_holder) }}
-    </fieldset>
+    {{ holders_section(plan, st) }}
     <fieldset class="new-account">
       <legend>Nouveau compte</legend>
       <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>

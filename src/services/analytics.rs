@@ -96,7 +96,39 @@ fn date_param(d: NaiveDate) -> String {
 // ------------------------------------------------------------------------------------------ history
 
 /// End-of-day value in EUR of one account, one entry per day from its first known day to today.
+/// A loan has no operations to walk back through: its debt is read from the repayment plan (capital left after each
+/// instalment or early repayment), from the month before the first instalment. None when the plan has no dates yet.
+fn loan_history(c: &Connection, account: &Account, today: NaiveDate) -> AppResult<Option<History>> {
+    use crate::services::loans;
+    let Some(loan) = loans::loan_of(c, account.id)? else { return Ok(None) };
+    let plan = loans::build(c, &loan, Some(today))?;
+    let mut rows: Vec<&loans::Row> = plan.rows.iter().filter(|r| r.date.is_some()).collect();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    rows.sort_by_key(|r| r.date);
+    let first = rows[0].date.unwrap();
+    let start = loan.first_due_date.map(|d| loans::add_months(d, -1)).unwrap_or_else(|| loans::add_months(first, -1)).min(first);
+    let mut owed = loan.principal.unwrap_or(rows[0].remaining + rows[0].capital);
+    let (mut next, mut day) = (0, start);
+    let mut history = History::new();
+    while day <= today {
+        while next < rows.len() && rows[next].date.unwrap() <= day {
+            owed = rows[next].remaining;
+            next += 1;
+        }
+        history.insert(day, -owed);
+        day += Duration::days(1);
+    }
+    Ok(Some(history))
+}
+
 pub fn account_history(c: &Connection, account: &Account, holdings: &[Holding], current: Decimal, today: NaiveDate) -> AppResult<History> {
+    if matches!(account.account_type.as_str(), "mortgage" | "loan") {
+        if let Some(history) = loan_history(c, account, today)? {
+            return Ok(history);
+        }
+    }
     let mut st = c.prepare_cached("SELECT date, amount FROM transactions WHERE account_id = ?")?;
     let rows: Vec<(NaiveDate, Decimal)> = st.query_map([account.id], |r| Ok((NaiveDate::from_sql(r.get_ref(0)?), Decimal::from_sql(r.get_ref(1)?))))?.collect::<Result<_, _>>()?;
     if let (false, true, Some(bd)) = (rows.is_empty(), holdings.is_empty(), account.balance_date) {

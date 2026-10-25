@@ -70,7 +70,7 @@ pub struct ImportPlan {
     pub issues: Vec<String>,
     /// this statement ends after the balance currently stored
     pub newer_balance: bool,
-    /// The holder line looks cut by the bank and the full names were never given: ask once, before importing.
+    /// The holder line is unclear (cut by the bank, several people, no civility) and the names were never confirmed: ask once, before importing.
     pub ask_holder: bool,
     pub dedup: Option<DedupReport>,
     pub fee_existing: Option<FeeSummary>,
@@ -110,8 +110,8 @@ impl ImportPlan {
         let one = self.account.is_some() && self.candidates.len() == 1 && st.confidence == "high" && st.warnings.is_empty();
         match st.document_kind.as_deref() {
             Some("info") => true, // nothing to ask: it is just filed
-            Some("fees_summary") => one && self.fee_existing.is_none(),
-            k if is_loan(k) => one && self.loan_existing.is_none() && self.loan_unverified.is_none(),
+            Some("fees_summary") => one && self.fee_existing.is_none() && !self.ask_holder,
+            k if is_loan(k) => one && self.loan_existing.is_none() && self.loan_unverified.is_none() && !self.ask_holder,
             _ => {
                 one && self.issues.is_empty()
                     && self.overlaps.is_empty()
@@ -165,6 +165,9 @@ pub fn plan_import(c: &Connection, st: &ParsedStatement, account: Option<&Accoun
     let kind = st.document_kind.as_deref();
     if document_only(kind) {
         let mut plan = ImportPlan::new(st.clone(), account.cloned(), candidates, ledger::Classified::default());
+        if kind != Some("info") {
+            plan.ask_holder = holder_unconfirmed(st, account);
+        }
         if is_loan(kind) {
             plan.loan_existing = loans::existing_for(c, st, account)?;
             plan.loan_unverified = loans::unverified(c, st, account)?;
@@ -266,7 +269,8 @@ fn compare(c: &Connection, st: &ParsedStatement, previous: &Statement, classifie
 }
 
 fn holder_unconfirmed(st: &ParsedStatement, account: Option<&Account>) -> bool {
-    if !st.extra_truthy("holder_maybe_truncated") {
+    let unclear = st.extra_truthy("holder_maybe_truncated") || nonempty(&st.holder_name).map(holders::is_unclear).unwrap_or(false);
+    if !unclear {
         return false;
     }
     // Once the user has typed the full names they differ from what the bank prints: never ask again for this account.

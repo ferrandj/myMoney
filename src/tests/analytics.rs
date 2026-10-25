@@ -277,8 +277,8 @@ fn test_web_views_filters_and_totals() {
     assert!(per_account.matches("class=\"line s").count() >= 1 && per_account.contains("legend-label"));
     assert!(text.contains("Tous les comptes"));
 
-    let only_savings = client.get("/analytics?vue=repartition&par=compte&c=2").text();
-    assert!(only_savings.contains("1 compte(s) sélectionné(s)") && only_savings.contains("donut-svg"));
+    let only_savings = client.get("/analytics?vue=evolution&par=compte&c=2").text();
+    assert!(only_savings.contains("1 compte(s) sélectionné(s)") && !only_savings.contains("donut-svg")); // the split by account or category is a grouping of the evolution chart
     assert!(only_savings.replace('\u{202f}', " ").replace('\u{a0}', " ").contains("5 000,00 €")); // thousands separator is a non-breaking space
     assert_eq!(only_savings.matches("Compte courant").count(), 1); // only in the list of accounts to tick, not in the figures
 
@@ -290,6 +290,24 @@ fn test_web_views_filters_and_totals() {
     let depenses = client.get("/analytics?vue=depenses&periode=tout");
     let text = depenses.text();
     assert!(depenses.status == 200 && text.contains("par catégorie") && text.contains("Courses") && text.contains("Impôts et taxes"));
+
+    // Spending and income share one page, each with its own ring
+    assert!(text.matches("donut-svg").count() >= 2 && text.contains("Revenus") && text.contains("Dépenses") && text.contains("Mois par mois"));
+    assert!(!text.contains("vue=repartition") && !text.contains("vue=flux"));
+
+    // The calendar: two dates replace the preset periods and bound the figures, the end date values the accounts
+    let ranged = client.get("/analytics?vue=depenses&du=2026-09-01&au=2026-09-30");
+    let ranged_text = ranged.text();
+    assert!(ranged.status == 200 && ranged_text.contains("name=\"du\" value=\"2026-09-01\"") && ranged_text.contains("name=\"au\" value=\"2026-09-30\""));
+    assert!(!ranged_text.contains("aria-current=\"true\">1 an")); // no preset is highlighted
+    let past = client.get("/analytics?vue=evolution&du=2026-08-01&au=2026-08-31").text();
+    assert!(past.contains("Valeur au 31/08/2026") && past.contains("Patrimoine net au 31/08/2026"));
+    assert_eq!(client.get("/analytics?vue=evolution&du=nonsense&au=2999-01-01").status, 200); // bad dates are ignored, a future end stops at today
+
+    // The dashboard draws the same wealth line, with axes and a choice of period
+    let home = client.get("/?periode=3m").text();
+    assert!(home.contains("Évolution du patrimoine") && home.contains("chart-svg") && home.contains("/?periode=1a") && home.contains("aria-current=\"true\">3 mois"));
+    assert_eq!(client.get("/?periode=zzz").status, 200);
 
     // Nonsense parameters fall back to defaults instead of failing.
     let weird = client.get("/analytics?vue=nope&periode=zzz&par=zzz&c=999");
