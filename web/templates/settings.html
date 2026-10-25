@@ -106,9 +106,19 @@
 </section>
 {% endif %}
 
-<section class="card">
+<section class="card" id="taux">
   <h2>Taux réglementés</h2>
-  <p class="small muted">Appliqués automatiquement aux livrets de ce type, sauf si un taux est saisi sur le compte.</p>
+  <p class="small muted">Lus sur les pages officielles de {{ online_rates.source }} au démarrage de l'application, puis toutes les 24 heures ; seules ces pages publiques sont demandées, rien de personnel n'est envoyé. Appliqués automatiquement aux livrets de ce type, sauf si un taux est saisi sur le compte. Si la lecture échoue, la table ci-dessous prend le relais.</p>
+  {% if online_rates.read_at %}
+  <ul class="checks small">
+    <li class="ok">✓ Dernière lecture le {{ online_rates.read_at }} :
+      {% for k, label in [('livret_a', 'Livret A'), ('ldds', 'LDDS'), ('lep', 'LEP'), ('cel', 'CEL')] %}{% if k in online_rates.rates %}{{ label }} {{ ('%.2f'|format(online_rates.rates[k]))|replace('.', ',') }} %{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}</li>
+    {% if online_rates.error %}<li class="bad">⚠ Dernière tentative le {{ online_rates.checked_at }} : {{ online_rates.error }}</li>{% endif %}
+  </ul>
+  {% elif online_rates.checked_at %}<p class="warn small">⚠ Lecture impossible le {{ online_rates.checked_at }} : {{ online_rates.error }}. La table intégrée s'applique.</p>
+  {% else %}<p class="muted small">Pas encore de lecture : elle se fait au démarrage.</p>{% endif %}
+  <form method="post" action="/settings/rates/refresh" class="actions"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small">Actualiser maintenant</button></form>
+  <h3>Table intégrée</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Depuis le</th><th class="num">Livret A</th><th class="num">LDDS</th><th class="num">LEP</th><th class="num">CEL</th></tr></thead>
     {% for since, r in rates %}

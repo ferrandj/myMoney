@@ -325,6 +325,8 @@ impl MyMoney {
     }
 
     pub fn start_background(self: &Arc<Self>, web_sessions_active: Arc<dyn Fn() -> bool + Send + Sync>) {
+        // the public rates of the regulated savings accounts: read now, then every 24 hours
+        crate::services::public_rates::start(self.settings.data_dir.clone(), self.stop.clone());
         let me = Arc::downgrade(self);
         let stop = self.stop.clone();
         std::thread::Builder::new()
@@ -542,6 +544,17 @@ impl MyMoney {
             }
             account.save(c, &before)?;
             naming::rename_account_documents(c, account.id)?;
+            Ok(())
+        })
+    }
+
+    pub fn set_rate(&self, account_id: i64, rate: Decimal) -> AppResult<()> {
+        self.session(|c| {
+            access::check_edit(c, account_id)?;
+            let before = Account::get(c, account_id)?.ok_or_else(|| AppError::Value("Compte introuvable".into()))?;
+            let mut account = before.clone();
+            account.interest_rate = Some(rate);
+            account.save(c, &before)?;
             Ok(())
         })
     }

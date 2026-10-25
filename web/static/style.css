@@ -330,3 +330,10 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .person-card ul.person-accounts li { display: flex; justify-content: space-between; gap: 12px; }
 
 .holder-boxes input { text-transform: uppercase; }
+
+/* Taux à renseigner */
+.rate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 0; border-top: 1px solid var(--border); }
+.rate-row:first-of-type { border-top: 0; }
+.rate-form { flex: 1 1 320px; }
+.rate-form input[name="rate"] { flex: 2 1 200px; }
+.rates-needed { border-color: var(--warn); }

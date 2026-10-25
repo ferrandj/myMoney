@@ -529,6 +529,7 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
             },
             institution: pick("institution").or_else(|| st.institution.clone()),
             currency: st.currency.clone(),
+            interest_rate: pick("interest_rate").and_then(|r| crate::adapters::common::py_decimal(&r.replace(',', ".").replace('%', "").replace(' ', ""))).filter(|r| *r >= Decimal::ZERO && *r <= Decimal::from(100)),
             ..Default::default()
         };
         a.insert(c)?;

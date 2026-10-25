@@ -48,9 +48,9 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% if me and me.is_admin %}
       <input type="hidden" name="lock" value="1">
-      <button type="submit" class="btn ghost" title="Efface la clé de la mémoire pour tout le monde : plus rien n'est lisible">🔒 Verrouiller</button>
+      <button type="submit" class="btn ghost" title="Efface la clé de la mémoire pour tout le monde : plus rien n'est lisible" aria-label="Verrouiller"><span class="ico">🔒</span><span class="lbl">Verrouiller</span></button>
       {% else %}
-      <button type="submit" class="btn ghost" title="Ferme ta session">⎋ Déconnexion</button>
+      <button type="submit" class="btn ghost" title="Ferme ta session" aria-label="Déconnexion"><span class="ico">⎋</span><span class="lbl">Déconnexion</span></button>
       {% endif %}
     </form>
   </header>
