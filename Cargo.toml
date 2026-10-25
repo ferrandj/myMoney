@@ -31,12 +31,13 @@ rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"]
 unicode-normalization = "0.1"
 unicode-general-category = "1"
 zeroize = "1"
-log = "0.4"
+log = { version = "0.4", features = ["std"] }
 flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 num-bigint = "0.4"
 num-traits = "0.2"
 ureq = { version = "2", default-features = false, features = ["tls", "json", "proxy-from-env"] }
+rsa = { version = "0.9", features = ["sha2"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 
 [profile.release]

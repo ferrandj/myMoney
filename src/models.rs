@@ -207,6 +207,11 @@ macro_rules! table {
             pub const TABLE: &'static str = $table;
             pub const COLUMNS: &'static [&'static str] = &[$(stringify!($field)),*];
 
+            /// The columns as template values (the attributes of the SQLAlchemy row).
+            pub fn fields(&self) -> Vec<(&'static str, crate::web::jinja::Value)> {
+                vec![("id", self.id.into()), $((stringify!($field), self.$field.clone().into())),*]
+            }
+
             pub fn select_sql() -> String {
                 let cols: Vec<String> = std::iter::once("id".to_string()).chain(Self::COLUMNS.iter().map(|c| format!("\"{}\"", c))).collect();
                 format!("SELECT {} FROM {}", cols.join(", "), $table)

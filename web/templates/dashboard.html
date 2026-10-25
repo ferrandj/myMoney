@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Patrimoine{% endblock %}
+{% from "_macros.html" import gap_row with context %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="muted">Patrimoine net</p>
+    <p class="big">{{ portfolio.total|money }}</p>
+    <p class="muted small">Actifs {{ portfolio.assets|money }}{% if portfolio.debts %} · Dettes {{ portfolio.debts|money }}{% endif %}</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/analytics">📈 Analyses</a>
+    <a class="btn primary" href="/documents">⇪ Déposer un document</a>
+    <a class="btn" href="/accounts/new">+ Compte manuel</a>
+  </div>
+</section>
+
+{% if gaps %}
+<section class="card gaps">
+  <h2>Relevés manquants <span class="tag">{{ gaps|length }}</span></h2>
+  <p class="small muted">Aucun relevé importé ne couvre ces périodes. Dépose le relevé manquant, ou dis que c'est normal (compte sans mouvement, relevé jamais émis…).</p>
+  <ul class="gap-list">{% for g in gaps %}{{ gap_row(g, '/') }}{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if chart %}<a class="card chart" href="/analytics" aria-label="Voir les analyses">{{ chart|safe }}</a>{% endif %}
+
+{% if portfolio.by_category %}
+<section class="card">
+  <h2>Répartition</h2>
+  <ul class="bars">
+    {% for code, label, value in portfolio.by_category %}
+    {% set pct = (value / portfolio.assets * 100) if portfolio.assets and value > 0 else 0 %}
+    <li>
+      <span class="bar-label">{{ label }}</span>
+      <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect class="fill cat-{{ code }}" width="{{ '%.2f'|format(pct) }}" height="10" rx="2"/></svg>
+      <span class="bar-value">{{ value|money }} <small class="muted">{{ '%.1f'|format(pct) }} %</small></span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if not portfolio.accounts %}
+<section class="card empty">
+  <h2>Bienvenue 👋</h2>
+  <p>Deux façons d'ajouter tes comptes :</p>
+  <ol>
+    <li><a href="/documents">Dépose</a> un relevé (PDF, CSV, OFX…) : le bon adapter est choisi tout seul, le compte est créé avec son titulaire, son RIB et ses opérations.</li>
+    <li><a href="/accounts/new">Saisis</a> un compte à la main (Livret A, bien immobilier…).</li>
+  </ol>
+</section>
+{% endif %}
+
+{% for code, label, values in groups %}
+<section class="card">
+  <h2>{{ label }}</h2>
+  <table class="accounts">
+    {% for v in values %}
+    <tr>
+      <td><a href="/accounts/{{ v.account.id }}">{{ v.account.name }}</a>
+        <div class="muted small">{{ [v.account.institution, v.account.type_label]|select|join(' · ') }}{% if v.account.holder_name %} · <span class="sensitive">{{ v.account.holder_name }}</span>{% endif %}{% if me and v.account.owner_id != me.id %} · <span class="tag">partagé par <span class="sensitive">{{ v.account.owner.label if v.account.owner else '?' }}</span></span>{% endif %}</div>
+        {% for w in v.warnings %}<div class="warn small">⚠ {{ w }}</div>{% endfor %}
+      </td>
+      <td class="num">{{ v.total|money }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endfor %}
+
+{% if to_identify %}
+<section class="card">
+  <h2>À identifier</h2>
+  <p>{{ to_identify }} bénéficiaire(s) ou émetteur(s) vus dans tes opérations ne sont pas encore nommés. <a href="/contacts">Les nommer</a> : les prochains imports les reconnaîtront.</p>
+</section>
+{% endif %}
+{% endblock %}

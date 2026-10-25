@@ -1,0 +1,58 @@
+{# A button that copies `text` to the clipboard (attached by app.js: no inline script allowed). #}
+{% macro copy(text, label="Copier", title="Copier dans le presse-papiers") -%}
+<button type="button" class="btn small copy" data-copy="{{ text }}" title="{{ title }}" aria-label="{{ title }}">⧉ <span class="copy-label">{{ label }}</span></button>
+{%- endmacro %}
+{# Inline form to name an unknown counterparty: remembered by IBAN and by the name as the bank prints it. #}
+{% macro identify_form(g, next) %}
+{% set known = contact_choices() %}
+<form method="post" action="/contacts/identify" class="inline-identify">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <input type="hidden" name="iban" value="{{ g.iban or '' }}">
+  <input type="hidden" name="printed_name" value="{{ g.name or '' }}">
+  {% if known %}
+  <select name="contact_id" aria-label="Contact déjà enregistré" data-inline-contact>
+    <option value="">Nouveau contact…</option>
+    {% for id, name in known %}<option value="{{ id }}">{{ name }}</option>{% endfor %}
+  </select>
+  {% endif %}
+  <span class="new-contact-fields">
+    <input name="name" placeholder="Qui est-ce ?" value="" aria-label="Nom du contact" {% if not known %}required{% endif %}>
+    <input name="phone" placeholder="Téléphone (facultatif)" inputmode="tel" aria-label="Téléphone">
+    <select name="kind" aria-label="Type">
+      {% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+    </select>
+  </span>
+  <button class="btn small primary">Retenir</button>
+</form>
+{% endmacro %}
+
+{# One missing period: upload the statement, or say it is normal. #}
+{% macro gap_row(g, next) %}
+<li class="gap">
+  <div><strong>{{ g.account_name }}</strong> · {{ g.label }} <span class="muted small">({{ g.days }} jour{{ 's' if g.days > 1 }} sans relevé)</span></div>
+  <div class="actions">
+    <a class="btn small primary" href="/documents?account_id={{ g.account_id }}&start={{ g.start.isoformat() }}&end={{ g.end.isoformat() }}">Déposer le relevé manquant</a>
+    <form method="post" action="/gaps/acknowledge" data-confirm="Marquer « {{ g.label }} » comme normal pour {{ g.account_name }} ? Il ne sera plus signalé.">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ next }}">
+      <input type="hidden" name="account_id" value="{{ g.account_id }}"><input type="hidden" name="start" value="{{ g.start.isoformat() }}"><input type="hidden" name="end" value="{{ g.end.isoformat() }}">
+      <button class="btn small">C'est normal</button>
+    </form>
+  </div>
+</li>
+{% endmacro %}
+
+{% macro unresolved_table(items, next, limit=10) %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Imprimé par la banque</th><th class="num">Opérations</th><th class="num">Reçu / envoyé</th><th>Qui est-ce ?</th></tr></thead>
+  {% for g in items[:limit] %}
+  <tr>
+    <td>{{ g.name or '—' }}{% if g.iban %}<div class="muted small"><code>{{ g.iban }}</code></div>{% endif %}</td>
+    <td class="num">{{ g.count }}</td>
+    <td class="num small">{% if g.total_in %}<span class="pos">+{{ g.total_in|money }}</span><br>{% endif %}{% if g.total_out %}−{{ g.total_out|money }}{% endif %}</td>
+    <td>{{ identify_form(g, next) }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% if items|length > limit %}<p class="small muted">{{ items|length - limit }} autre(s) sur la page <a href="/contacts">Contacts</a>.</p>{% endif %}
+{% endmacro %}

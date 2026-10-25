@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Modifier' if account else 'Nouveau compte' }}{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<h1>{{ 'Modifier le compte' if account else 'Nouveau compte manuel' }}</h1>
+<form method="post" class="card stack">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Nom <input name="name" required value="{{ account.name if account else '' }}" placeholder="Livret A, Appartement Lyon…"></label>
+  <label>Type
+    <select name="account_type">
+      {% for cat_code, cat_label in CATEGORIES.items() %}
+      <optgroup label="{{ cat_label }}">
+        {% for code, (label, cat) in ACCOUNT_TYPES.items() if cat == cat_code %}
+        <option value="{{ code }}" {% if account and account.account_type == code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Établissement <input name="institution" value="{{ account.institution or '' if account else '' }}" placeholder="BoursoBank, Cashbee…"></label>
+  <label>Solde / valeur actuelle <input name="balance" inputmode="decimal" value="{{ account.balance if account else '' }}" placeholder="0,00">
+    <small>Pour un crédit, indique le capital restant dû. Pour un compte avec positions (crypto, PEA…), laisse 0 et ajoute les positions. Un relevé importé met le solde à jour.</small></label>
+  <label>Devise <input name="currency" value="{{ account.currency if account else 'EUR' }}" maxlength="10"></label>
+  <label>Taux d'intérêt (% / an) <input name="interest_rate" inputmode="decimal" value="{{ account.interest_rate if account and account.interest_rate is not none else '' }}">
+    <small>Laisse vide pour un livret réglementé (Livret A, LDDS, LEP, CEL, Livret Jeune) : le taux officiel en vigueur est appliqué automatiquement.</small></label>
+  <fieldset>
+    <legend>Titulaire et coordonnées</legend>
+    <small class="muted">Remplis automatiquement à partir des relevés importés ; corrige-les ici si besoin.</small>
+    <label>Titulaire <input name="holder_name" value="{{ account.holder_name or '' if account else '' }}" autocomplete="off"></label>
+    <label>Adresse <textarea name="holder_address" rows="2">{{ account.holder_address or '' if account else '' }}</textarea></label>
+    <label>IBAN <input name="iban" value="{{ account.iban or '' if account else '' }}" autocomplete="off"></label>
+    <label>BIC <input name="bic" value="{{ account.bic or '' if account else '' }}" autocomplete="off"></label>
+    <div class="row-form">
+      <label>Code banque <input name="bank_code" value="{{ account.bank_code or '' if account else '' }}" autocomplete="off"></label>
+      <label>Code guichet <input name="branch_code" value="{{ account.branch_code or '' if account else '' }}" autocomplete="off"></label>
+      <label>N° de compte <input name="account_number" value="{{ account.account_number or '' if account else '' }}" autocomplete="off"></label>
+      <label>Clé RIB <input name="rib_key" value="{{ account.rib_key or '' if account else '' }}" autocomplete="off"></label>
+    </div>
+  </fieldset>
+  <label>Notes <textarea name="notes" rows="2">{{ account.notes or '' if account else '' }}</textarea></label>
+  {% if account %}<label class="check"><input type="checkbox" name="archived" {% if account.archived %}checked{% endif %}> Archivé (masqué du patrimoine)</label>{% endif %}
+  <button class="btn primary">Enregistrer</button>
+</form>
+{% if account %}
+<form method="post" action="/accounts/{{ account.id }}/delete" class="danger-zone" data-confirm="Supprimer ce compte et toutes ses opérations ?">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn danger">Supprimer le compte</button>
+</form>
+{% endif %}
+{% endblock %}

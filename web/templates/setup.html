@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Installation{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<div class="hero-logo"><img class="logo" src="/static/logo.svg" alt="" width="72" height="72"><h1>Créer ton coffre</h1></div>
+<p class="muted">Toutes tes données (base, documents, identifiants) seront chiffrées en AES-256 avec une clé protégée par ton mot de passe (Argon2id). Chaque personne que tu ajouteras plus tard aura son propre mot de passe vers le même coffre. Il n'est stocké nulle part : <strong>sans un mot de passe ni le code de secours, les données sont irrécupérables.</strong></p>
+<form method="post" class="card stack">
+  <label>Code d'installation
+    <input name="setup_token" required autocomplete="off" placeholder="affiché dans les logs du conteneur">
+    <small>Commande : <code>docker logs mymoney</code></small>
+  </label>
+  <label>Ton adresse e-mail <small>Tu seras l'administrateur. Mets celle que tu autorises dans Cloudflare Access : c'est elle qui te reconnaîtra.</small>
+    <input type="email" name="email" required autocomplete="email">
+  </label>
+  <label>Ton nom
+    <input name="name" autocomplete="name">
+  </label>
+  <label>Mot de passe
+    <input type="password" name="password" required minlength="12" autocomplete="new-password">
+    <small>12 caractères minimum avec majuscules, minuscules, chiffres et symboles, ou une phrase de passe de 20 caractères ou plus.</small>
+  </label>
+  <label>Confirmation
+    <input type="password" name="confirm" required minlength="12" autocomplete="new-password">
+  </label>
+  <button class="btn primary" type="submit">Créer le coffre chiffré</button>
+</form>
+{% endblock %}

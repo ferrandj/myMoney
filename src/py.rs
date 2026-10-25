@@ -395,6 +395,236 @@ impl PyDec {
     }
 }
 
+
+fn big_digits(n: &num_bigint::BigUint) -> i64 {
+    n.to_string().len() as i64
+}
+
+impl PyDec {
+    pub fn from_parts(neg: bool, coeff: num_bigint::BigUint, exp: i64) -> PyDec {
+        PyDec { neg, coeff, exp }
+    }
+
+    pub fn is_negative(&self) -> bool {
+        self.neg
+    }
+
+    pub fn exponent(&self) -> i64 {
+        self.exp
+    }
+
+    /// `Decimal(str)`: exact, Python's syntax (sign, digits with "_", point, exponent; spaces around). None when invalid
+    /// (and for NaN / Infinity, which the application never handles).
+    pub fn parse(text: &str) -> Option<PyDec> {
+        let t = strip(text);
+        let (neg, body) = match t.as_bytes().first() {
+            Some(b'-') => (true, &t[1..]),
+            Some(b'+') => (false, &t[1..]),
+            _ => (false, t),
+        };
+        let (mant, exp) = match body.find(['e', 'E']) {
+            Some(i) => (&body[..i], Some(&body[i + 1..])),
+            None => (body, None),
+        };
+        let exp: i64 = match exp {
+            Some(e) => {
+                let e = e.replace('_', "");
+                let (s, digits) = match e.as_bytes().first() {
+                    Some(b'-') => (-1, &e[1..]),
+                    Some(b'+') => (1, &e[1..]),
+                    _ => (1, &e[..]),
+                };
+                if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                    return None;
+                }
+                s * digits.parse::<i64>().ok()?
+            }
+            None => 0,
+        };
+        if mant.starts_with('_') || mant.ends_with('_') || mant.contains("__") {
+            return None;
+        }
+        let mant = mant.replace('_', "");
+        let (int, frac) = match mant.split_once('.') {
+            Some((a, b)) => (a.to_string(), b.to_string()),
+            None => (mant.clone(), String::new()),
+        };
+        if int.is_empty() && frac.is_empty() {
+            return None;
+        }
+        let digits: String = format!("{int}{frac}").chars().map(|c| if c.is_ascii_digit() { Some(c) } else { c.to_digit(10).and_then(|d| char::from_digit(d, 10)) }).collect::<Option<String>>()?;
+        let coeff: num_bigint::BigUint = digits.parse().ok()?;
+        Some(PyDec { neg, coeff, exp: exp - frac.chars().count() as i64 })
+    }
+
+    /// `Decimal(float)`: the exact binary value.
+    pub fn from_f64(f: f64) -> PyDec {
+        use num_traits::Zero;
+        let neg = f.is_sign_negative();
+        let a = f.abs();
+        if a == 0.0 {
+            return PyDec { neg, coeff: num_bigint::BigUint::zero(), exp: 0 };
+        }
+        let bits = a.to_bits();
+        let e = ((bits >> 52) & 0x7ff) as i64;
+        let m = bits & ((1u64 << 52) - 1);
+        let (mut mant, mut exp2) = if e == 0 { (m, -1074) } else { (m | (1u64 << 52), e - 1075) };
+        while mant % 2 == 0 && exp2 < 0 {
+            mant /= 2;
+            exp2 += 1;
+        }
+        if exp2 >= 0 {
+            PyDec { neg, coeff: num_bigint::BigUint::from(mant) << (exp2 as usize), exp: 0 }
+        } else {
+            let k = (-exp2) as u32;
+            PyDec { neg, coeff: num_bigint::BigUint::from(mant) * num_bigint::BigUint::from(5u32).pow(k), exp: -(k as i64) }
+        }
+    }
+
+    fn signed(&self) -> num_bigint::BigInt {
+        let b = num_bigint::BigInt::from(self.coeff.clone());
+        if self.neg {
+            -b
+        } else {
+            b
+        }
+    }
+
+    /// The two coefficients over the smaller exponent.
+    fn aligned(&self, other: &PyDec) -> (num_bigint::BigInt, num_bigint::BigInt, i64) {
+        let exp = self.exp.min(other.exp);
+        let a = self.signed() * num_bigint::BigInt::from(pow10((self.exp - exp) as u32));
+        let b = other.signed() * num_bigint::BigInt::from(pow10((other.exp - exp) as u32));
+        (a, b, exp)
+    }
+
+    /// `self + other` (exact, then 28 significant digits, half to even).
+    pub fn add(&self, other: &PyDec) -> PyDec {
+        use num_traits::{Signed, Zero};
+        let (a, b, exp) = self.aligned(other);
+        let sum = a + b;
+        if sum.is_zero() {
+            return PyDec { neg: self.neg && other.neg, coeff: num_bigint::BigUint::zero(), exp };
+        }
+        let neg = sum.is_negative();
+        let (coeff, exp) = fix(sum.abs().to_biguint().unwrap(), exp);
+        PyDec { neg, coeff, exp }
+    }
+
+    pub fn sub(&self, other: &PyDec) -> PyDec {
+        self.add(&PyDec { neg: !other.neg, coeff: other.coeff.clone(), exp: other.exp })
+    }
+
+    /// `-self`: a zero is positive.
+    pub fn neg(&self) -> PyDec {
+        let (coeff, exp) = fix(self.coeff.clone(), self.exp);
+        PyDec { neg: !self.neg && !self.is_zero(), coeff, exp }
+    }
+
+    /// `abs(self)` (rounded to the context, like Python).
+    pub fn abs(&self) -> PyDec {
+        let (coeff, exp) = fix(self.coeff.clone(), self.exp);
+        PyDec { neg: false, coeff, exp }
+    }
+
+    pub fn cmp(&self, other: &PyDec) -> std::cmp::Ordering {
+        let (a, b, _) = self.aligned(other);
+        a.cmp(&b)
+    }
+
+    /// `self.quantize(Decimal("1E<exp>"))`, half to even (what `round(d, n)` and formatting do).
+    pub fn rescale(&self, exp: i64) -> PyDec {
+        use num_traits::{One, Zero};
+        if exp <= self.exp {
+            return PyDec { neg: self.neg, coeff: &self.coeff * pow10((self.exp - exp) as u32), exp };
+        }
+        let drop = (exp - self.exp) as u32;
+        let div = pow10(drop);
+        let (mut q, r) = (&self.coeff / &div, &self.coeff % &div);
+        let twice = &r * num_bigint::BigUint::from(2u32);
+        if twice > div || (twice == div && (&q % num_bigint::BigUint::from(2u32)).is_one()) {
+            q += num_bigint::BigUint::one();
+        }
+        let _ = q.is_zero();
+        PyDec { neg: self.neg, coeff: q, exp }
+    }
+
+    /// `int(self)`: toward zero.
+    pub fn trunc(&self) -> num_bigint::BigInt {
+        let c = if self.exp >= 0 { &self.coeff * pow10(self.exp as u32) } else { &self.coeff / pow10((-self.exp) as u32) };
+        let b = num_bigint::BigInt::from(c);
+        if self.neg {
+            -b
+        } else {
+            b
+        }
+    }
+
+    /// `format(self, "[+][,].<n>f")`.
+    pub fn format_fixed(&self, decimals: usize, plus: bool, grouping: bool) -> String {
+        let r = self.rescale(-(decimals as i64));
+        let mut digits = r.coeff.to_string();
+        if digits.len() <= decimals {
+            digits = format!("{}{}", "0".repeat(decimals + 1 - digits.len()), digits);
+        }
+        let (int, frac) = digits.split_at(digits.len() - decimals);
+        let int = if grouping { group3(int, ",") } else { int.to_string() };
+        let sign = if self.neg { "-" } else if plus { "+" } else { "" };
+        if decimals == 0 {
+            format!("{sign}{int}")
+        } else {
+            format!("{sign}{int}.{frac}")
+        }
+    }
+
+    pub fn digits(&self) -> i64 {
+        big_digits(&self.coeff)
+    }
+
+    /// A text that is the same for equal numbers ("1.50" and "1.5"), for hashing.
+    pub fn norm_key(&self) -> String {
+        use num_traits::Zero;
+        if self.coeff.is_zero() {
+            return "0".into();
+        }
+        let mut digits = self.coeff.to_string();
+        let mut exp = self.exp;
+        while digits.ends_with('0') {
+            digits.pop();
+            exp += 1;
+        }
+        format!("{}{digits}e{exp}", if self.neg { "-" } else { "" })
+    }
+}
+
+/// "1234567" -> "1,234,567".
+pub fn group3(int: &str, sep: &str) -> String {
+    let chars: Vec<char> = int.chars().collect();
+    let mut out = String::new();
+    for (i, c) in chars.iter().enumerate() {
+        if i > 0 && (chars.len() - i) % 3 == 0 {
+            out.push_str(sep);
+        }
+        out.push(*c);
+    }
+    out
+}
+
+/// `format(float, "[+][,].<n>f")`.
+pub fn float_fixed(x: f64, decimals: usize, plus: bool, grouping: bool) -> String {
+    let s = format!("{:.*}", decimals, x.abs());
+    let (int, frac) = match s.split_once('.') {
+        Some((a, b)) => (a.to_string(), Some(b.to_string())),
+        None => (s.clone(), None),
+    };
+    let int = if grouping { group3(&int, ",") } else { int };
+    let sign = if x.is_sign_negative() && !x.is_nan() { "-" } else if plus { "+" } else { "" };
+    match frac {
+        Some(f) => format!("{sign}{int}.{f}"),
+        None => format!("{sign}{int}"),
+    }
+}
+
 /// `a / b` with Python's decimal. None for b = 0.
 pub fn py_div(a: &Decimal, b: &Decimal) -> Option<Decimal> {
     PyDec::from(a).div(&PyDec::from(b)).map(|q| q.to_decimal())
@@ -689,6 +919,29 @@ mod tests {
     fn json_like_python() {
         let v: Value = serde_json::from_str(r#"{"a": 1, "b": [1.0, 0.85, "é"], "c": null}"#).unwrap();
         assert_eq!(json_dumps(&v), r#"{"a": 1, "b": [1.0, 0.85, "\u00e9"], "c": null}"#);
+    }
+
+
+    #[test]
+    fn decimal_ops_like_python() {
+        let p = |s: &str| PyDec::parse(s).unwrap();
+        assert_eq!(p("1.00").sub(&p("1")).py_str(), "0.00");
+        assert_eq!(p("0").neg().py_str(), "0");
+        assert_eq!(p("-1.5").add(&p("1.5")).py_str(), "0.0");
+        assert_eq!(p("-1.5").sub(&p("0.0")).py_str(), "-1.5");
+        assert_eq!(p("-0.04").format_fixed(1, true, false), "-0.0");
+        assert_eq!(p("1234567.125").format_fixed(2, false, true), "1,234,567.12");
+        assert_eq!(p("2.5").rescale(0).py_str(), "2");
+        assert_eq!(p("45.35").rescale(-1).py_str(), "45.4");
+        assert_eq!(PyDec::from_f64(0.1).py_str(), "0.1000000000000000055511151231257827021181583404541015625");
+        assert_eq!(PyDec::from_f64(0.1).abs().py_str(), "0.1000000000000000055511151231");
+        assert_eq!(PyDec::from_f64(100.0).py_str(), "100");
+        assert_eq!(PyDec::from_f64(0.5).py_str(), "0.5");
+        assert_eq!(p("-2.7").trunc().to_string(), "-2");
+        assert_eq!(p("1e2").py_str(), "1E+2");
+        assert_eq!(p(" 1_000.5 ").py_str(), "1000.5");
+        assert_eq!(float_fixed(-0.04, 1, false, false), "-0.0");
+        assert_eq!(float_fixed(1234567.5, 0, false, true), "1,234,568");
     }
 
     #[test]

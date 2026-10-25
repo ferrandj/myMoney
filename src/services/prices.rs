@@ -118,7 +118,7 @@ impl PriceService {
                 r.into_json::<Value>().map(|v| (status, v)).map_err(|e| e.to_string())
             }
             Err(ureq::Error::Status(code, _)) => Ok((code, Value::Null)),
-            Err(e) => Err(e.to_string()),
+            Err(ureq::Error::Transport(t)) => Err(transport_error(&t)),
         }
     }
 
@@ -138,7 +138,7 @@ impl PriceService {
         }
         let got = self.get_json("https://api.frankfurter.dev/v1/latest", &[("from", &from), ("to", &to)], &[]).and_then(|(status, v)| {
             if status >= 400 {
-                return Err(format!("HTTP {status}"));
+                return Err(status_error(status, &format!("https://api.frankfurter.dev/v1/latest?from={from}&to={to}")));
             }
             v.get("rates").and_then(|r| r.get(&to)).and_then(number_str).ok_or_else(|| "rates".to_string())
         });
@@ -172,7 +172,8 @@ impl PriceService {
                 continue;
             }
             if status >= 400 {
-                return Err(format!("HTTP {status}"));
+                let url = format!("https://api.coingecko.com/api/v3{path}?{}", py::urlencode(&params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>()));
+                return Err(status_error(status, &url));
             }
             return Ok(v);
         }
@@ -305,4 +306,51 @@ impl PriceService {
         self.store(&key, &py::json_dumps(&Value::Object(m)));
         Some((price, currency))
     }
+}
+
+/// How httpx words a failed connection (the Python version logs it): "[Errno 111] Connection refused", never the URL.
+fn transport_error(t: &ureq::Transport) -> String {
+    use std::error::Error;
+    let mut source = t.source();
+    while let Some(e) = source {
+        if let Some(io) = e.downcast_ref::<std::io::Error>() {
+            if matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) {
+                return "timed out".into();
+            }
+            if let Some(n) = io.raw_os_error() {
+                let text = std::io::Error::from_raw_os_error(n).to_string();
+                let text = text.split(" (os error").next().unwrap_or(&text).to_string();
+                return format!("[Errno {n}] {text}");
+            }
+        }
+        source = e.source();
+    }
+    match t.kind() {
+        ureq::ErrorKind::Dns => "[Errno -2] Name or service not known".into(),
+        _ => t.message().map(|m| m.to_string()).unwrap_or_else(|| t.kind().to_string()),
+    }
+}
+
+/// httpx's `raise_for_status()` message.
+fn status_error(code: u16, url: &str) -> String {
+    let kind = match code {
+        100..=199 => "Informational response",
+        300..=399 => "Redirect response",
+        400..=499 => "Client error",
+        _ => "Server error",
+    };
+    let reason = match code {
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        408 => "Request Timeout",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "",
+    };
+    format!("{kind} '{code} {reason}' for url '{url}'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/{code}")
 }

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Paramètres{% endblock %}
+{% block content %}
+<h1>Paramètres</h1>
+{% if recovered %}<p class="flash error">Tu t'es connecté avec le code de secours : choisis un nouveau mot de passe ci-dessous, puis génère un nouveau code de secours.</p>{% endif %}
+<section class="grid">
+  <form method="post" action="/settings/password" class="card stack">
+    <h2>Mon mot de passe</h2>
+    <p class="small muted">C'est ton accès personnel au coffre (en direct, sans Cloudflare). Les autres utilisateurs ne sont pas touchés.</p>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Mot de passe actuel <input type="password" name="current" required autocomplete="current-password"></label>
+    <label>Nouveau <input type="password" name="new" required minlength="12" autocomplete="new-password"></label>
+    <label>Confirmation <input type="password" name="confirm" required minlength="12" autocomplete="new-password"></label>
+    <button class="btn primary">Changer</button>
+  </form>
+  {% if me.is_admin %}
+  <form method="post" action="/settings/recovery" class="card stack" data-confirm="L'ancien code de secours ne fonctionnera plus. Continuer ?">
+    <h2>Code de secours</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p class="small muted">Génère un nouveau code et invalide l'ancien.</p>
+    <label>Mot de passe actuel <input type="password" name="current" required autocomplete="current-password"></label>
+    <button class="btn">Générer un nouveau code</button>
+  </form>
+  {% endif %}
+</section>
+
+{% if me.is_admin %}
+<section class="card" id="utilisateurs">
+  <h2>Utilisateurs</h2>
+  <p class="small muted">Chacun a son adresse e-mail (celle que Cloudflare Access reconnaît) et son propre mot de passe vers le même coffre. Les comptes se partagent un par un, depuis la page de chaque compte.</p>
+  <div class="table-wrap"><table class="user-table">
+    <thead><tr><th>Utilisateur</th><th>Rôle</th><th class="num">Comptes</th><th>Dernière connexion</th><th></th></tr></thead>
+    {% for u in people %}
+    <tr>
+      <td><strong class="sensitive">{{ u.label }}</strong><div class="muted small sensitive">{{ u.email }}</div></td>
+      <td class="small">{{ 'administrateur' if u.is_admin else 'utilisateur' }}</td>
+      <td class="num">{{ owned.get(u.id, 0) }}</td>
+      <td class="small nowrap">{{ u.last_login|frdate }}</td>
+      <td class="nowrap">
+        {% if u.id != me.id %}
+        <form method="post" action="/settings/users/{{ u.id }}/role"><input type="hidden" name="csrf" value="{{ csrf }}">{% if not u.is_admin %}<input type="hidden" name="is_admin" value="on"><button class="btn small">Nommer admin</button>{% else %}<button class="btn small">Retirer admin</button>{% endif %}</form>
+        <form method="post" action="/settings/users/{{ u.id }}/delete" data-confirm="Supprimer cet utilisateur ? Ses comptes et ses documents passent à ton nom, ses partages disparaissent."><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small danger">Supprimer</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% if u.id != me.id %}
+    <tr><td colspan="5">
+      <form method="post" action="/settings/users/{{ u.id }}/password" class="inline-identify">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="password" name="password" placeholder="Nouveau mot de passe pour {{ u.label }}" minlength="12" autocomplete="new-password" required>
+        <button class="btn small">Redéfinir son mot de passe</button>
+      </form>
+    </td></tr>
+    {% endif %}
+    {% endfor %}
+  </table></div>
+  <h3>Ajouter une personne</h3>
+  <form method="post" action="/settings/users" class="row-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>E-mail <input type="email" name="email" required autocomplete="off"></label>
+    <label>Nom <input name="name" autocomplete="off"></label>
+    <label>Mot de passe de départ <input type="password" name="password" required minlength="12" autocomplete="new-password"></label>
+    <label class="check"><input type="checkbox" name="is_admin"> Administrateur</label>
+    <button class="btn primary">Ajouter</button>
+  </form>
+  <p class="small muted">Cloudflare Access doit aussi autoriser cette adresse. Le mot de passe de départ ne sert qu'en accès direct (sans Cloudflare) ou si le coffre est verrouillé ; la personne peut le changer ci-dessus.</p>
+</section>
+
+<section class="card" id="cloudflare">
+  <h2>Cloudflare Access</h2>
+  {% if cf_enabled %}
+  <p class="small">✓ Activé pour l'équipe <code>{{ cf_host }}</code> : une personne que Cloudflare a authentifiée entre sans mot de passe, sur l'utilisateur de son e-mail (si le coffre est ouvert).</p>
+  {% else %}
+  <p class="small muted">Désactivé. Pour entrer sans mot de passe derrière un tunnel Cloudflare, définis <code>MYMONEY_CF_TEAM_DOMAIN</code> (le nom de ton équipe Zero Trust) et <code>MYMONEY_CF_AUD</code> (le « Application Audience (AUD) Tag » de ton application Access), puis redémarre. Pas à pas dans le README.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card stack" id="install">
+  <h2>Application sur le téléphone</h2>
+  <p class="small muted" id="install-note">Sur Android, ouvre cette page dans Chrome en HTTPS : le bouton ci-dessous (ou « Installer l'application » dans le menu ⋮) ajoute myMoney à l'écran d'accueil, comme une application.</p>
+  <button type="button" class="btn primary" id="install-app" hidden>Installer l'application</button>
+</section>
+
+<section class="card">
+  <h2>Sécurité</h2>
+  <ul class="small">
+    <li>Base de données chiffrée par SQLCipher (AES-256) : comptes, titulaires, adresses, RIB, opérations et contacts. Documents originaux chiffrés un par un (AES-256-GCM), illisibles sur le disque et téléchargeables ici.</li>
+    <li>Clé dérivée du mot de passe par Argon2id ({{ (settings.argon2_memory_kib / 1024)|int }} Mio, {{ settings.argon2_time_cost }} passes), jamais écrite sur le disque.</li>
+    <li>Verrouillage automatique après {{ settings.auto_lock_minutes }} min d'inactivité{% if settings.unlock_password_file %} : <strong class="warn">désactivé, car le déverrouillage automatique est configuré</strong>{% endif %}.</li>
+    <li>Cookie de session {{ 'sécurisé (HTTPS)' if settings.cookie_secure else '<strong class="warn">non sécurisé : active HTTPS puis MYMONEY_COOKIE_SECURE=true</strong>'|safe }}.</li>
+    <li>Aucune connexion à une banque : l'application ne reçoit que les documents que tu lui donnes. Seules les cotations (CoinGecko, Yahoo Finance, BCE) sortent du NAS, et seulement pour les positions saisies à la main.</li>
+  </ul>
+</section>
+
+{% if me.is_admin %}
+<section class="grid">
+  <form method="post" action="/settings/general" class="card stack">
+    <h2>Prix</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p class="small muted">Sources gratuites : CoinGecko (crypto), Yahoo Finance (actions, ETF), BCE (devises). Une clé « Demo » CoinGecko gratuite augmente les limites.</p>
+    <label>Clé API CoinGecko (optionnel) <input type="password" name="coingecko_api_key" placeholder="{{ '•••••• configurée' if coingecko_key else 'CG-…' }}" autocomplete="off"></label>
+    {% if coingecko_key %}<label class="check"><input type="checkbox" name="clear_coingecko"> Supprimer la clé</label>{% endif %}
+    <button class="btn">Enregistrer</button>
+  </form>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Taux réglementés</h2>
+  <p class="small muted">Appliqués automatiquement aux livrets de ce type, sauf si un taux est saisi sur le compte.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Depuis le</th><th class="num">Livret A</th><th class="num">LDDS</th><th class="num">LEP</th><th class="num">CEL</th></tr></thead>
+    {% for since, r in rates %}
+    <tr><td>{{ since|frdate }}</td>{% for k in ['livret_a', 'ldds', 'lep', 'cel'] %}<td class="num">{{ ('%.2f'|format(r[k]))|replace('.', ',') ~ ' %' if k in r else '—' }}</td>{% endfor %}</tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endblock %}

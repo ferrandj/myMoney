@@ -10,6 +10,7 @@ pub mod scenario;
 pub mod schema;
 pub mod security;
 pub mod services;
+pub mod web;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -62,8 +63,16 @@ fn main() {
         }
         out.insert("parsed".into(), serde_json::Value::Object(parsed));
         println!("{}", py::json_dumps(&serde_json::Value::Object(out)));
+    } else if args.len() >= 2 && args[1] == "serve" {
+        std::process::exit(web::serve::main(&args[2..]));
+    } else if args.len() >= 3 && args[1] == "jinja-cases" {
+        println!("{}", web::jinja::run_cases(&args[2]));
     } else if args.len() >= 3 && args[1] == "pdf-text" {
         let data = std::fs::read(&args[2]).expect("read");
         print!("{}", pdf::extract_text(&data).expect("pdf"));
+    } else {
+        eprintln!("usage: mymoney [-h] {{serve}} ...");
+        eprintln!("mymoney: error: the following arguments are required: command");
+        std::process::exit(2);
     }
 }
