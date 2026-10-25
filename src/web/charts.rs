@@ -43,7 +43,7 @@ fn axis(value: f64) -> String {
     format!("{}\u{202f}€", float_fixed(value, 0, false, true)).replace(',', "\u{202f}").replace('-', "−")
 }
 
-fn nice_ticks(low: f64, high: f64, count: f64) -> Vec<f64> {
+pub(crate) fn nice_ticks(low: f64, high: f64, count: f64) -> Vec<f64> {
     let (low, high) = if high == low { (low - 1.0, high + 1.0) } else { (low, high) };
     let raw = (high - low) / count;
     let magnitude = 10f64.powi(raw.log10().floor() as i32);

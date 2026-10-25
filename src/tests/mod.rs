@@ -6,3 +6,6 @@ mod fortuneo;
 mod import_flow;
 mod loans;
 mod users;
+mod gaps;
+mod analytics;
+mod browse_and_spending;

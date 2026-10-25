@@ -285,7 +285,7 @@ fn dmy(d: NaiveDate) -> String {
 
 /// The statement just before and just after must touch this one, and their balances must chain. A hole the user
 /// marked as normal is not reported again, nor the part of it that a statement waiting for validation covers.
-fn continuity(st: &ParsedStatement, existing: &[Statement], acknowledged: &[(NaiveDate, NaiveDate)], waiting: &[(NaiveDate, NaiveDate)]) -> Vec<String> {
+pub(crate) fn continuity(st: &ParsedStatement, existing: &[Statement], acknowledged: &[(NaiveDate, NaiveDate)], waiting: &[(NaiveDate, NaiveDate)]) -> Vec<String> {
     let mut issues = vec![];
     let (ps, pe) = (st.period_start.unwrap(), st.period_end.unwrap());
     let hole = |start: NaiveDate, end: NaiveDate| -> Vec<String> {

@@ -70,3 +70,30 @@ pub fn drop_file(core: &MyMoney, name: &str, data: &[u8]) -> i64 {
     core.analyze_document(id, None, Some(data.to_vec())).unwrap();
     id
 }
+
+/// The (name, content) pairs of a zip archive (stored or deflated entries), read from its central directory.
+pub fn unzip(data: &[u8]) -> Vec<(String, Vec<u8>)> {
+    use std::io::Read;
+    let u16_at = |i: usize| u16::from_le_bytes([data[i], data[i + 1]]) as usize;
+    let u32_at = |i: usize| u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
+    let end = (0..data.len().saturating_sub(21)).rev().find(|&i| &data[i..i + 4] == b"PK\x05\x06").expect("end of central directory");
+    let (count, mut at) = (u16_at(end + 10), u32_at(end + 16));
+    let mut out = vec![];
+    for _ in 0..count {
+        assert_eq!(&data[at..at + 4], b"PK\x01\x02");
+        let (method, size, name_len, extra_len, comment_len, local) = (u16_at(at + 10), u32_at(at + 20), u16_at(at + 28), u16_at(at + 30), u16_at(at + 32), u32_at(at + 42));
+        let name = String::from_utf8_lossy(&data[at + 46..at + 46 + name_len]).into_owned();
+        let start = local + 30 + u16_at(local + 26) + u16_at(local + 28);
+        let raw = &data[start..start + size];
+        let content = if method == 8 {
+            let mut v = vec![];
+            flate2::read::DeflateDecoder::new(raw).read_to_end(&mut v).unwrap();
+            v
+        } else {
+            raw.to_vec()
+        };
+        out.push((name, content));
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    out
+}
