@@ -81,6 +81,15 @@ fn person(p: &Person) -> Value {
     ])
 }
 
+/// "Compte courant - Joint": the type, with "Joint" when more than one person is behind the account.
+pub fn type_label_of(a: &Account) -> String {
+    if holders::of_account(a).len() > 1 {
+        format!("{} - Joint", a.type_label())
+    } else {
+        a.type_label().to_string()
+    }
+}
+
 pub fn account_with(a: &Account, owner: Value, holdings: Vec<Value>) -> Value {
     let people = holders::of_account(a);
     obj(
@@ -90,7 +99,8 @@ pub fn account_with(a: &Account, owner: Value, holdings: Vec<Value>) -> Value {
             ("people", Value::list(people.iter().map(person).collect())),
             ("holder_blocks", Value::from(&holders::form_blocks(&people, 2))),
             ("holder_shown", people.len().max(1).into()),
-            ("type_label", a.type_label().into()),
+            ("type_label", type_label_of(a).into()),
+            ("joint", (people.len() > 1).into()),
             ("category", a.category().into()),
             ("rib", a.rib().into()),
             ("owner", owner),
@@ -571,6 +581,7 @@ pub fn document_tree(documents: &[Document], accounts: &HashMap<i64, Account>) -
         id: Option<i64>,
         label: String,
         subtitle: String,
+        holder: String,
         kinds: Vec<Kind<'a>>,
     }
     let mut banks: Vec<(String, Vec<Acc>)> = vec![];
@@ -584,15 +595,15 @@ pub fn document_tree(documents: &[Document], accounts: &HashMap<i64, Account>) -
                 banks.len() - 1
             }
         };
-        let (id, label, subtitle) = match account {
-            Some(a) => (Some(a.id), a.name.clone(), a.type_label()),
-            None => (None, "Sans compte".to_string(), String::new()),
+        let (id, label, subtitle, holder) = match account {
+            Some(a) => (Some(a.id), a.name.clone(), type_label_of(a), a.holder_name.clone().unwrap_or_default()),
+            None => (None, "Sans compte".to_string(), String::new(), String::new()),
         };
         let accs = &mut banks[bank].1;
         let slot = match accs.iter().position(|x| x.id == id) {
             Some(i) => i,
             None => {
-                accs.push(Acc { id, label, subtitle, kinds: vec![] });
+                accs.push(Acc { id, label, subtitle, holder, kinds: vec![] });
                 accs.len() - 1
             }
         };
@@ -641,6 +652,7 @@ pub fn document_tree(documents: &[Document], accounts: &HashMap<i64, Account>) -
                 ("id", acc.id.map(Value::from).unwrap_or(Value::None)),
                 ("label", acc.label.into()),
                 ("subtitle", acc.subtitle.into()),
+                ("holder", acc.holder.into()),
                 ("count", acc_count.into()),
                 ("imported", acc_imported.into()),
                 ("kinds", Value::list(kind_values)),

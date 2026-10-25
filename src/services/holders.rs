@@ -188,7 +188,7 @@ pub fn from_form(form: &HashMap<String, String>) -> Option<Vec<Person>> {
             let mut out = vec![];
             for j in 0..12 {
                 if let Some(v) = form.get(&format!("holder_{i}_{kind}_{j}")) {
-                    let v = clean(v);
+                    let v = py::upper(&clean(v)); // names are kept in capitals, as the banks print them
                     if !v.is_empty() {
                         out.push(v);
                     }
@@ -208,7 +208,7 @@ pub fn from_form(form: &HashMap<String, String>) -> Option<Vec<Person>> {
 
 fn padded(values: &[String], slots: usize) -> Value {
     let n = slots.max(values.len());
-    Value::Array((0..n).map(|i| Value::String(values.get(i).cloned().unwrap_or_default())).collect())
+    Value::Array((0..n).map(|i| Value::String(values.get(i).map(|v| py::upper(v)).unwrap_or_default())).collect())
 }
 
 /// What a form needs to draw its boxes: one entry per person to show, each with its boxes padded to the usual number.

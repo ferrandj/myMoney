@@ -37,3 +37,28 @@ fn the_accounts_tab_lists_every_account_and_renames_in_place() {
         Ok(())
     });
 }
+
+#[test]
+fn a_joint_account_says_so_next_to_its_type_with_its_holders_and_can_be_filtered() {
+    let mut client = client();
+    client.login();
+    let joint = client.core.save_account(None, &form(&[("name", "Compte du foyer"), ("account_type", "checking"), ("balance", "10"), ("holder_0_civility", "M"), ("holder_0_last_0", "DUPONT"), ("holder_0_first_0", "JEAN"), ("holder_1_civility", "MME"), ("holder_1_last_0", "LEROY"), ("holder_1_first_0", "CLAIRE")])).unwrap();
+    client.core.save_account(None, &form(&[("name", "Compte perso"), ("account_type", "checking"), ("balance", "20"), ("holder_0_civility", "M"), ("holder_0_last_0", "DUPONT"), ("holder_0_first_0", "JEAN")])).unwrap();
+
+    let home = client.get("/").text();
+    assert!(home.contains("Compte courant - Joint") && home.contains("M DUPONT JEAN OU MME LEROY CLAIRE"), "{home}");
+    assert_eq!(home.matches("Compte courant - Joint").count(), 1, "only the account with two people is joint");
+    let page = client.get(&format!("/accounts/{joint}")).text();
+    assert!(page.contains("Compte courant - Joint") && page.contains("M DUPONT JEAN OU MME LEROY CLAIRE"));
+
+    let only_joint = client.get("/accounts?filtre=joints").text();
+    assert!(only_joint.contains("Compte du foyer") && !only_joint.contains("Compte perso"));
+    let only_single = client.get("/accounts?filtre=individuels").text();
+    assert!(only_single.contains("Compte perso") && !only_single.contains("Compte du foyer"));
+    assert!(client.get("/accounts").text().contains("Compte perso"));
+
+    // the analyses table and the people page say it too
+    let analytics = client.get("/analytics?vue=evolution&periode=tout").text();
+    assert!(analytics.contains("Titulaire(s)") && analytics.contains("Compte courant - Joint"));
+    assert!(client.get("/people/1").text().contains("Compte courant - Joint"));
+}

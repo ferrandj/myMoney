@@ -17,6 +17,13 @@
 <nav class="tabs" aria-label="Comptes et personnes">
   <a href="/accounts" aria-current="page">Comptes</a><a href="/people">Personnes</a>
 </nav>
+<div class="toolbar">
+  <div class="seg" aria-label="Filtrer">
+    <a href="/accounts" {% if not filtre %}aria-current="true"{% endif %}>Tous</a>
+    <a href="/accounts?filtre=joints" {% if filtre == 'joints' %}aria-current="true"{% endif %}>Comptes joints</a>
+    <a href="/accounts?filtre=individuels" {% if filtre == 'individuels' %}aria-current="true"{% endif %}>Individuels</a>
+  </div>
+</div>
 
 {% if not groups and not archived %}
 <section class="card empty"><p>Aucun compte pour l'instant. <a href="/documents">Dépose un document</a> ou <a href="/accounts/new">saisis un compte à la main</a>.</p></section>

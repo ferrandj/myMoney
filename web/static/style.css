@@ -328,3 +328,5 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .person-card h3 { margin: 0; font-size: 1.05rem; }
 .person-card ul.person-accounts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .person-card ul.person-accounts li { display: flex; justify-content: space-between; gap: 12px; }
+
+.holder-boxes input { text-transform: uppercase; }
