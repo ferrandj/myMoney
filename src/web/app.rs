@@ -855,7 +855,10 @@ impl Web {
 
     fn static_file(&self, cx: &Cx) -> Out {
         if cx.req.method != "GET" && cx.req.method != "HEAD" {
-            return Err(http(405, "Method Not Allowed"));
+            // Starlette's StaticFiles (1.10+): HTTPException(405, headers={"Allow": "GET, HEAD"})
+            let mut r = json_response(405, &serde_json::json!({"detail": "Method Not Allowed"}));
+            r.add("allow", "GET, HEAD");
+            return Ok(r);
         }
         let name = &cx.params[0];
         let Some((_, data, ctype)) = STATIC.iter().find(|(n, _, _)| n == name) else { return Err(not_found()) };
