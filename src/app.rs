@@ -1059,7 +1059,7 @@ impl MyMoney {
                 return Ok(Some("Ce relevé existe déjà mais le fichier diffère : à trancher".into()));
             }
             if plan.ask_holder {
-                return Ok(Some("Le nom du titulaire est coupé par la banque : à compléter une fois".into()));
+                return Ok(Some("Titulaire(s) à confirmer (compte joint, nom coupé ou peu clair) : à valider une fois".into()));
             }
             if plan.account.is_none() {
                 let kind = st.document_kind.as_deref();

@@ -92,6 +92,24 @@ pub fn parse_printed(line: &str) -> Vec<Person> {
     people
 }
 
+/// A printed name that cannot be trusted as read: several people (OU, ET, a second civility) or more
+/// words than a last name and a first name. Such a line is shown for confirmation before an account is created.
+pub fn is_unclear(line: &str) -> bool {
+    let line = clean(line);
+    if line.is_empty() {
+        return false;
+    }
+    let parts: Vec<&str> = re(r"(?i)\s+(?:OU|ET)\s+").split(&line).collect();
+    if parts.len() > 1 {
+        return true;
+    }
+    let mut tokens: Vec<&str> = line.split_whitespace().collect();
+    if tokens.first().and_then(|t| civility_of(t)).is_some() {
+        tokens.remove(0);
+    }
+    tokens.len() > 2 || tokens.iter().any(|t| civility_of(t).is_some())
+}
+
 /// "M DUPONT JEAN OU MME LEROY CLAIRE": civility, last names, first names; people joined by OU.
 pub fn compose(people: &[Person]) -> String {
     people

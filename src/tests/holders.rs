@@ -145,3 +145,18 @@ fn the_account_page_lists_each_person_with_copy_buttons() {
     assert!(page.contains("M DUPONT JEAN PAUL OU MME LEROY CLAIRE"));
     let _ = upload;
 }
+
+#[test]
+fn a_fees_summary_of_a_joint_account_asks_to_confirm_the_holders_once() {
+    use crate::testkit::fortuneo::{fortuneo_fees_pdf, FeesSpec};
+    let mut client = client();
+    let csrf = client.login();
+    let joint = FeesSpec { holder: "M MARTIN OU MME BERNARD LUCIE".into(), ..FeesSpec::new() };
+    let page = upload(&mut client, &csrf, "frais.pdf", &fortuneo_fees_pdf(&joint));
+    let text = page.text();
+    assert!(text.contains("Titulaire(s) à confirmer") && text.contains("name=\"holder_1_last_0\" value=\"BERNARD\""), "{text}");
+    // a sole holder with a clear name is not asked
+    let sole = upload(&mut client, &csrf, "frais2.pdf", &fortuneo_fees_pdf(&FeesSpec { year: 2022, ..FeesSpec::new() }));
+    assert!(!sole.text().contains("Titulaire(s) à confirmer"));
+    assert!(holders::is_unclear("M MARTIN OU MME BERNARD LUCIE") && holders::is_unclear("M DE LA FONTAINE JEAN") && !holders::is_unclear("M MARTIN PAUL") && !holders::is_unclear("MARTIN PAUL"));
+}

@@ -94,3 +94,12 @@
 </details>
 {% endif %}
 {% endmacro %}
+
+{% macro holders_section(plan, st) %}
+<fieldset class="holders{{ ' ask-names' if plan.ask_holder }}">
+  <legend>Titulaire(s) du compte</legend>
+  {% if plan.ask_holder %}<small>Sur ce document, le nom (« {{ st.holder_name }} ») {% if st.extra.get('holder_maybe_truncated') %}est coupé par la banque{% else %}peut être un compte joint ou incomplet{% endif %}. Vérifie ici la civilité, les noms (et noms de naissance) et les prénoms de chaque titulaire, ainsi que le type de compte : ils servent à nommer les fichiers, à remplir des formulaires et à reconnaître tes virements entre comptes, et ne sont demandés qu'une fois.</small>
+  {% else %}<small class="muted">Préremplis d'après le document : corrige si besoin. Pour un compte joint, ajoute le cotitulaire ; plusieurs cases quand un document demande un nom ou les deux, ou plusieurs prénoms.</small>{% endif %}
+  {{ holder_fields(plan.holder_blocks, plan.holder_shown, plan.ask_holder) }}
+</fieldset>
+{% endmacro %}
