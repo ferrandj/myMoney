@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Qui est-ce ?{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<p><a href="{{ next }}">← Retour</a></p>
+<h1>Qui est-ce ?</h1>
+<dl class="kv card">
+  {% if printed %}<dt>Imprimé par la banque</dt><dd>{{ printed }}</dd>{% endif %}
+  {% if iban %}<dt>IBAN</dt><dd><code>{{ iban }}</code></dd>{% endif %}
+</dl>
+<form method="post" action="/contacts/identify" class="card stack">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="next" value="{{ next }}">
+  <input type="hidden" name="iban" value="{{ iban }}">
+  <input type="hidden" name="printed_name" value="{{ printed }}">
+  {% if contacts %}
+  <label>C'est un contact que je connais déjà
+    <select name="contact_id" data-toggle-contact>
+      <option value="">➕ Non, nouveau contact</option>
+      {% for c in contacts %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  <fieldset class="new-contact">
+    <legend>Nouveau contact</legend>
+    <label>Nom <input name="name" value="" placeholder="Prénom Nom, organisme…" {% if not contacts %}required{% endif %}></label>
+    <label>Type <select name="kind">{% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
+    <label>Téléphone <input name="phone" inputmode="tel"></label>
+    <label>E-mail <input name="email" type="email"></label>
+    <label>Notes <textarea name="notes" rows="2"></textarea></label>
+  </fieldset>
+  <small class="muted">L'IBAN{% if iban and printed %} et le nom « {{ printed }} »{% elif printed %} « {{ printed }} »{% endif %} seront retenus : toutes les opérations correspondantes, présentes et futures, seront rattachées à ce contact.</small>
+  <button class="btn primary">Retenir</button>
+</form>
+{% endblock %}

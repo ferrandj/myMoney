@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+{% from "_macros.html" import unresolved_table, copy with context %}
+{% block title %}{{ doc.filename }}{% endblock %}
+{% block content %}
+<p><a href="/documents">← Documents</a></p>
+<h1><span class="sensitive">{{ doc.filename }}</span></h1>
+<p class="muted small">
+  <span class="tag status-{{ doc.status }}">{{ DOCUMENT_STATUS.get(doc.status, doc.status) }}</span>
+  {% if result.adapter %}Lu avec <strong>{{ adapters|selectattr('id', 'equalto', result.adapter)|map(attribute='label')|first }}</strong>{% endif %}
+  · stocké chiffré, {{ (doc.size / 1024)|round(0)|int }} Ko
+</p>
+
+{% if queue %}
+<section class="card review-bar">
+  <p><strong>Revue des documents à valider</strong> · {{ queue.waiting }} en attente.
+    Valide celui-ci, ou passe au suivant : tu y reviendras plus tard.</p>
+  <div class="actions">
+    {% if queue.next %}<a class="btn" href="/documents/review?after={{ doc.id }}">Passer au suivant →</a>{% endif %}
+    <a class="btn ghost" href="/documents#a-valider">Arrêter la revue</a>
+  </div>
+</section>
+{% endif %}
+{% if not current_reading and doc.status == 'imported' %}
+<p class="card warn">Ce document a été lu par une <strong>version plus ancienne</strong> de l'application : les contrôles ci-dessous peuvent être périmés. <em>Documents → Tout relire depuis les fichiers</em> le relit avec la version actuelle.</p>
+{% endif %}
+{% if result.message %}<p class="card warn">{{ result.message }}</p>{% endif %}
+{% if result.error %}<p class="card warn">Lecture impossible : {{ result.error }}. Le document reste stocké chiffré ; tu peux choisir une autre lecture ci-dessous, ou saisir le solde à la main sur le compte.</p>{% endif %}
+
+{% if doc.status in ('duplicate', 'copy') %}
+<section class="card dedup">
+  <h2>{{ 'Doublon : aucune différence' if doc.status == 'duplicate' else 'Copie conservée' }}</h2>
+  <p>Ce fichier reprend {% if original %}<a href="/documents/{{ original.id }}">« {{ original.filename }} »</a>{% else %}un fichier déjà importé{% endif %} :
+    même compte, même période, mêmes opérations, mêmes soldes.
+    {% if doc.status == 'duplicate' %}Il est <strong>écarté</strong> et sera supprimé automatiquement dans {{ QUARANTINE_HOURS }} h après son dépôt.{% else %}Tu l'as gardé en copie : rien n'est importé depuis lui.{% endif %}</p>
+  {% if doc.status == 'duplicate' %}
+  <div class="actions">
+    <form method="post" action="/documents/{{ doc.id }}/keep"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">Le garder quand même (copie)</button></form>
+    <form method="post" action="/documents/{{ doc.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn danger">Le supprimer maintenant</button></form>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if doc.status in ('needs_choice', 'failed', 'uploaded') or (doc.status == 'parsed' and result.decision != 'auto') %}
+<section class="card">
+  <h2>{{ 'Quelle lecture choisir ?' if doc.status == 'needs_choice' else 'Changer de lecture' }}</h2>
+  <form method="post" action="/documents/{{ doc.id }}/analyze" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if candidates %}
+    <p class="small muted">Adapters qui reconnaissent ce document :</p>
+    {% for adapter, c in candidates %}
+    <label class="check choice">
+      <input type="radio" name="adapter" value="{{ adapter.id }}" {% if loop.first and doc.status == 'needs_choice' %}checked{% endif %} required>
+      <span><strong>{{ adapter.label }}</strong> <span class="tag">{{ (c.score * 100)|int }} %</span>
+        <span class="muted small">{{ c.reasons|join(' · ') }}</span></span>
+    </label>
+    {% endfor %}
+    {% endif %}
+    <details>
+      <summary>Tous les adapters</summary>
+      {% for adapter in adapters %}
+      <label class="check choice"><input type="radio" name="adapter" value="{{ adapter.id }}" required> <span>{{ adapter.label }}</span></label>
+      {% endfor %}
+    </details>
+    <div class="actions"><button class="btn primary">Lire avec cet adapter</button></div>
+  </form>
+  {% if not result.institution is none and doc.status == 'needs_choice' %}<p class="small muted">Établissement reconnu : {{ result.institution }}.</p>{% endif %}
+</section>
+{% endif %}
+
+{% for plan in (plans if doc.status not in ('duplicate', 'copy') else []) %}
+{% set st = plan.statement %}
+{% set idx = loop.index0 %}
+{% set statuses = plan.statuses() %}
+{% if st.document_kind == 'info' %}
+<section class="card">
+  <h2>{{ st.extra.get('title') or "Document d'information" }} <span class="tag conf-high">à conserver</span></h2>
+  <dl class="kv">
+    {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+    {% if st.holder_name %}<dt>Destinataire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+    {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+    {% if st.extra.get('issued_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
+    {% if st.extra.get('contract') %}<dt>Contrat</dt><dd><span class="sensitive">{{ st.extra.contract }}{% if st.extra.get('contract_number') %} · n° {{ st.extra.contract_number }}{% endif %}</span></dd>{% endif %}
+    {% if st.extra.get('arbitrage_date') %}<dt>Arbitrage du</dt><dd>{{ st.extra.arbitrage_date|frdate }}</dd>{% endif %}
+    {% if st.extra.get('net') %}<dt>Montant arbitré</dt><dd>{{ st.extra.net|money }}{% if st.extra.get('fees') and st.extra.fees != '0.00' %} (frais : {{ st.extra.fees|money }}){% else %} (aucun frais){% endif %}</dd>{% endif %}
+    {% if st.extra.get('ceiling') %}<dt>Plafond de la garantie</dt><dd>{{ st.extra.ceiling }} par déposant et par établissement</dd>{% endif %}
+  </dl>
+  {% if st.warnings %}<ul class="checks">{% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}</ul>{% endif %}
+  {% for title, funds in (('Fonds vendus', st.extra.get('sold')), ('Fonds achetés', st.extra.get('bought'))) if funds %}
+  <h3>{{ title }}</h3>
+  <div class="table-wrap"><table>
+    {% for f in funds %}<tr><td><span class="sensitive">{{ f.fund }}</span>{% if f.isin %} <span class="muted small">{{ f.isin }}</span>{% endif %}</td><td class="nowrap small">{{ f.date|frdate }}</td><td class="num">{{ f.amount|money }}</td></tr>{% endfor %}
+  </table></div>
+  {% endfor %}
+  <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable).</p>
+  {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec tes papiers.</p>
+  {% else %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}<input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>
+  {% endif %}
+</section>
+{% elif st.document_kind in LOAN_KINDS %}
+{% set ln = st.extra.get('loan', {}) %}
+<section class="card">
+  <h2>{{ st.account_label or 'Prêt' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
+  <p class="muted small">{{ DOC_KINDS[st.document_kind] }}</p>
+  <div class="grid">
+    <dl class="kv">
+      {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+      {% if st.holder_name %}<dt>Emprunteur</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+      {% if ln.get('reference') %}<dt>N° du prêt</dt><dd><code>{{ ln.reference }}</code></dd>{% endif %}
+      {% if ln.get('project') %}<dt>Projet</dt><dd><code>{{ ln.project }}</code></dd>{% endif %}
+      {% if ln.get('object') %}<dt>Objet</dt><dd>{{ ln.object }}{% if ln.get('destination') %} · {{ ln.destination }}{% endif %}</dd>{% endif %}
+    </dl>
+    {% if st.document_kind == 'loan_offer' %}
+    <dl class="kv">
+      <dt>Montant</dt><dd><strong>{{ ln.get('principal')|money }}</strong> sur {{ ln.get('duration') }} mois</dd>
+      <dt>Taux</dt><dd>{{ ln.get('rate') }} % fixe · TAEG {{ ln.get('taeg') }} %</dd>
+      <dt>Coût total</dt><dd>{{ ln.get('total_cost')|money }} <span class="muted small">dont intérêts {{ ln.get('interest_total')|money }}</span></dd>
+      <dt>Tableau</dt><dd>{{ ln.rows|length }} échéances{% if ln.rows %} de {{ ln.rows[0].total|money }}{% endif %}</dd>
+    </dl>
+    {% elif st.document_kind == 'loan_schedule' %}
+    <dl class="kv">
+      <dt>Capital restant dû au départ</dt><dd><strong>{{ ln.get('balance')|money }}</strong></dd>
+      <dt>Taux</dt><dd>{{ ln.get('rate') }} % fixe</dd>
+      <dt>Échéances</dt><dd>{{ ln.rows|length }}{% if st.period_start %} · du {{ st.period_start|frdate }} au {{ st.period_end|frdate }}{% endif %}</dd>
+      {% if ln.rows %}<dt>Échéance</dt><dd>{{ ln.rows[0].total|money }} <span class="muted small">dont assurance {{ ln.rows[0].insurance|money }}</span></dd>{% endif %}
+    </dl>
+    {% else %}
+    {% set ev = ln.get('event', {}) %}
+    <dl class="kv">
+      <dt>Décompte arrêté au</dt><dd>{{ st.balance_date|frdate }}</dd>
+      <dt>Avant</dt><dd>{{ ev.before.get('capital')|money }} <span class="muted small">· fin {{ ev.before.get('end') }}</span></dd>
+      <dt>Après</dt><dd><strong>{{ ev.after.get('capital')|money }}</strong> <span class="muted small">· fin {{ ev.after.get('end') }}</span></dd>
+      <dt>Nouvelle échéance</dt><dd>{{ ev.after.get('payment')|money }} <span class="muted small">dès le {{ ev.after.get('due') }}</span></dd>
+    </dl>
+    {% endif %}
+  </div>
+  <h3>Contrôles</h3>
+  <ul class="checks small">
+    {% if st.confidence == 'high' %}<li class="ok">✓ Contrôles du document réussis{% if st.document_kind != 'loan_event' %} : chaque échéance s'additionne, le capital restant dû s'enchaîne jusqu'à zéro{% else %} : le capital a diminué et la fin du prêt est avancée{% endif %}.</li>{% endif %}
+    {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
+    {% if plan.loan_existing and doc.status != 'imported' %}<li class="bad">⚠ <strong>Déjà importé</strong> : {{ plan.loan_existing }}.</li>{% endif %}
+    {% if plan.loan_unverified and doc.status != 'imported' %}<li class="bad">⚠ {{ plan.loan_unverified }}</li>{% endif %}
+    {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs prêts pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
+    {% if plan.account and plan.candidates|length == 1 and not plan.loan_existing and not plan.loan_unverified %}<li class="ok">✓ Rattaché au prêt « {{ plan.account.name }} ».</li>{% endif %}
+  </ul>
+  {% if doc.status != 'imported' %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Prêt auquel le rattacher
+      <select name="account_id" data-toggle-new>
+        <option value="new" {% if not plan.account %}selected{% endif %}>➕ Créer le prêt à partir de ce document</option>
+        {% for a in accounts if a.account_type in ('mortgage', 'loan') %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset class="new-account">
+      <legend>Nouveau prêt</legend>
+      <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
+      <label>Établissement <input name="institution" value="{{ st.institution or '' }}"></label>
+      <label>Type <select name="account_type"><option value="mortgage" selected>{{ ACCOUNT_TYPES['mortgage'][0] }}</option><option value="loan">{{ ACCOUNT_TYPES['loan'][0] }}</option></select></label>
+    </fieldset>
+    {% if plan.loan_existing %}<label class="check"><input type="checkbox" name="force"> Remplacer ce qui est déjà enregistré</label>{% endif %}
+    <button class="btn primary">Rattacher au prêt</button>
+  </form>
+  {% else %}<p class="flash">✓ Rattaché {% if doc.account_id %}à <a href="/accounts/{{ doc.account_id }}">ce prêt</a>{% endif %}.</p>
+  <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Retirer du prêt ce que ce document a apporté ?">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn">Invalider l'import</button>
+  </form>{% endif %}
+</section>
+{% elif st.document_kind == 'fees_summary' %}
+<section class="card">
+  <h2>{{ st.account_label or 'Récapitulatif des frais' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
+  <div class="grid">
+    <dl class="kv">
+      {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+      {% if st.holder_name %}<dt>Titulaire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+      {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban|iban }}</code> {{ copy(st.iban|replace(' ', ''), '', 'Copier l\'IBAN') }}</dd>{% endif %}
+      {% if st.bic %}<dt>BIC</dt><dd><code>{{ st.bic }}</code></dd>{% endif %}
+      {% if st.bank_code %}<dt>RIB</dt><dd><code>{{ st.bank_code }} {{ st.branch_code }} {{ st.account_number }} {{ st.rib_key }}</code></dd>{% endif %}
+    </dl>
+    <dl class="kv">
+      <dt>Période</dt><dd>{{ st.period_start|frdate }} → {{ st.period_end|frdate }}</dd>
+      <dt>Frais payés</dt><dd><strong>{{ st.extra.get('fees_total')|money }}</strong></dd>
+      <dt>Intérêts payés</dt><dd>{{ st.extra.get('interest_paid')|money }}</dd>
+      <dt>Intérêts acquis</dt><dd>{% if st.extra.get('interest_earned') is none %}non applicables{% else %}{{ st.extra.interest_earned|money }}{% endif %}</dd>
+    </dl>
+  </div>
+  {% if st.extra.get('services') %}
+  <h3>Frais par service</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Catégorie</th><th>Service</th><th class="num">Utilisé</th><th class="num">Prix unitaire</th><th class="num">Facturé</th><th class="num">Total</th></tr></thead>
+    {% for s in st.extra.services %}<tr><td class="small">{{ s.category or '' }}</td><td>{{ s.name }}</td><td class="num">{{ s.used }}</td><td class="num">{{ s.unit_price|money }}</td><td class="num">{{ s.billed }}</td><td class="num">{{ s.total|money }}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  <h3>Contrôles</h3>
+  <ul class="checks small">
+    {% if st.confidence == 'high' %}<li class="ok">✓ Le total des frais correspond à la somme des services listés.</li>{% endif %}
+    {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
+    {% if plan.fee_existing %}<li class="bad">⚠ <strong>Déjà rattaché</strong> : ce compte a déjà un récapitulatif des frais pour cette période (importé le {{ plan.fee_existing.imported_at|frdate }}).</li>{% endif %}
+    {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre : choisis le bon ci-dessous.</li>{% endif %}
+  </ul>
+  {% if doc.status != 'imported' %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Compte auquel le rattacher
+      <select name="account_id" data-toggle-new>
+        <option value="new" {% if not plan.account %}selected{% endif %}>➕ Créer le compte à partir de ce document</option>
+        {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset class="new-account">
+      <legend>Nouveau compte</legend>
+      <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
+      <label>Établissement <input name="institution" value="{{ st.institution or '' }}"></label>
+      <label>Type <select name="account_type">{% for code, (label, cat) in ACCOUNT_TYPES.items() %}<option value="{{ code }}" {% if st.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    </fieldset>
+    {% if plan.fee_existing %}<label class="check"><input type="checkbox" name="force"> Remplacer le récapitulatif déjà rattaché</label>{% endif %}
+    <button class="btn primary">Rattacher au compte</button>
+  </form>
+  {% else %}<p class="flash">✓ Rattaché {% if doc.account_id %}à <a href="/accounts/{{ doc.account_id }}">ce compte</a>{% endif %}.</p>{% endif %}
+</section>
+{% else %}
+<section class="card">
+  <h2>{{ st.account_label or 'Compte' }} <span class="tag conf-{{ st.confidence }}">fiabilité {{ {'high': 'élevée', 'medium': 'moyenne', 'low': 'faible'}[st.confidence] }}</span></h2>
+  <div class="grid">
+    <dl class="kv">
+      {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
+      {% if st.holder_name %}<dt>Titulaire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
+      {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
+      {% if st.iban %}<dt>IBAN</dt><dd><code>{{ st.iban|iban }}</code> {{ copy(st.iban|replace(' ', ''), '', 'Copier l\'IBAN') }}</dd>{% endif %}
+      {% if st.bic %}<dt>BIC</dt><dd><code>{{ st.bic }}</code></dd>{% endif %}
+      {% if st.bank_code %}<dt>RIB</dt><dd><code>{{ st.bank_code }} {{ st.branch_code }} {{ st.account_number }} {{ st.rib_key }}</code></dd>
+      {% elif st.account_number %}<dt>N° de compte</dt><dd>{{ st.account_number }}</dd>{% endif %}
+    </dl>
+    <dl class="kv">
+      {% if st.period_start or st.period_end %}<dt>Période</dt><dd>{{ st.period_start|frdate }} → {{ st.period_end|frdate }}</dd>{% endif %}
+      {% if st.opening_balance is not none %}<dt>Solde initial</dt><dd>{{ st.opening_balance|money(st.currency) }}{% if st.opening_date %} <span class="muted small">au {{ st.opening_date|frdate }}</span>{% endif %}</dd>{% endif %}
+      {% if st.balance is not none %}<dt>Solde final</dt><dd><strong>{{ st.balance|money(st.currency) }}</strong> <span class="muted small">au {{ st.balance_date|frdate }}</span></dd>{% endif %}
+      <dt>Opérations lues</dt><dd>{{ st.transactions|length }}</dd>
+    </dl>
+  </div>
+
+  {% set done = doc.status == 'imported' %}
+  <h3>Contrôles</h3>
+  <ul class="checks small">
+    {% if st.opening_balance is not none and st.balance is not none and st.confidence == 'high' %}<li class="ok">✓ Solde initial + opérations = solde final : les {{ st.transactions|length }} opérations lues sont complètes.</li>{% endif %}
+    {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
+    {% for i in plan.issues %}<li class="bad">⚠ {{ i }}</li>{% endfor %}
+    {% if done %}
+    <li class="ok">✓ Importé{% if plan.already_imported %} le {{ plan.already_imported.imported_at|frdate }}{% endif %}{% if doc.account_id %} dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>{% endif %}. Pour le relire ou le réimporter, invalide-le d'abord (bouton plus bas).</li>
+    {% else %}
+    {% if plan.already_imported %}<li class="bad">⚠ <strong>Relevé déjà importé</strong> : ce compte a déjà un relevé pour la même période, importé le {{ plan.already_imported.imported_at|frdate }}.</li>{% endif %}
+    {% for o in plan.overlaps %}<li class="bad">⚠ Chevauche un relevé déjà importé ({{ o.period_start|frdate }} → {{ o.period_end|frdate }}) : les opérations en double seront ignorées.</li>{% endfor %}
+    {% if plan.classified.exact %}<li class="bad">⚠ <strong>{{ plan.classified.exact|length }} doublon(s) exact(s)</strong> : opérations déjà présentes dans le compte, elles seront ignorées.</li>{% endif %}
+    {% if plan.classified.probable %}<li class="bad">⚠ <strong>{{ plan.classified.probable|length }} doublon(s) probable(s)</strong> : même jour et même montant qu'une opération déjà présente, mais un libellé différent (autre source). Ignorés par défaut, tu peux les importer quand même ci-dessous.</li>{% endif %}
+    {% if plan.ask_holder %}<li class="bad">⚠ <strong>Nom du titulaire coupé par la banque</strong> (« {{ st.holder_name }} ») : indique les noms complets ci-dessous, une seule fois.</li>{% endif %}
+    {% if plan.candidates|length > 1 %}<li class="bad">⚠ Plusieurs comptes pourraient correspondre à ce relevé : choisis le bon ci-dessous.</li>{% endif %}
+    {% if not st.warnings and not plan.issues and not plan.already_imported and not plan.overlaps and not plan.classified.exact and not plan.classified.probable %}<li class="ok">✓ Aucun doublon, aucune incohérence détectée avec les relevés déjà importés.</li>{% endif %}
+    {% endif %}
+  </ul>
+
+  {% if plan.dedup and doc.status == 'parsed' %}
+  {% set dd = plan.dedup %}
+  <div class="dedup-panel">
+    <h3>{{ 'Ce relevé est déjà importé : aucune différence' if dd.identical else 'Ce relevé existe déjà, mais ce fichier diffère' }}</h3>
+    <p>Même compte, même période ({{ st.period_start|frdate }} → {{ st.period_end|frdate }}) que
+      {% if dd.document %}<a href="/documents/{{ dd.document.id }}">« {{ dd.document.filename }} »</a>{% else %}un relevé importé{% endif %}, importé le {{ dd.previous.imported_at|frdate }}{% if not dd.document %} (son fichier n'existe plus){% endif %}.</p>
+    {% if dd.identical %}
+      <p>Mêmes opérations et mêmes soldes : ce fichier n'apporte rien.</p>
+    {% else %}
+    <ul class="checks">
+      {% if dd.new_count %}<li class="bad">⚠ <strong>{{ dd.new_count }} opération(s) en plus</strong> dans ce fichier.</li>{% endif %}
+      {% if dd.probable_count %}<li class="bad">⚠ {{ dd.probable_count }} opération(s) probablement déjà présente(s) sous un autre libellé.</li>{% endif %}
+      {% if dd.missing %}<li class="bad">⚠ <strong>{{ dd.missing|length }} opération(s) de l'ancien fichier absente(s)</strong> de celui-ci.</li>{% endif %}
+      {% if dd.opening %}<li class="bad">⚠ Solde initial : {{ dd.opening[0]|money(st.currency) }} avant, {{ dd.opening[1]|money(st.currency) }} maintenant.</li>{% endif %}
+      {% if dd.closing %}<li class="bad">⚠ Solde final : {{ dd.closing[0]|money(st.currency) }} avant, {{ dd.closing[1]|money(st.currency) }} maintenant.</li>{% endif %}
+    </ul>
+    {% if dd.extra or dd.missing %}
+    <details>
+      <summary>Voir les différences</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th></th><th>Date</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
+        {% for t in dd.extra %}<tr><td><span class="tag conf-medium">en plus</span></td><td class="nowrap">{{ t.date|frdate }}</td><td><span class="sensitive">{{ t.label }}</span></td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+        {% for t in dd.missing %}<tr><td><span class="tag conf-low">absente</span></td><td class="nowrap">{{ t.date|frdate }}</td><td><span class="sensitive">{{ t.label }}</span></td><td class="num">{{ t.amount|money(t.currency) }}</td></tr>{% endfor %}
+      </table></div>
+    </details>
+    {% endif %}
+    {% endif %}
+    <div class="actions">
+      {% if not dd.identical %}
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Remplacer l'ancien fichier ? Il sera supprimé avec les opérations qu'il avait apportées, et celles de ce fichier seront importées à la place.">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="replace">
+        <button class="btn primary" {% if not dd.can_replace %}disabled title="L'ancien fichier n'existe plus"{% endif %}>Remplacer l'ancien</button></form>
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="keep">
+        <button class="btn">Stocker avec l'ancien (garder les deux, importer ce qui est nouveau)</button></form>
+      {% else %}
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="copy">
+        <button class="btn">Le garder en copie</button></form>
+      {% endif %}
+      <form method="post" action="/documents/{{ doc.id }}/dedup/{{ idx }}" data-confirm="Écarter ce fichier ? L'ancien reste en place.">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="discard">
+        <button class="btn {{ 'danger' if dd.identical else 'ghost' }}">Écarter ce fichier</button></form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not done %}
+  <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Compte de destination
+      <select name="account_id" data-toggle-new>
+        <option value="new" {% if not plan.account %}selected{% endif %}>➕ Créer un nouveau compte</option>
+        {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}{% if a.holder_name %} · {{ a.holder_name }}{% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    {% if plan.ask_holder %}
+    <fieldset class="ask-names">
+      <legend>Noms complets des titulaires</legend>
+      <label>Titulaire(s) <input name="holder_name" value="{{ st.holder_name }}" required autocomplete="off">
+        <small>Sur ce document la banque tronque le nom (« {{ st.holder_name }} »). Écris-le en entier, par exemple « M PRÉNOM NOM OU MME PRÉNOM NOM ». Il sert à reconnaître tes virements entre comptes et n'est demandé qu'une fois.</small></label>
+    </fieldset>
+    {% endif %}
+    <fieldset class="new-account">
+      <legend>Nouveau compte</legend>
+      <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>
+      <label>Établissement <input name="institution" value="{{ st.institution or '' }}"></label>
+      <label>Type <select name="account_type">
+        {% for code, (label, cat) in ACCOUNT_TYPES.items() %}<option value="{{ code }}" {% if st.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+    </fieldset>
+    {% set candidate = st.balance if st.balance is not none else (st.candidate_balances[0][1] if st.candidate_balances else '') %}
+    <label class="check"><input type="checkbox" name="update_balance" {% if candidate != '' and plan.newer_balance %}checked{% endif %}> Mettre à jour le solde du compte{% if not plan.newer_balance %} <span class="warn small">(le compte a déjà un solde plus récent)</span>{% endif %}</label>
+    <label>Solde <input name="balance" value="{{ candidate }}" inputmode="decimal"></label>
+    {% if st.candidate_balances %}
+    <p class="small muted">Montants trouvés dans le document :</p>
+    <ul class="small">{% for label, amount in st.candidate_balances %}<li>{{ label }} : <strong>{{ amount|money }}</strong></li>{% endfor %}</ul>
+    {% endif %}
+    {% if st.transactions %}<label class="check"><input type="checkbox" name="import_transactions" checked> Importer les opérations nouvelles ({{ plan.classified.new|length }} sur {{ st.transactions|length }})</label>{% endif %}
+    {% if plan.classified.probable %}<label class="check"><input type="checkbox" name="import_probable"> Importer aussi les {{ plan.classified.probable|length }} doublon(s) probable(s)</label>{% endif %}
+    {% if st.holdings %}<label class="check"><input type="checkbox" name="import_holdings" checked> Importer les {{ st.holdings|length }} positions</label>{% endif %}
+    {% if plan.already_imported %}<label class="check"><input type="checkbox" name="force"> Importer quand même (ce relevé existe déjà)</label>{% endif %}
+    <button class="btn primary">Valider l'import</button>
+  </form>
+  {% endif %}
+
+  {% if st.holdings %}
+  <h3>Positions</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Support</th><th>ISIN / symbole</th><th class="num">Quantité</th><th class="num">Valeur</th></tr></thead>
+    {% for h in st.holdings %}<tr><td>{{ h.name }}</td><td>{{ h.isin or h.symbol }}</td><td class="num">{{ h.quantity|qty }}</td><td class="num">{{ h.value|money(h.value_currency or 'EUR') }}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  {% if st.transactions %}
+  <details>
+    <summary>Voir les {{ st.transactions|length }} opérations lues</summary>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Libellé</th><th>Interlocuteur</th><th class="num">Montant</th><th></th></tr></thead>
+      {% for t in st.transactions %}
+      <tr class="{{ '' if done else 'tx-' ~ statuses[loop.index0] }}">
+        <td class="nowrap">{{ t.date|frdate }}{% if t.value_date and t.value_date != t.date %}<div class="muted small">valeur {{ t.value_date|frdate }}</div>{% endif %}</td>
+        <td><span class="sensitive">{{ t.label }}</span><div class="muted small">{{ KIND_LABELS.get(t.kind, '') }}{% if t.details and t.details.get('internal') %} · virement interne{% endif %}{% if t.reference %} · réf. {{ t.reference }}{% endif %}</div></td>
+        <td class="small"><span class="sensitive">{{ t.counterparty or '' }}</span>{% if t.counterparty_iban %}<div><code>{{ t.counterparty_iban }}</code></div>{% endif %}</td>
+        <td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td>
+        <td>{% if done %}{% elif statuses[loop.index0] == 'exact' %}<span class="tag conf-low">doublon</span>{% elif statuses[loop.index0] == 'probable' %}<span class="tag conf-medium">doublon probable</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table></div>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+{% endfor %}
+
+{% if doc.status == 'imported' and not plans|selectattr('statement.document_kind', 'in', ['info', 'fees_summary', 'loan_offer', 'loan_event', 'loan_schedule'])|list %}
+<section class="card">
+  <h2>Importé</h2>
+  <p>{% if doc.account_id %}Les opérations de ce document sont dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>. {% endif %}Pour le relire ou le réimporter, invalide-le : ses opérations sont retirées du compte et le fichier reste conservé.</p>
+  <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Invalider cet import ? Les opérations apportées par ce document sont retirées du compte (le fichier reste conservé).">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn">Invalider l'import</button>
+  </form>
+</section>
+{% if to_identify %}
+<section class="card">
+  <h2>À qui ces opérations sont-elles ?</h2>
+  <p class="small muted">Nomme-les une fois : l'application s'en souvient (par IBAN et par nom imprimé) et les reconnaîtra dans tes prochains documents.</p>
+  {{ unresolved_table(to_identify, '/documents/' ~ doc.id) }}
+</section>
+{% endif %}
+{% endif %}
+
+<form method="post" action="/documents/{{ doc.id }}/delete" class="danger-zone" data-confirm="Supprimer définitivement ce document ? (les opérations importées sont conservées)">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <a class="btn" href="/documents/{{ doc.id }}/download">Télécharger l'original</a>
+  <button class="btn danger">Supprimer le document</button>
+</form>
+{% endblock %}

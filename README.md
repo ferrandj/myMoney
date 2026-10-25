@@ -7,7 +7,7 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 - **Dépose un fichier, le bon adapter est choisi tout seul.** Chaque adapter lit un type de document d'un établissement ; un établissement peut en avoir plusieurs (relevé mensuel PDF, export CSV, relevé d'épargne…). En cas de doute (deux lectures plausibles, établissement reconnu mais document inconnu), l'application te demande laquelle utiliser.
 - **Copier ses coordonnées en un clic** : sur la fiche d'un compte, un bouton « Copier » à côté du titulaire, de l'adresse, de l'IBAN (copié sans espaces), du BIC et du RIB, et « Tout copier » pour envoyer titulaire + IBAN + BIC + RIB d'un coup. Même chose pour l'IBAN des contacts. (Sans HTTPS, le navigateur interdit l'accès direct au presse-papiers : l'application passe alors par la méthode de secours, qui marche aussi.)
 - **Masquer les données sensibles** : le bouton « Masquer » de la barre du haut floute les montants, les IBAN et RIB, les noms, adresses, libellés d'opérations, noms de fichiers et les graphiques (infobulles comprises), et empêche de les sélectionner. Le mode reste actif sur l'appareil jusqu'à « Afficher ».
-- **20 styles** (bouton « Style ») : 10 clairs (Clair, Neige, Sable, Menthe, Lavande, Ciel, Rose poudré, Papier, Solarized clair, Agrume) et 10 sombres (Sombre, Minuit, Ardoise, Charbon, Forêt, Aubergine, Nord, Dracula, Solarized sombre, Noir OLED), plus « Automatique » qui suit l'appareil. Le contraste de chaque style est vérifié par les tests (texte, liens, montants, graphiques). Le choix est gardé sur l'appareil. Les couleurs sont définies dans `mymoney/web/themes.py`.
+- **20 styles** (bouton « Style ») : 10 clairs (Clair, Neige, Sable, Menthe, Lavande, Ciel, Rose poudré, Papier, Solarized clair, Agrume) et 10 sombres (Sombre, Minuit, Ardoise, Charbon, Forêt, Aubergine, Nord, Dracula, Solarized sombre, Noir OLED), plus « Automatique » qui suit l'appareil. Le contraste de chaque style est vérifié par les tests (texte, liens, montants, graphiques). Le choix est gardé sur l'appareil. Les couleurs sont définies dans `src/web/themes.rs`.
 - **Documents classés comme un dossier** : établissement → type de document (relevé de compte, récapitulatif des frais, offre de prêt…) → année → fichier. On clique pour déplier, on coche les fichiers voulus (ou tout un groupe) et « Télécharger la sélection » donne le fichier, ou un zip s'il y en a plusieurs.
 - **Où part l'argent** (Analyses → Dépenses) : chaque opération reçoit une catégorie (Courses, Restaurants, Transports, Énergie et eau, Abonnements, Santé, Impôts, Crédit, Frais bancaires…) deviné d'après le libellé et le type d'opération, sans rien envoyer à personne. On voit le total par catégorie (anneau et barres), les dépenses mois par mois, puis, en cliquant une catégorie, **chez qui** (par bénéficiaire) et **quand** (chaque opération). Si une catégorie est fausse, tu la changes pour un bénéficiaire : c'est retenu pour toutes ses opérations, y compris les prochaines (réglage personnel de chaque utilisateur ; « Automatique » le retire). « Autres dépenses » regroupe ce qui n'a pas été reconnu. Même vue pour les revenus, et un clic sur un mois de « Entrées / sorties » ouvre le détail de ce mois.
 - **« Qui est-ce ? » sans doublon** : dans la liste « À identifier », on choisit un contact déjà enregistré (la même personne avec un autre compte ou un autre nom imprimé) au lieu d'en créer un nouveau ; son nom imprimé et son IBAN sont ajoutés à ce contact.
@@ -158,37 +158,60 @@ Les lectures s'améliorent (nouveaux formats, corrections). Dans **Documents →
 
 ## Développement
 
+L'application est écrite en **Rust** (un seul binaire, sans dépendance à l'exécution). La version Python d'origine est
+gardée telle quelle dans [`python/`](python/), en secours et comme **référence** : la CI vérifie à chaque push que la
+version Rust lit les mêmes documents, affiche les mêmes pages et répond pareil à chaque requête.
+
 ```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest
-MYMONEY_DATA_DIR=./data mymoney serve   # http://127.0.0.1:8000
+cargo build --release
+cargo test --release
+MYMONEY_DATA_DIR=./data ./target/release/mymoney serve   # http://127.0.0.1:8000
 ```
 
 Structure :
 
 ```
-mymoney/
+src/
   security/    crypto (AES-GCM, Argon2id, HKDF), trousseau de clés, coffre en mémoire
-  db.py        base SQLCipher ouverte uniquement quand le coffre est déverrouillé
+  db.rs        base SQLCipher ouverte uniquement quand le coffre est déverrouillé (même format que la version Python)
+  pdf/         lecture des PDF comme pdfplumber (caractères, positions, mots, texte), PDF chiffrés compris
   adapters/    un adapter par type de document et par établissement
-    base.py        contrat (Adapter, Detection, SourceDocument, ParsedStatement)
-    registry.py    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
-    boursobank/    _table.py (tableau des mouvements commun), statement_pdf.py (compte courant), savings_pdf.py (PEL, épargne)
-    fortuneo/      statement_pdf.py (relevé de compte ou de livret), fees_pdf.py (récapitulatif des frais), deposit_guarantee_pdf.py (lettre FGDR),
-                   loan_offer_pdf.py, loan_prepayment_pdf.py, loan_schedule_pdf.py (prêt)
-    revolut/       statement_csv.py : export CSV
-    generic/       OFX, QIF, CSV et PDF « devinés »
-  services/    import (doublons, cohérence), prêts (reconstitution et contrôles), utilisateurs, droits et partages (`access.py`, `users.py`), contacts, prix, valorisation, taux réglementés
-  web/         interface (FastAPI + Jinja, sans JavaScript externe)
+    base.rs        contrat (Adapter, SourceDocument, ParsedStatement, TransactionData)
+    registry.rs    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
+    boursobank/, fortuneo/, revolut/, generic/ (OFX, QIF, CSV et PDF « devinés »)
+  services/    import (doublons, cohérence), prêts, utilisateurs, droits et partages, contacts, catégories, prix, valorisation, taux réglementés
+  app.rs       le cœur de l'application (coffre, documents, imports, relecture)
+  web/         serveur HTTP, routes, sessions et CSRF, Cloudflare Access, graphiques SVG, thèmes, PWA,
+               et un moteur de gabarits compatible Jinja2 (les gabarits de web/templates sont ceux de la version Python)
+web/           gabarits, fichiers statiques et icônes
+python/        la version Python d'origine (FastAPI + Jinja), avec ses tests
+tools/         comparaisons différentielles Rust ↔ Python
 ```
+
+### Vérifier que les deux versions sont identiques
+
+Depuis `python/` (après `pip install -e ".[dev]"`), avec le binaire Rust construit :
+
+```bash
+MYMONEY_CAPTURE=/tmp/corpus PYTHONPATH=.. python -m pytest -q -p tools.capture_docs   # garde chaque document lu par les tests
+python ../tools/diff_parse.py ../target/release/mymoney $(find /tmp/corpus -type f)   # même lecture, au caractère près
+cd .. && ./tools/diff_jinja.sh                                                          # mêmes gabarits que Jinja2
+python3 tools/diff_http.py --docs /tmp/corpus --work /tmp/http --keep                 # même application, requête par requête
+python3 tools/diff_http.py --existing /tmp/http/py/data                                # Rust ouvre les données de la version Python
+```
+
+`tools/gen_edge_cases.py` (CSV, OFX et QIF piégés) et `tools/gen_pdf_variants.py` (PDF chiffrés ou abîmés, avec pypdf)
+fabriquent d'autres documents fictifs à comparer.
+
+**Seul écart connu**, volontaire : un montant écrit en notation scientifique (`1e2` dans un OFX, ce qu'aucune banque
+n'écrit) est gardé `1E+2` par Python et `100` par Rust. La valeur et l'affichage (« 100,00 € ») sont les mêmes.
 
 ### Écrire un adapter
 
-1. Crée `mymoney/adapters/<etablissement>/<type_de_document>.py` avec une classe qui hérite de `Adapter` (`id`, `institution`, `label`, `formats`).
+1. Crée `src/adapters/<etablissement>/<type_de_document>.rs` avec un type qui implémente `Adapter` (`id`, `institution`, `label`, `formats`).
 2. `detect(doc)` note de 0 à 1 à quel point le document est bien de ce type, d'après ce qui le distingue des autres documents du même établissement (titre, en-têtes de colonnes, mentions) ; il ne lit rien de personnel.
 3. `parse(doc)` renvoie des `ParsedStatement` : identité du compte (titulaire, adresse, IBAN, RIB), période, soldes initial et final, et des `TransactionData` structurées (date, date de valeur, type, interlocuteur, IBAN de l'interlocuteur, référence, libellé complet dans `raw`). Les soldes servent au contrôle : opérations lues = solde initial → solde final.
-4. Ajoute la classe à `ADAPTERS` dans `registry.py`.
-5. **Écris le test avec un document fictif** (voir `tests/fixtures.py`, `tests/fixtures_fortuneo.py` et `tests/fixtures_loan.py`, qui dessinent de faux documents à la mise en page réelle). Ne commite jamais un vrai relevé.
+4. Ajoute-le à `ADAPTERS` dans `src/adapters/registry.rs`.
+5. **Teste avec un document fictif** (les tests Python dessinent de faux documents à la mise en page réelle : `python/tests/fixtures*.py`). Ne commite jamais un vrai relevé. Tant que la version Python sert de référence à la CI, un nouvel adapter s'ajoute aussi de son côté (`python/mymoney/adapters/`), sinon la comparaison différentielle signale l'écart.
 
-Les taux réglementés se mettent à jour dans `mymoney/services/rates.py` (une ligne par changement, les 1er février et 1er août).
+Les taux réglementés se mettent à jour dans `src/services/rates.rs` (et `python/mymoney/services/rates.py` pour la référence), une ligne par changement, les 1er février et 1er août.

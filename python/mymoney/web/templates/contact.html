@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_macros.html" import copy with context %}
+{% block title %}{{ contact.name if contact else 'Nouveau contact' }}{% endblock %}
+{% block content %}
+<p><a href="/contacts">← Contacts</a></p>
+{% if not contact %}
+<h1>Nouveau contact</h1>
+<form method="post" action="/contacts/new" class="card stack narrow-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Nom <input name="name" required></label>
+  <label>Type <select name="kind">{% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></label>
+  <label>Téléphone <input name="phone" inputmode="tel"></label>
+  <label>E-mail <input name="email" type="email"></label>
+  <label>IBAN <input name="iban" autocomplete="off"><small>Facultatif : les opérations vers / depuis cet IBAN seront reconnues.</small></label>
+  <label>Nom tel qu'imprimé par la banque <input name="printed_name"><small>Facultatif : pour reconnaître aussi les opérations qui n'ont pas d'IBAN.</small></label>
+  <label>Notes <textarea name="notes" rows="2"></textarea></label>
+  <button class="btn primary">Créer</button>
+</form>
+{% else %}
+<h1>{{ contact.name }}</h1>
+<section class="grid">
+  <form method="post" action="/contacts/{{ contact.id }}" class="card stack">
+    <h2>Fiche</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Nom <input name="name" required value="{{ contact.name }}"></label>
+    <label>Type <select name="kind">{% for code, label in COUNTERPARTY_KINDS.items() %}<option value="{{ code }}" {% if contact.kind == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label>Téléphone <input name="phone" inputmode="tel" value="{{ contact.phone or '' }}"></label>
+    <label>E-mail <input name="email" type="email" value="{{ contact.email or '' }}"></label>
+    <label>Notes <textarea name="notes" rows="3">{{ contact.notes or '' }}</textarea></label>
+    <button class="btn primary">Enregistrer</button>
+  </form>
+  <div class="card stack">
+    <h2>Comment il est reconnu</h2>
+    <p class="small muted">Un import rattache automatiquement à ce contact toute opération portant l'un de ces identifiants.</p>
+    {% for i in contact.identifiers %}
+    <form method="post" action="/contacts/{{ contact.id }}/identifiers/{{ i.id }}/delete" class="identifier">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <span>{% if i.kind == 'iban' %}<span class="tag">IBAN</span> <code>{{ i.value }}</code> {{ copy(i.value) }}{% else %}<span class="tag">Nom</span> {{ i.label or i.value }}{% endif %}</span>
+      <button class="btn ghost small" aria-label="Retirer">✕</button>
+    </form>
+    {% else %}<p class="muted small">Aucun identifiant.</p>{% endfor %}
+    <form method="post" action="/contacts/{{ contact.id }}/identifiers" class="row-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Ajouter <select name="kind"><option value="iban">un IBAN</option><option value="name">un nom imprimé</option></select></label>
+      <label>Valeur <input name="value" required autocomplete="off"></label>
+      <button class="btn">Ajouter</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Opérations <span class="muted small">({{ transactions|length }}{% if transactions|length == 200 %}+{% endif %})</span></h2>
+  {% if transactions %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Compte</th><th>Libellé</th><th class="num">Montant</th></tr></thead>
+    {% for t in transactions %}
+    <tr><td class="nowrap">{{ t.date|frdate }}</td><td class="small"><a href="/accounts/{{ t.account_id }}">{{ account_names.get(t.account_id, '') }}</a></td><td><span class="sensitive">{{ t.label }}</span></td>
+      <td class="num {{ 'pos' if t.amount > 0 else '' }}">{{ t.amount|money(t.currency) }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">Aucune opération rattachée pour l'instant.</p>{% endif %}
+</section>
+
+<div class="danger-zone">
+  {% if others %}
+  <form method="post" action="/contacts/{{ contact.id }}/merge" class="actions" data-confirm="Fusionner ce contact dans l'autre ? Ses identifiants et ses opérations lui sont transférés.">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <select name="target" aria-label="Fusionner dans"><option value="">Fusionner dans…</option>{% for o in others %}<option value="{{ o.id }}">{{ o.name }}</option>{% endfor %}</select>
+    <button class="btn">Fusionner</button>
+  </form>
+  {% endif %}
+  <form method="post" action="/contacts/{{ contact.id }}/delete" data-confirm="Supprimer ce contact ? Les opérations gardent le nom imprimé par la banque.">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn danger">Supprimer</button>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,9 @@
+pub mod deposit_guarantee_pdf;
+pub mod fees_pdf;
+pub mod identity;
+pub mod life_arbitrage_pdf;
+pub mod loan;
+pub mod loan_offer_pdf;
+pub mod loan_prepayment_pdf;
+pub mod loan_schedule_pdf;
+pub mod statement_pdf;

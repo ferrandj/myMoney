@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Documents{% endblock %}
+{% block content %}
+<h1>Documents</h1>
+{% if missing %}<p class="flash">Tu cherches le relevé de <strong>{{ missing.account }}</strong> pour <strong>{{ missing.label }}</strong> : dépose-le ci-dessous, l'application le reconnaît toute seule et le trou disparaît.</p>{% endif %}
+<form method="post" action="/documents" enctype="multipart/form-data" class="card stack dropzone" id="dropzone">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="drop-target">
+    <strong>Dépose tes relevés ici</strong>
+    <span class="muted small">ou clique pour choisir · PDF, CSV, OFX/QFX, QIF · {{ max_mb }} Mo max · plusieurs fichiers possibles</span>
+    <input type="file" name="files" multiple required accept=".pdf,.csv,.ofx,.qfx,.qif,.txt,.tsv">
+  </label>
+  <small class="muted">Chaque fichier est chiffré (AES-256-GCM) dès son arrivée, puis reconnu automatiquement : l'adapter de l'établissement et du type de document est choisi tout seul. En cas de doute, l'application te demande. Les doublons sont signalés.</small>
+  <button class="btn primary">Envoyer</button>
+</form>
+{% if pending %}
+<section class="card warn" id="a-valider">
+  <h2>À valider <span class="tag">{{ pending|length }}</span></h2>
+  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). <strong>Passer en revue</strong> t'ouvre les documents l'un après l'autre : tu vérifies, tu valides, le suivant s'affiche.</p>
+  <div class="actions"><a class="btn primary" href="/documents/review">Passer en revue un par un ({{ pending|length }})</a></div>
+  <ul class="small">
+    {% for d in pending %}{% set rel = reliability(d) %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · <a href="/documents/{{ d.id }}">ouvrir et valider</a>{% if reasons.get(d.id) %}<div class="muted">À regarder : {{ reasons[d.id] }}</div>{% endif %}</li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% if aside %}
+<section class="card dedup">
+  <h2>Doublons écartés <span class="tag">{{ aside|length }}</span></h2>
+  <p class="small muted">Ces fichiers n'apportent aucune différence avec un relevé déjà importé. Ils sont supprimés automatiquement {{ QUARANTINE_HOURS }} h après leur dépôt, sauf si tu les gardes en copie.</p>
+  <div class="table-wrap"><table>
+    {% for d, original in aside %}
+    <tr>
+      <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a><div class="muted small">doublon de {{ original or 'un fichier supprimé' }}</div></td>
+      <td class="nowrap actions">
+        <form method="post" action="/documents/{{ d.id }}/keep"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small">Garder en copie</button></form>
+        <form method="post" action="/documents/{{ d.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small danger">Supprimer</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
+{% if tree %}
+<section class="card" id="bibliotheque">
+  <h2>Mes documents <span class="tag">{{ documents|length }}</span></h2>
+  <p class="small muted">Clique sur l'établissement, puis sur le type de document. Coche les fichiers voulus (ou toute une catégorie) pour les télécharger d'un coup.</p>
+  <form method="post" action="/documents/download" id="download-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="doc-toolbar">
+      <button class="btn primary" id="download-selected" disabled>Télécharger la sélection <span id="download-count"></span></button>
+      {% if imported_count %}
+      <button class="btn small" formaction="/documents/invalidate" data-confirm="Invalider les documents cochés ? Leurs opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Invalider la sélection</button>
+      <button class="btn small danger" form="invalidate-form" name="scope" value="all" data-confirm="Invalider les {{ imported_count }} import(s) ? Les opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Tout invalider ({{ imported_count }})</button>
+      {% endif %}
+      <button type="button" class="btn ghost small" data-expand="all">Tout déplier</button>
+      <button type="button" class="btn ghost small" data-expand="none">Tout replier</button>
+    </div>
+    {% for bank in tree %}
+    <details class="doc-bank" {% if tree|length == 1 or loop.first %}open{% endif %}>
+      <summary><strong>{{ bank.label }}</strong> <span class="tag">{{ bank.count }}</span>
+        {% if bank.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="bank:{{ bank.label }}" data-confirm="Invalider les {{ bank.imported }} import(s) de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ bank.imported }})</button>{% endif %}</summary>
+      {% for kind in bank.kinds %}
+      <details class="doc-kind" {% if bank.kinds|length == 1 %}open{% endif %}>
+        <summary>{{ kind.label }} <span class="tag">{{ kind.count }}</span>
+          {% if kind.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="kind:{{ bank.label }}::{{ kind.label }}" data-confirm="Invalider les {{ kind.imported }} import(s) « {{ kind.label }} » de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ kind.imported }})</button>{% endif %}
+          <label class="check doc-all" title="Cocher tout ce groupe"><input type="checkbox" data-check-group aria-label="Tout cocher : {{ bank.label }}, {{ kind.label }}"> tout</label></summary>
+        <div class="table-wrap"><table class="doc-table">
+          <tbody>
+          {% for year, docs in kind.years %}
+            <tr class="doc-year"><th colspan="6">{{ year }}</th></tr>
+            {% for d, day in docs %}
+            <tr>
+              <td class="doc-check"><input type="checkbox" name="ids" value="{{ d.id }}" aria-label="Cocher pour télécharger"></td>
+              <td><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="muted small">{{ (d.size / 1024)|round(0)|int }} Ko</span></td>
+              <td class="nowrap small" title="Période ou date du document">{{ day|frdate }}</td>
+              <td><span class="tag status-{{ d.status }}">{{ DOCUMENT_STATUS.get(d.status, d.status) }}</span></td>
+              {% set rel = reliability(d) %}<td class="nowrap"><span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span></td>
+              <td class="nowrap"><a class="btn ghost small" href="/documents/{{ d.id }}/download">Télécharger</a></td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+          </tbody>
+        </table></div>
+      </details>
+      {% endfor %}
+    </details>
+    {% endfor %}
+  </form>
+  <form method="post" action="/documents/invalidate" id="invalidate-form"><input type="hidden" name="csrf" value="{{ csrf }}"></form>
+</section>
+{% endif %}
+{% if imported_count %}
+<details class="card">
+  <summary>Tout relire depuis les fichiers</summary>
+  <p class="small muted">Après une mise à jour de l'application (nouvelles lectures, corrections), cette action <strong>annule tous les imports</strong> puis <strong>relit chaque fichier</strong> déjà importé avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents. Tout ce qui est évident est revalidé ; ce qui ne passe plus les contrôles reste <strong>à valider</strong>, avec la raison, pour que tu décides.</p>
+  <form method="post" action="/documents/rebuild" data-confirm="Annuler les {{ imported_count }} import(s) puis relire tous les fichiers ? Tes fichiers sont conservés. Les opérations saisies à la main restent en place.">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn danger">Annuler tous les imports et tout relire ({{ imported_count }})</button>
+  </form>
+</details>
+{% endif %}
+<details class="card">
+  <summary>Documents pris en charge</summary>
+  <p class="small muted">Un établissement peut avoir plusieurs adapters : un par type de document (relevé mensuel, export CSV, relevé d'épargne…). Pour en ajouter un, il suffit d'un exemple de document.</p>
+  {% for institution, adapters in catalog %}
+  <h3>{{ institution }}</h3>
+  <ul class="small">{% for a in adapters %}<li><strong>{{ a.label }}</strong> <span class="muted">— {{ a.description }}</span></li>{% endfor %}</ul>
+  {% endfor %}
+</details>
+{% endblock %}
