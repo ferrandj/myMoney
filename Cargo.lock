@@ -725,6 +725,7 @@ dependencies = [
 name = "mymoney"
 version = "2.0.0"
 dependencies = [
+ "aes",
  "aes-gcm",
  "argon2",
  "base64",

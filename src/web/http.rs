@@ -7,6 +7,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 pub struct Request {
+    /// The address of the other end of the connection (the reverse proxy, when there is one).
+    pub peer: Option<std::net::IpAddr>,
     pub method: String,
     /// Percent-decoded, as Starlette's `request.url.path`.
     pub path: String,
@@ -229,7 +231,8 @@ fn read_request(r: &mut BufReader<TcpStream>, limits: &Limits, first: bool) -> R
         Some((p, q)) => (p.to_string(), q.to_string()),
         None => (target.clone(), String::new()),
     };
-    Ok((Request { method, path: unquote(&raw_path), query, headers, body }, keep_alive))
+    let peer = r.get_ref().peer_addr().ok().map(|a| a.ip());
+    Ok((Request { peer, method, path: unquote(&raw_path), query, headers, body }, keep_alive))
 }
 
 fn write_response(stream: &mut TcpStream, resp: &Response, head: bool, close: bool) -> std::io::Result<()> {

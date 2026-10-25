@@ -30,16 +30,22 @@ pub struct Stream {
     pub raw: Vec<u8>,
     pub objid: Option<u32>,
     pub genno: u32,
+    /// The document's security handler, for a stream read once the document was found to be encrypted.
+    pub crypt: Option<Rc<super::crypt::Security>>,
     data: OnceCell<Vec<u8>>,
 }
 
 impl Stream {
     pub fn new(dict: Dict, raw: Vec<u8>) -> Self {
-        Stream { dict, raw, objid: None, genno: 0, data: OnceCell::new() }
+        Stream { dict, raw, objid: None, genno: 0, crypt: None, data: OnceCell::new() }
     }
     pub fn with_id(mut self, objid: u32, genno: u32) -> Self {
         self.objid = Some(objid);
         self.genno = genno;
+        self
+    }
+    pub fn with_crypt(mut self, crypt: Option<Rc<super::crypt::Security>>) -> Self {
+        self.crypt = crypt;
         self
     }
     pub fn get(&self, key: &str) -> Option<&Obj> {
@@ -390,12 +396,16 @@ impl Stream {
     }
 
     fn decode(&self, r: &dyn Resolver) -> Vec<u8> {
+        let raw: std::borrow::Cow<[u8]> = match (&self.crypt, self.objid) {
+            (Some(c), Some(id)) => std::borrow::Cow::Owned(c.decrypt(id, self.genno, &self.raw, Some(&self.dict))),
+            _ => std::borrow::Cow::Borrowed(&self.raw),
+        };
         let get_any = |keys: &[&str]| keys.iter().find_map(|k| self.dict.get(*k)).cloned();
         let filters = get_any(&["F", "Filter"]).map(|f| r.resolve(&f));
         let params = get_any(&["DP", "DecodeParms", "FDecodeParms"]).map(|p| r.resolve(&p));
         let filters: Vec<Obj> = match filters {
-            None | Some(Obj::Null) => return self.raw.clone(),
-            Some(Obj::Array(a)) if a.is_empty() => return self.raw.clone(),
+            None | Some(Obj::Null) => return raw.into_owned(),
+            Some(Obj::Array(a)) if a.is_empty() => return raw.into_owned(),
             Some(Obj::Array(a)) => a.iter().map(|x| r.resolve(x)).collect(),
             Some(other) => vec![other],
         };
@@ -404,7 +414,7 @@ impl Stream {
             Some(p) => vec![p; filters.len()],
             None => vec![Obj::Dict(Rc::new(Dict::new())); filters.len()],
         };
-        let mut data = self.raw.clone();
+        let mut data = raw.into_owned();
         for (k, f) in filters.iter().enumerate() {
             let name = literal_name(f);
             match name.as_str() {

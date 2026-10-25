@@ -11,3 +11,5 @@ pub mod security;
 pub mod serve;
 pub mod themes;
 pub mod views;
+#[cfg(test)]
+mod cf_tests;

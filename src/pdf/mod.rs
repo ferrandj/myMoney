@@ -1,6 +1,7 @@
 //! Reading PDF pages the way pdfplumber (over pdfminer.six) reads them: the same characters, the same
 //! positions, the same words and the same text, so that every adapter sees exactly what the Python version saw.
 
+pub mod crypt;
 pub mod document;
 pub mod font;
 pub mod interp;
@@ -23,7 +24,8 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Password => write!(f, "Ce PDF est protégé par un mot de passe"),
+            // pdfplumber wraps pdfminer's PDFPasswordIncorrect, which has no message
+            Error::Password => write!(f, ""),
             Error::Invalid(s) => write!(f, "{s}"),
         }
     }
@@ -33,6 +35,7 @@ impl std::fmt::Display for Error {
 pub fn chars(data: &[u8]) -> Result<Vec<Vec<Char>>, Error> {
     let doc = document::Document::open(data.to_vec()).map_err(|e| match e {
         document::PdfError::Encrypted => Error::Password,
+        document::PdfError::Crypt(m) => Error::Invalid(m),
         other => Error::Invalid(other.to_string()),
     })?;
     interp::page_chars(&doc).map_err(|e| Error::Invalid(e.0))

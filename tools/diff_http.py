@@ -35,9 +35,10 @@ SECOND, SECOND_PASSWORD = "lea@example.org", "Another-Long-Passw0rd!"
 
 # ------------------------------------------------------------------------------------------ servers
 class Server:
-    def __init__(self, name: str, cmd: list[str], cwd: Path, data: Path, port: int):
+    def __init__(self, name: str, cmd: list[str], cwd: Path, data: Path, port: int, extra_env: dict | None = None):
         self.name, self.port, self.data = name, port, data
         env = dict(os.environ)
+        env.update(extra_env or {})
         env.update(
             MYMONEY_DATA_DIR=str(data), MYMONEY_ARGON2_MEMORY_KIB="8192", MYMONEY_ARGON2_TIME_COST="1", MYMONEY_VERSION="diff",
             HTTPS_PROXY="http://127.0.0.1:9", HTTP_PROXY="http://127.0.0.1:9", https_proxy="http://127.0.0.1:9", http_proxy="http://127.0.0.1:9",
@@ -67,6 +68,21 @@ class Server:
         except ProcessLookupError:
             pass
         self.proc.wait(timeout=10)
+
+
+PY_LAUNCHER = """
+import os, sys
+version = os.environ.get("DIFF_READER_VERSION")
+if version:
+    import mymoney.adapters, mymoney.adapters.registry, mymoney.core
+    for module in (mymoney.adapters, mymoney.adapters.registry, mymoney.core):
+        module.reader_version = lambda: version
+    import mymoney.web.app
+    mymoney.web.app.reader_version = lambda: version
+from mymoney.cli import main
+sys.argv = ["mymoney"] + sys.argv[1:]
+main()
+"""
 
 
 class Client:
@@ -147,7 +163,16 @@ def normalize(text: str) -> str:
     text = re.sub(r"(lecture )[0-9a-f]{6,}", r"\1VERSION", text)
     text = re.sub(r"(\d\d/\d\d/\d{4}) \d\d:\d\d", r"\1 HH:MM", text)
     text = re.sub(r'(<p class="recovery"><code>)[^<]+', r"\1RECOVERY", text)
+    text = re.sub(r"(réessaie dans )\d+( s)", r"\1N\2", text)
+    text = re.sub(r"--[0-9a-f]{26}", "--BOUNDARY", text)
     return text
+
+
+def zip_entries(data: bytes):
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return [(i.filename, z.read(i.filename)) for i in z.infolist()]
 
 
 class Checker:
@@ -162,19 +187,26 @@ class Checker:
             problems.append(f"status {a.status} != {b.status}")
         if (a.location or "") != (b.location or ""):
             problems.append(f"location {a.location!r} != {b.location!r}")
-        for h in ("content-type", "content-disposition", "allow", "cache-control", "service-worker-allowed", "strict-transport-security", "content-security-policy", "x-frame-options"):
-            if a.header(h) != b.header(h):
+        for h in ("content-type", "content-disposition", "allow", "cache-control", "service-worker-allowed", "strict-transport-security", "content-security-policy",
+                  "x-frame-options", "content-range", "accept-ranges"):
+            ha, hb = (re.sub(r"boundary=[0-9a-f]{26}", "boundary=B", x) if x else x for x in (a.header(h), b.header(h)))
+            if ha != hb:
                 problems.append(f"{h} {a.header(h)!r} != {b.header(h)!r}")
-        sa = any(k == "set-cookie" for k, _ in a.headers)
-        sb = any(k == "set-cookie" for k, _ in b.headers)
-        if sa != sb:
-            problems.append(f"set-cookie {sa} != {sb}")
-        if a.ctype.startswith(("text/", "application/json", "application/manifest")):
+        def cookies(r):
+            out = [v for k, v in r.headers if k == "set-cookie"]
+            out = [re.sub(r"^mm_session=[A-Za-z0-9_-]{20,}", "mm_session=TOKEN", v) for v in out]
+            return [re.sub(r"expires=[^;]+", "expires=DATE", v) for v in out]
+        if cookies(a) != cookies(b):
+            problems.append(f"set-cookie {cookies(a)} != {cookies(b)}")
+        if a.ctype.startswith(("text/", "application/json", "application/manifest", "multipart/")):
             ta, tb = normalize(a.text), normalize(b.text)
             if ta != tb:
                 diff = "\n".join(list(difflib.unified_diff(ta.splitlines(), tb.splitlines(), "python", "rust", lineterm="", n=1))[:60])
                 problems.append("body differs:\n" + diff)
-        elif a.ctype not in ("application/zip",) and a.body != b.body:
+        elif a.ctype == "application/zip":
+            if zip_entries(a.body) != zip_entries(b.body):
+                problems.append(f"zip contents differ: {[n for n, _ in zip_entries(a.body)]} / {[n for n, _ in zip_entries(b.body)]}")
+        elif not a.ctype.startswith("multipart/") and a.body != b.body:
             problems.append(f"binary body differs ({len(a.body)} / {len(b.body)} bytes)")
         if problems:
             self.failures.append(f"### {label}\n" + "\n".join(problems))
@@ -249,6 +281,95 @@ def form_with_action(page: str, pattern: str) -> list[dict]:
 
 
 # ------------------------------------------------------------------------------------------ the tour
+class Migration:
+    """Both servers open a copy of the same existing data (made by the Python version) and must show the same pages."""
+
+    def __init__(self, py: Server, rs: Server, password: str):
+        self.tour = Tour(py, rs, [])
+        self.password = password
+
+    def run(self):
+        t = self.tour
+        t.get("/login", "locked login")
+        ra, rb = t.both("login", lambda c: c.post("/login", {"email": EMAIL, "password": self.password}, csrf=False))
+        if ra.location != "/" or rb.location != "/":
+            raise SystemExit(f"login failed: {ra.status} {ra.location} / {rb.status} {rb.location}")
+        t.pages("migrated")
+        t.analytics("migrated")
+        ra, _ = t.get("/documents", "migrated library")
+        for i in sorted({int(x) for x in re.findall(r'href="/documents/(\d+)"', ra.text)}):
+            t.get(f"/documents/{i}", f"migrated document {i}")
+        accounts = sorted({int(x) for x in re.findall(r'href="/accounts/(\d+)"', t.peek("/").text)})
+        for i in accounts:
+            t.get(f"/accounts/{i}", f"migrated account {i}")
+            t.get(f"/accounts/{i}/edit", f"migrated account form {i}")
+        ra, _ = t.get("/contacts", "migrated contacts")
+        for i in sorted({int(x) for x in re.findall(r'href="/contacts/(\d+)"', ra.text)}):
+            t.get(f"/contacts/{i}", f"migrated contact {i}")
+        t.post("/documents/rebuild", {}, "migrated rebuild")
+        t.walk_review()
+        t.pages("migrated after rebuild")
+        t.analytics("migrated after rebuild")
+
+
+LEGACY_MAKER = """
+import sys
+from pathlib import Path
+from mymoney.config import Settings
+from mymoney.core import MyMoney
+settings = Settings(data_dir=Path(sys.argv[1]), argon2_memory_kib=8192, argon2_time_cost=1)
+core = MyMoney(settings)
+core.vault.setup(sys.argv[2])  # the layout from before users: one master password, nobody signed up
+core.save_account(None, {"name": "Ancien compte", "account_type": "checking", "balance": "42"})
+for path in sys.argv[3:]:
+    data = Path(path).read_bytes()
+    doc_id, existing = core.store_document(Path(path).name, data)
+    if existing:
+        continue
+    if core.analyze_document(doc_id, None, data) == "parsed" and core.check_duplicate(doc_id) is None:
+        core.auto_import(doc_id)
+core.vault.lock()
+"""
+
+
+class Legacy:
+    """A vault from before users existed: the master password opens it, then the first user is named."""
+
+    def __init__(self, py: Server, rs: Server, password: str):
+        self.tour = Tour(py, rs, [])
+        self.password = password
+
+    def run(self):
+        t = self.tour
+        t.get("/login", "legacy login page")
+        t.get("/", "legacy /")
+        t.both("legacy login wrong", lambda c: c.post("/login", {"password": "nope"}, csrf=False))
+        time.sleep(1.2)
+        ra, rb = t.both("legacy login", lambda c: c.post("/login", {"password": self.password}, csrf=False))
+        if ra.location != "/first-user" or rb.location != "/first-user":
+            raise SystemExit(f"legacy login failed: {ra.status} {ra.location} / {rb.status} {rb.location}")
+        for url in ("/", "/documents", "/settings", "/first-user", "/login"):
+            t.get(url, f"before first user {url}")
+        t.post("/first-user", {"email": "pas-un-email", "name": "Alice"}, "first user bad email")
+        ra, rb = t.post("/first-user", {"email": " Admin@Example.org ", "name": "Alice"}, "first user")
+        t.follow(ra, rb, "after first user")
+        t.post("/first-user", {"email": "other@example.org"}, "first user twice")
+        t.get("/first-user", "first user page after")
+        t.pages("legacy")
+        t.analytics("legacy")
+        accounts = sorted({int(x) for x in re.findall(r'href="/accounts/(\d+)"', t.peek("/").text)})
+        for i in accounts:
+            t.get(f"/accounts/{i}", f"legacy account {i}")
+        ra, _ = t.get("/documents", "legacy library")
+        for i in sorted({int(x) for x in re.findall(r'href="/documents/(\d+)"', ra.text)}):
+            t.get(f"/documents/{i}", f"legacy document {i}")
+        ra, rb = t.post("/logout", {}, "legacy logout")
+        time.sleep(1.2)
+        ra, rb = t.both("login as the first user", lambda c: c.post("/login", {"email": EMAIL, "password": self.password}, csrf=False))
+        t.follow(ra, rb, "first user signed in")
+        t.pages("first user")
+
+
 class Tour:
     def __init__(self, py: Server, rs: Server, docs: list[Path]):
         self.py, self.rs = py, rs
@@ -317,6 +438,11 @@ class Tour:
                     "/static/app.js", "/static/theme.js", "/static/logo.svg", "/static/icon.svg", "/static/nope.css", "/icons/icon-192.png",
                     "/icons/icon-512.png", "/icons/maskable-512.png", "/icons/nope.png", "/nope", "/documents/", "/settings/"]:
             g(url)
+        self.both("HEAD /static/style.css", lambda c: c.request("HEAD", "/static/style.css"))
+        self.both("POST /static/style.css", lambda c: c.request("POST", "/static/style.css", b"", {"Content-Type": "application/x-www-form-urlencoded"}))
+        for rng in ("bytes=0-9", "bytes=-5", "bytes=10-", "bytes=0-1,5-7", "bytes=0-5,3-9", "bytes=5-1", "bytes=99999-", "bytes=abc", "items=0-1", "bytes=", "bytes=0-1," * 101):
+            self.both(f"GET /static/style.css Range {rng[:40]}", lambda c, r=rng: c.request("GET", "/static/style.css", None, {"Range": r}))
+        self.both("Range with a stale If-Range", lambda c: c.request("GET", "/static/style.css", None, {"Range": "bytes=0-9", "If-Range": '"stale"'}))
         p("/setup", {"setup_token": "wrong", "email": EMAIL, "name": "Admin", "password": PASSWORD, "confirm": PASSWORD}, csrf=False)
         self.both("POST /setup mismatch", lambda c: c.post("/setup", {"setup_token": c.server.setup_token(), "email": EMAIL, "password": PASSWORD, "confirm": "x"}, csrf=False))
         self.both("POST /setup weak", lambda c: c.post("/setup", {"setup_token": c.server.setup_token(), "email": EMAIL, "password": "short", "confirm": "short"}, csrf=False))
@@ -366,12 +492,20 @@ class Tour:
         g("/accounts/2")
         p("/holdings/1/delete", {"account_id": "2"})
         g("/accounts/2")
+        # behind a reverse proxy that talks HTTPS to the browser
+        for headers in ({"Host": "nas.local:8000"}, {"Host": "nas.local", "X-Forwarded-Proto": "https"}, {"Host": "nas.local", "X-Forwarded-Proto": "https, http"},
+                        {"Host": "nas.local", "Cf-Visitor": '{"scheme":"https"}'}, {"Host": "nas.local", "X-Forwarded-Proto": "HTTPS"}):
+            for url in ("/documents/", "/accounts/2/", "/", "/healthz"):
+                self.both(f"GET {url} {headers}", lambda c, u=url, h=headers: c.request("GET", u, None, h))
         g("/accounts/3")
         g("/accounts/4")
         g("/accounts/5")
         self.pages("manual")
         self.analytics("manual")
         # -------------------------------------------------------------- documents
+        big = os.urandom(26 * 1024 * 1024)
+        ra, rb = self.both("upload too big", lambda c: c.post("/documents", [], files=[("files", "enorme.pdf", big)]))
+        self.follow(ra, rb, "after too big")
         uploaded = 0
         for path in self.docs:
             data = path.read_bytes()
@@ -640,8 +774,16 @@ class Tour:
         self.follow(ra, rb, "after logout")
         self.get("/", "after logout /")
         time.sleep(4.5)
+        for n in range(4):  # the third failure in a row starts slowing down every attempt
+            self.both(f"login wrong {n}", lambda c: c.post("/login", {"email": EMAIL, "password": "nope"}, csrf=False))
+        time.sleep(9)
         self.both("login wrong", lambda c: c.post("/login", {"email": EMAIL, "password": "nope"}, csrf=False))
         time.sleep(4.5)
+        self.both("login https", lambda c: c.request("POST", "/login", urlencode({"email": EMAIL, "password": PASSWORD}).encode(),
+                                                     {"Content-Type": "application/x-www-form-urlencoded", "X-Forwarded-Proto": "https"}))
+        self.both("logout https", lambda c: c.request("POST", "/logout", urlencode({"csrf": c.csrf or ""}).encode(),
+                                                      {"Content-Type": "application/x-www-form-urlencoded", "X-Forwarded-Proto": "https"}))
+        time.sleep(1.2)
         self.both("login", lambda c: c.post("/login", {"email": EMAIL, "password": PASSWORD}, csrf=False))
         self.get("/", "after login /")
         ra, rb = self.post("/logout", {"lock": "1"}, "lock")
@@ -660,6 +802,10 @@ def main():
     ap.add_argument("--work", default=None)
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--report", default=None)
+    ap.add_argument("--existing", default=None, help="data dir made by the Python version: both servers open a copy")
+    ap.add_argument("--password", default=PASSWORD)
+    ap.add_argument("--legacy", action="store_true", help="a vault from before users, made by the Python version with --docs")
+    ap.add_argument("--port", type=int, default=18601, help="the Python server's port (the Rust one gets the next)")
     args = ap.parse_args()
     work = Path(args.work or f"/tmp/diff_http_{os.getpid()}")
     shutil.rmtree(work, ignore_errors=True)
@@ -669,11 +815,22 @@ def main():
     for d in args.docs:
         p = Path(d)
         docs += sorted(x for x in p.rglob("*") if x.is_file()) if p.is_dir() else [p]
-    py = Server("python", [sys.executable, "-m", "mymoney.cli", "serve"], ROOT / "python", work / "py" / "data", 18601)
-    rs = Server("rust", [args.rust, "serve"], ROOT, work / "rs" / "data", 18602)
-    tour = Tour(py, rs, docs)
+    if args.legacy:
+        made = work / "legacy"
+        subprocess.run([sys.executable, "-c", LEGACY_MAKER, str(made), args.password] + [str(d) for d in docs], cwd=ROOT / "python", check=True,
+                       env=dict(os.environ, HTTPS_PROXY="http://127.0.0.1:9", HTTP_PROXY="http://127.0.0.1:9"))
+        args.existing = str(made)
+    if args.existing:
+        for side in ("py", "rs"):
+            shutil.copytree(args.existing, work / side / "data")
+    rs = Server("rust", [args.rust, "serve"], ROOT, work / "rs" / "data", args.port + 1)
+    version = re.search(r"lecture ([0-9a-f]+)", Client(rs).get("/login").text)
+    extra = {"DIFF_READER_VERSION": version.group(1)} if (args.existing and version) else {}
+    py = Server("python", [sys.executable, "-c", PY_LAUNCHER, "serve"], ROOT / "python", work / "py" / "data", args.port, extra)
+    runner = Legacy(py, rs, args.password) if args.legacy else Migration(py, rs, args.password) if args.existing else Tour(py, rs, docs)
+    tour = runner.tour if args.existing else runner
     try:
-        tour.run()
+        runner.run()
     finally:
         py.stop()
         rs.stop()

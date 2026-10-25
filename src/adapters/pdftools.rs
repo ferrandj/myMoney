@@ -23,7 +23,9 @@ pub fn fix_text(text: &str) -> String {
 
 fn pdf_error(e: crate::pdf::Error) -> String {
     match e {
-        crate::pdf::Error::Password => "Ce PDF est protégé par un mot de passe : enregistre-le sans protection puis dépose-le à nouveau".to_string(),
+        // pdfplumber wraps pdfminer's PDFPasswordIncorrect (an empty message): the Python version's own message for it
+        // is never reached
+        crate::pdf::Error::Password => String::new(),
         crate::pdf::Error::Invalid(s) => s,
     }
 }

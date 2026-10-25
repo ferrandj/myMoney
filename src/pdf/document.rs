@@ -12,7 +12,10 @@ use super::parser::{parse_object_stream, safe_int, FileParser};
 #[derive(Debug)]
 pub enum PdfError {
     NoRoot,
+    /// No password opens it (pdfminer's PDFPasswordIncorrect).
     Encrypted,
+    /// An encryption pdfminer does not handle, with its message.
+    Crypt(String),
     Syntax(String),
 }
 
@@ -20,7 +23,8 @@ impl std::fmt::Display for PdfError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PdfError::NoRoot => write!(f, "No /Root object! - Is this really a PDF?"),
-            PdfError::Encrypted => write!(f, "PDF protégé par un mot de passe"),
+            PdfError::Encrypted => write!(f, ""),
+            PdfError::Crypt(m) => write!(f, "{m}"),
             PdfError::Syntax(s) => write!(f, "{s}"),
         }
     }
@@ -105,6 +109,9 @@ impl XRef {
 pub struct Document {
     data: Vec<u8>,
     xrefs: Vec<XRef>,
+    /// The parser reads streams up to "endstream" (not /Length) once the cross-references had to be rebuilt.
+    fallback: bool,
+    security: Option<Rc<super::crypt::Security>>,
     cache: RefCell<HashMap<u32, Obj>>,
     objstm: RefCell<HashMap<u32, Rc<(Vec<Obj>, i64)>>>,
     pub catalog: Dict,
@@ -131,6 +138,8 @@ impl Document {
         let mut doc = Document {
             data,
             xrefs: vec![],
+            fallback: false,
+            security: None,
             cache: Default::default(),
             objstm: Default::default(),
             catalog: Dict::new(),
@@ -150,17 +159,41 @@ impl Document {
             None => fallback = true,
         }
         if fallback {
+            doc.fallback = true;
             let x = doc.load_fallback();
             doc.xrefs = vec![x];
         }
         let mut catalog = None;
-        for x in &doc.xrefs {
-            let t = x.trailer();
+        let trailers: Vec<Dict> = doc.xrefs.iter().map(|x| x.trailer().clone()).collect();
+        for t in &trailers {
             if t.is_empty() {
                 continue;
             }
-            if t.contains_key("Encrypt") {
-                return Err(PdfError::Encrypted);
+            if let Some(enc) = t.get("Encrypt") {
+                // as pdfminer: /ID (or two empty strings), the resolved /Encrypt, then the key from an empty password
+                let docid: Vec<Vec<u8>> = match t.get("ID").map(|i| doc.resolve(i)) {
+                    Some(Obj::Array(a)) => a.iter().map(|x| match doc.resolve(x) {
+                        Obj::Str(b) => b,
+                        _ => vec![],
+                    }).collect(),
+                    Some(_) => vec![],
+                    None => vec![vec![], vec![]],
+                };
+                let param = match doc.resolve(enc) {
+                    Obj::Dict(d) => (*d).clone(),
+                    _ => Dict::new(),
+                };
+                if docid.is_empty() {
+                    return Err(PdfError::Crypt("list index out of range".into()));
+                }
+                match super::crypt::Security::new(&docid, &param, &doc) {
+                    Ok(s) => {
+                        doc.security = Some(Rc::new(s));
+                        doc.fallback = false; // "need to read streams with exact length"
+                    }
+                    Err(super::crypt::CryptError::Password) => return Err(PdfError::Encrypted),
+                    Err(super::crypt::CryptError::Other(m)) => return Err(PdfError::Crypt(m)),
+                }
             }
             if let Some(root) = t.get("Root") {
                 catalog = Some(root.clone());
@@ -378,8 +411,14 @@ impl Document {
                 None => self.parse_at(index, objid),
             };
             if let Some(mut o) = obj {
+                if strmid.is_none() {
+                    if let Some(sec) = &self.security {
+                        o = decipher_all(sec, objid, genno, o);
+                    }
+                }
                 if let Obj::Stream(s) = &o {
-                    let st = Stream::new(s.dict.clone(), s.raw.clone()).with_id(objid, genno);
+                    let crypt = if strmid.is_none() { self.security.clone() } else { None };
+                    let st = Stream::new(s.dict.clone(), s.raw.clone()).with_id(objid, genno).with_crypt(crypt);
                     o = Obj::Stream(Rc::new(st));
                 }
                 result = Some(o);
@@ -414,6 +453,7 @@ impl Document {
         let resolve = |id: u32| self.getobj(id).unwrap_or(Obj::Null);
         let mut p = FileParser::new(&self.data);
         p.resolve = Some(&resolve);
+        p.fallback = self.fallback;
         p.seek(pos);
         let (_, t1) = p.next_token()?;
         let (_, _t2) = p.next_token()?;
@@ -497,6 +537,16 @@ impl Document {
         } else if t.as_ref().map(|t| t.is_name("Page")).unwrap_or(false) {
             out.push((id, props));
         }
+    }
+}
+
+/// pdfminer's `decipher_all`: every non-empty string of an object (a stream's own dictionary is left alone).
+fn decipher_all(sec: &super::crypt::Security, objid: u32, genno: u32, o: Obj) -> Obj {
+    match o {
+        Obj::Str(b) if !b.is_empty() => Obj::Str(sec.decrypt(objid, genno, &b, None)),
+        Obj::Array(a) => Obj::Array(a.into_iter().map(|x| decipher_all(sec, objid, genno, x)).collect()),
+        Obj::Dict(d) => Obj::Dict(Rc::new(d.iter().map(|(k, v)| (k.clone(), decipher_all(sec, objid, genno, v.clone()))).collect())),
+        other => other,
     }
 }
 

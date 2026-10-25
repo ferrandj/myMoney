@@ -252,7 +252,7 @@ impl<'c, 'a> Params<'c, 'a> {
 
 pub struct Web {
     pub core: Arc<MyMoney>,
-    settings: Settings,
+    pub settings: Settings,
     cf: CloudflareAccess,
     pub sessions: Arc<Sessions>,
     env: Environment,
@@ -496,6 +496,12 @@ impl Web {
     pub fn new(core: Arc<MyMoney>) -> Result<Arc<Web>, String> {
         let settings = core.settings.clone();
         let cf = CloudflareAccess::new(settings.cf_team_domain.as_deref(), settings.cf_audience.as_deref());
+        Self::with_cloudflare(core, cf)
+    }
+
+    /// With a given Cloudflare Access verifier (the tests give it the keys to trust).
+    pub fn with_cloudflare(core: Arc<MyMoney>, cf: CloudflareAccess) -> Result<Arc<Web>, String> {
+        let settings = core.settings.clone();
         let sessions = Arc::new(Sessions::new(if settings.auto_lock_minutes != 0 { settings.auto_lock_minutes } else { 24 * 60 }));
         {
             let s = sessions.clone();
@@ -597,6 +603,22 @@ impl Web {
         }
         let allowed: BTreeSet<String> = self.settings.trusted_origins.split(',').filter(|o| !py::strip(o).is_empty()).map(|o| py::strip(o).trim_end_matches('/').to_string()).collect();
         allowed.contains(origin.trim_end_matches('/'))
+    }
+
+    /// The scheme of the request as uvicorn set it: "http", or what a trusted proxy says in X-Forwarded-Proto
+    /// (`MYMONEY_TRUSTED_PROXIES`, 127.0.0.1 by default).
+    fn scheme(&self, req: &Request) -> String {
+        let trusted = std::env::var("MYMONEY_TRUSTED_PROXIES").unwrap_or_else(|_| "127.0.0.1".into());
+        let from_trusted = req.peer.map(|ip| proxy_trusted(&trusted, ip)).unwrap_or(false);
+        if from_trusted {
+            if let Some(p) = req.header("x-forwarded-proto") {
+                let p = p.trim();
+                if ["http", "https", "ws", "wss"].contains(&p) {
+                    return p.to_string();
+                }
+            }
+        }
+        "http".into()
     }
 
     /// The browser talks HTTPS even when the tunnel talks plain http to the app: the cookie can be marked Secure.
@@ -747,7 +769,7 @@ impl Web {
                 if path != "/" && !matches!(find_route(&cx.req.method, &other), Matched::None) {
                     let host = cx.req.header("host").unwrap_or("localhost");
                     let query = if cx.req.query.is_empty() { String::new() } else { format!("?{}", cx.req.query) };
-                    return Ok(redirect_response(&format!("http://{host}{other}{query}"), 307));
+                    return Ok(redirect_response(&format!("{}://{host}{other}{query}", self.scheme(cx.req)), 307));
                 }
                 return Err(not_found());
             }
@@ -845,11 +867,53 @@ impl Web {
             r.add("last-modified", modified);
             return Ok(r);
         }
-        let mut r = Response::new(200, ctype, data.to_vec());
-        r.add("last-modified", modified);
-        r.add("etag", etag);
-        r.add("accept-ranges", "bytes");
-        Ok(r)
+        let mut base: Vec<(String, String)> = vec![("last-modified".into(), modified.clone()), ("etag".into(), etag.clone()), ("accept-ranges".into(), "bytes".into())];
+        let simple = |base: &Vec<(String, String)>| {
+            let mut r = Response::new(200, ctype, data.to_vec());
+            r.headers.extend(base.iter().cloned());
+            r
+        };
+        let range = cx.req.header("range");
+        let if_range = cx.req.header("if-range");
+        let Some(range) = range else { return Ok(simple(&base)) };
+        if let Some(ir) = if_range {
+            if ir != modified && ir != etag {
+                return Ok(simple(&base));
+            }
+        }
+        let size = data.len();
+        let ranges = match parse_range(range, size) {
+            Ok(r) => r,
+            Err(RangeError::Malformed(m)) => return Ok(Response::new(400, "text/plain; charset=utf-8", m)),
+            Err(RangeError::Unsatisfiable) => {
+                let mut r = Response::new(416, "text/plain; charset=utf-8", Vec::new());
+                r.add("content-range", format!("bytes */{size}"));
+                return Ok(r);
+            }
+        };
+        match ranges.len() {
+            0 => Ok(simple(&base)),
+            1 => {
+                let (start, end) = ranges[0];
+                let mut r = Response::new(206, ctype, data[start..end].to_vec());
+                base.push(("content-range".into(), format!("bytes {start}-{}/{size}", end - 1)));
+                r.headers.extend(base);
+                Ok(r)
+            }
+            _ => {
+                let boundary = crate::app::token_hex(13);
+                let mut body: Vec<u8> = vec![];
+                for (start, end) in &ranges {
+                    body.extend_from_slice(format!("--{boundary}\r\nContent-Type: {ctype}\r\nContent-Range: bytes {start}-{}/{size}\r\n\r\n", end - 1).as_bytes());
+                    body.extend_from_slice(&data[*start..*end]);
+                    body.extend_from_slice(b"\r\n");
+                }
+                body.extend_from_slice(format!("--{boundary}--").as_bytes());
+                let mut r = Response::new(206, &format!("multipart/byteranges; boundary={boundary}"), body);
+                r.headers.extend(base);
+                Ok(r)
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------------- forms
@@ -876,6 +940,90 @@ impl Web {
             Err(http(403, detail))
         }
     }
+}
+
+/// uvicorn's trusted hosts: "*", addresses and networks ("172.17.0.0/16"), separated by commas.
+fn proxy_trusted(list: &str, ip: std::net::IpAddr) -> bool {
+    list.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).any(|entry| {
+        if entry == "*" {
+            return true;
+        }
+        match entry.split_once('/') {
+            None => entry.parse::<std::net::IpAddr>().map(|a| a == ip).unwrap_or(false),
+            Some((net, bits)) => {
+                let Ok(bits) = bits.parse::<u32>() else { return false };
+                match (net.parse::<std::net::IpAddr>(), ip) {
+                    (Ok(std::net::IpAddr::V4(n)), std::net::IpAddr::V4(a)) if bits <= 32 => {
+                        let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+                        u32::from(n) & mask == u32::from(a) & mask
+                    }
+                    (Ok(std::net::IpAddr::V6(n)), std::net::IpAddr::V6(a)) if bits <= 128 => {
+                        let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
+                        u128::from(n) & mask == u128::from(a) & mask
+                    }
+                    _ => false,
+                }
+            }
+        }
+    })
+}
+
+enum RangeError {
+    Malformed(String),
+    Unsatisfiable,
+}
+
+/// Starlette's `FileResponse._parse_range_header`.
+fn parse_range(header: &str, size: usize) -> Result<Vec<(usize, usize)>, RangeError> {
+    let malformed = |m: &str| RangeError::Malformed(m.to_string());
+    let Some((units, spec)) = header.split_once('=') else { return Err(malformed("Malformed range header.")) };
+    if units.trim().to_lowercase() != "bytes" {
+        return Err(malformed("Only support bytes range"));
+    }
+    if spec.matches(',').count() + 1 > 100 {
+        return Ok(vec![]);
+    }
+    let size_i = size as i64;
+    let mut ranges: Vec<(i64, i64)> = vec![];
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() || part == "-" || !part.contains('-') {
+            continue;
+        }
+        let (a, b) = part.split_once('-').unwrap();
+        let (a, b) = (a.trim(), b.trim());
+        let parsed = (|| -> Option<(i64, i64)> {
+            let start = if !a.is_empty() { py::py_int(a).ok()? } else { (size_i - py::py_int(b).ok()?).max(0) };
+            let end = if !a.is_empty() && !b.is_empty() && py::py_int(b).ok()? < size_i { py::py_int(b).ok()? + 1 } else { size_i };
+            Some((start, end))
+        })();
+        if let Some(r) = parsed {
+            ranges.push(r);
+        }
+    }
+    if ranges.is_empty() {
+        return Err(malformed("Range header: range must be requested"));
+    }
+    if ranges.iter().any(|(s, _)| !(0 <= *s && *s < size_i)) {
+        return Err(RangeError::Unsatisfiable);
+    }
+    if ranges.iter().any(|(s, e)| s >= e) {
+        return Err(malformed("Range header: start must be less than end"));
+    }
+    if ranges.len() > 1 {
+        ranges.sort();
+        let mut merged: Vec<(i64, i64)> = vec![ranges[0]];
+        for (s, e) in ranges.into_iter().skip(1) {
+            let last = merged.last_mut().unwrap();
+            if s <= last.1 {
+                last.1 = last.1.max(e);
+            } else {
+                merged.push((s, e));
+            }
+        }
+        ranges = merged;
+    }
+    Ok(ranges.into_iter().map(|(s, e)| (s as usize, e as usize)).collect())
 }
 
 fn internal_error() -> Response {
@@ -2731,5 +2879,10 @@ mod tests {
         assert!(matches!(find_route("GET", "/nope"), Matched::None));
         assert_eq!(origin_netloc("http://nas.local:8000"), "nas.local:8000");
         assert_eq!(origin_netloc("nas.local"), "");
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        assert!(proxy_trusted("127.0.0.1", ip("127.0.0.1")));
+        assert!(proxy_trusted("10.0.0.1, 172.17.0.0/16", ip("172.17.3.4")));
+        assert!(!proxy_trusted("172.17.0.1", ip("172.17.0.2")));
+        assert!(proxy_trusted("*", ip("8.8.8.8")));
     }
 }

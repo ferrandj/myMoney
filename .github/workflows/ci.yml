@@ -36,8 +36,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
-      - run: pytest -q
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The Python version is kept in python/ as the reference: its tests run, and every document they read is kept
+      # to compare the Rust version against it.
+      - name: Python tests (reference version)
+        working-directory: python
+        run: |
+          pip install -e ".[dev]"
+          MYMONEY_CAPTURE="$RUNNER_TEMP/corpus" PYTHONPATH=.. python -m pytest -q -p tools.capture_docs
+      - name: Rust tests
+        run: cargo test --release --locked
+      - name: Rust build
+        run: cargo build --release --locked
+      - name: Templates rendered like Jinja2
+        run: ./tools/diff_jinja.sh
+      - name: Documents read like the Python version
+        working-directory: python
+        run: |
+          pip install pypdf
+          python ../tools/gen_edge_cases.py "$RUNNER_TEMP/edge"
+          python ../tools/gen_pdf_variants.py "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/pdf_variants"
+          find "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/edge" "$RUNNER_TEMP/pdf_variants" -type f -print0 | xargs -0 python ../tools/diff_parse.py ../target/release/mymoney
+      - name: Web app identical to the Python version (same requests, same answers)
+        run: python tools/diff_http.py --docs "$RUNNER_TEMP/corpus" --work "$RUNNER_TEMP/http" --keep --report "$RUNNER_TEMP/diff_http.txt"
+      - name: The Rust version opens data made by the Python version
+        run: python tools/diff_http.py --existing "$RUNNER_TEMP/http/py/data" --work "$RUNNER_TEMP/migration" --report "$RUNNER_TEMP/migration.txt"
+      - name: Differences, if any
+        if: failure()
+        run: cat "$RUNNER_TEMP"/diff_http.txt "$RUNNER_TEMP"/migration.txt 2>/dev/null | head -300 || true
 
   # Build the real image and check the promises that matter on the NAS: it starts as the unprivileged user
   # with a read-only filesystem, serves the web app and the installable-app files, and keeps working after a restart.

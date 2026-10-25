@@ -63,6 +63,8 @@ fn main() {
         }
         out.insert("parsed".into(), serde_json::Value::Object(parsed));
         println!("{}", py::json_dumps(&serde_json::Value::Object(out)));
+    } else if args.len() >= 2 && args[1] == "healthcheck" {
+        std::process::exit(web::serve::healthcheck());
     } else if args.len() >= 2 && args[1] == "serve" {
         std::process::exit(web::serve::main(&args[2..]));
     } else if args.len() >= 3 && args[1] == "jinja-cases" {

@@ -17,6 +17,7 @@ indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 fancy-regex = "0.14"
 aes-gcm = "0.10"
+aes = "0.8"
 argon2 = "0.5"
 hkdf = "0.12"
 sha2 = "0.10"

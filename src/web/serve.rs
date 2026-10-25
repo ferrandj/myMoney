@@ -135,3 +135,23 @@ pub fn main(args: &[String]) -> i32 {
         }
     }
 }
+
+/// `mymoney healthcheck`: what the image's HEALTHCHECK runs (no shell, no Python, no curl in the image).
+pub fn healthcheck() -> i32 {
+    let port = std::env::var("MYMONEY_PORT").unwrap_or_else(|_| "8000".into());
+    let addr = format!("127.0.0.1:{}", port.trim());
+    let attempt = || -> std::io::Result<bool> {
+        use std::io::{Read, Write};
+        let sock: std::net::SocketAddr = addr.parse().map_err(|_| std::io::Error::other("address"))?;
+        let mut s = std::net::TcpStream::connect_timeout(&sock, std::time::Duration::from_secs(4))?;
+        s.set_read_timeout(Some(std::time::Duration::from_secs(4)))?;
+        s.write_all(format!("GET /healthz HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes())?;
+        let mut out = String::new();
+        s.read_to_string(&mut out)?;
+        Ok(out.starts_with("HTTP/1.1 200"))
+    };
+    match attempt() {
+        Ok(true) => 0,
+        _ => 1,
+    }
+}
