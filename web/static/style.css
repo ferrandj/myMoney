@@ -303,3 +303,19 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .quick-edit { flex-basis: 100%; }
 .quick-edit form { margin-top: .5rem; }
 .person { line-height: 1.5; }
+
+/* Analyses : dates, deux colonnes dépenses / revenus, barres alignées */
+.dates { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
+.dates label { display: inline-flex; gap: 6px; align-items: center; font-size: .9rem; color: var(--muted); }
+.dates input[type="date"] { padding: 4px 8px; }
+.dates.active input[type="date"] { border-color: var(--primary); }
+.duo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+@media (max-width: 1100px) { .duo { grid-template-columns: minmax(0, 1fr); } }
+.duo-side { min-width: 0; }
+.duo-side .split { gap: 16px; }
+.duo-side .donut-box { width: 200px; }
+@media (min-width: 641px) {
+  .bars li { grid-template-columns: 130px 1fr 10.5rem; }
+  .ranking li { grid-template-columns: minmax(110px, 1.3fr) 1fr 10.5rem; }
+}
+.bar-value { text-align: right; }

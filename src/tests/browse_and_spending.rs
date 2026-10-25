@@ -279,7 +279,7 @@ fn test_web_spending_by_category_with_drill_down_and_recategorising() {
     let csrf = sign_up(&mut web);
     add_ops(&web.core);
     let page = web.get("/analytics?vue=depenses&periode=tout").text();
-    for expected in ["Où est parti", "par catégorie", "Courses", "Énergie et eau", "Autres dépenses", "cat=courses", "Plus gros bénéficiaires", "Dépenses par mois", "Revenus", "Solde de la période"] {
+    for expected in ["Où est parti", "par catégorie", "Courses", "Énergie et eau", "Autres dépenses", "cat=courses", "Plus gros bénéficiaires", "Mois par mois", "Revenus", "Plus grosses sources", "Solde de la période"] {
         assert!(page.contains(expected), "{expected}");
     }
     // Inside a category: who, when, and a way to change it.

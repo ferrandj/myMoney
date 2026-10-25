@@ -35,7 +35,7 @@ pub const KIND_LABELS: &[(&str, &str)] = &[
     ("cheque", "Chèque"),
     ("interest", "Intérêts"),
 ];
-const ANALYTICS_VIEWS: &[(&str, &str)] = &[("evolution", "Évolution"), ("repartition", "Répartition"), ("flux", "Entrées / sorties"), ("depenses", "Dépenses")];
+const ANALYTICS_VIEWS: &[(&str, &str)] = &[("evolution", "Évolution"), ("depenses", "Dépenses et revenus")];
 pub const DOCUMENT_STATUS: &[(&str, &str)] = &[
     ("uploaded", "stocké"),
     ("needs_choice", "à préciser"),
@@ -49,7 +49,6 @@ pub const DOCUMENT_STATUS: &[(&str, &str)] = &[
 fn analytics_groups(vue: &str) -> &'static [(&'static str, &'static str)] {
     match vue {
         "evolution" => &[("total", "Total"), ("compte", "Par compte"), ("categorie", "Par catégorie")],
-        "repartition" => &[("categorie", "Par catégorie"), ("compte", "Par compte")],
         _ => &[],
     }
 }
@@ -1281,7 +1280,27 @@ impl Web {
         })
     }
 
+    /// The wealth line of the dashboard: the same reconstruction as the analyses, for the period chosen.
+    fn wealth_chart(&self, accounts: &[crate::services::valuation::AccountValue], periode: &str) -> AppResult<String> {
+        let today = rates::today();
+        self.core.session(|c| {
+            let mut histories: HashMap<i64, analytics::History> = HashMap::new();
+            let mut by_id: HashMap<i64, Account> = HashMap::new();
+            let mut ids: Vec<i64> = vec![];
+            for v in accounts {
+                let holdings: Vec<Holding> = v.holdings.iter().map(|h| h.holding.clone()).collect();
+                histories.insert(v.account.id, analytics::account_history(c, &v.account, &holdings, v.total(), today)?);
+                by_id.insert(v.account.id, v.account.clone());
+                ids.push(v.account.id);
+            }
+            let start = analytics::period_start(periode, today, analytics::earliest_day(&histories, &ids, today));
+            let series = analytics::build_series(&histories, &by_id, &ids, "total", start, today);
+            Ok(charts::line_chart(&series, "Évolution du patrimoine"))
+        })
+    }
+
     fn dashboard(&self, cx: &Cx) -> Out {
+        let periode = cx.q("periode").filter(|p| analytics::PERIODS.iter().any(|(k, _, _)| k == p)).unwrap_or("1a").to_string();
         let portfolio = self.core.portfolio(true)?;
         let (to_identify, gaps) = self.core.session(|c| Ok((contact_service::unresolved(c, false, None, None)?.len(), coverage_service::all_gaps(c, false)?)))?;
         let values = self.account_values(&portfolio.accounts)?;
@@ -1314,7 +1333,9 @@ impl Web {
             vec![
                 ("portfolio", p),
                 ("groups", Value::list(groups)),
-                ("chart", charts::sparkline(&portfolio.history).into()),
+                ("chart", self.wealth_chart(&portfolio.accounts, &periode)?.into()),
+                ("periode", periode.clone().into()),
+                ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), Value::str(format!("/?periode={code}"))])).collect())),
                 ("to_identify", to_identify.into()),
                 ("gaps", Value::list(gaps.iter().map(views::gap).collect())),
             ],
@@ -1379,12 +1400,22 @@ impl Web {
         let interne = p.query_int("interne", 0);
         p.check()?;
         let mut vue = cx.q("vue").unwrap_or("evolution").to_string();
+        if vue == "flux" {
+            vue = "depenses".into(); // the monthly flows now sit on the spending page
+        }
         if !ANALYTICS_VIEWS.iter().any(|(k, _)| *k == vue) {
             vue = "evolution".into();
         }
+        // two dates from the calendar replace the preset periods
+        let du = py_date(&cx.qs("du"));
+        let au = py_date(&cx.qs("au"));
+        let custom = du.is_some() || au.is_some();
         let mut periode = cx.q("periode").unwrap_or("1a").to_string();
         if !analytics::PERIODS.iter().any(|(k, _, _)| *k == periode) {
             periode = "1a".into();
+        }
+        if custom {
+            periode = "perso".into();
         }
         let mut sens = cx.q("sens").unwrap_or("sorties").to_string();
         if sens != "sorties" && sens != "entrees" {
@@ -1434,11 +1465,15 @@ impl Web {
         }
         let everything = selected.iter().collect::<BTreeSet<_>>() == order.iter().collect::<BTreeSet<_>>();
         let today = rates::today();
+        let end = au.map(|d| d.min(today)).unwrap_or(today);
+        let (du_text, au_text) = (du.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default(), au.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default());
         let interne_text = if interne != 0 { interne.to_string() } else { String::new() };
         let url = |over: &[(&str, &str)]| -> String {
             let mut params: Vec<(&str, String)> = vec![
                 ("vue", vue.clone()),
-                ("periode", periode.clone()),
+                ("periode", if custom { String::new() } else { periode.clone() }),
+                ("du", du_text.clone()),
+                ("au", au_text.clone()),
                 ("par", par.clone()),
                 ("interne", interne_text.clone()),
                 ("sens", if sens == "sorties" { String::new() } else { sens.clone() }),
@@ -1457,28 +1492,40 @@ impl Web {
             }
             format!("/analytics?{}", py::urlencode(&pairs))
         };
-        let (histories, start, flows, report) = self.core.session(|c| {
+        let (histories, start, flows, reports) = self.core.session(|c| {
             let mut histories: HashMap<i64, analytics::History> = HashMap::new();
             for i in &selected {
                 let v = values[i];
                 let holdings: Vec<Holding> = v.holdings.iter().map(|h| h.holding.clone()).collect();
                 histories.insert(*i, analytics::account_history(c, &accounts[i], &holdings, v.total(), today)?);
             }
-            let start = analytics::period_start(&periode, today, analytics::earliest_day(&histories, &selected, today));
-            let _total_points = analytics::build_series(&histories, &accounts, &selected, "total", start, today);
-            let flows = if vue == "flux" { analytics::monthly_flows(c, &selected, start, today, interne != 0)? } else { vec![] };
-            let report = if vue == "depenses" {
-                let (rs, re) = month_range.unwrap_or((start, today));
-                Some(analytics::spending_report(c, &selected, rs, re, interne != 0, direction, if cat.is_empty() { None } else { Some(cat.as_str()) })?)
-            } else {
-                None
-            };
-            Ok((histories, start, flows, report))
+            let earliest = analytics::earliest_day(&histories, &selected, today);
+            let start = if custom { du.unwrap_or(earliest).max(earliest).min(end) } else { analytics::period_start(&periode, today, earliest) };
+            let flows = if vue == "depenses" { analytics::monthly_flows(c, &selected, start, end, interne != 0)? } else { vec![] };
+            // both directions side by side; inside a category only the direction it belongs to
+            let mut reports: Vec<(&str, analytics::SpendingReport)> = vec![];
+            if vue == "depenses" {
+                let (rs, re) = month_range.unwrap_or((start, end));
+                for dir in ["out", "in"] {
+                    if cat.is_empty() || dir == direction {
+                        reports.push((dir, analytics::spending_report(c, &selected, rs, re, interne != 0, dir, if cat.is_empty() { None } else { Some(cat.as_str()) })?));
+                    }
+                }
+            }
+            Ok((histories, start, flows, reports))
         })?;
         let sel_values: Vec<&crate::services::valuation::AccountValue> = selected.iter().map(|i| values[i]).collect();
         let zero = PyDec::int(0);
-        let assets = sel_values.iter().map(|v| v.total()).filter(|t| *t > Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
-        let debts = sel_values.iter().map(|v| v.total()).filter(|t| *t < Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
+        // what each account was worth on the last day shown (today, unless the calendar says otherwise)
+        let value_at = |id: i64| -> Decimal {
+            if end >= today {
+                values[&id].total()
+            } else {
+                histories.get(&id).and_then(|h| h.range(..=end).next_back().map(|(_, v)| *v)).unwrap_or(Decimal::ZERO)
+            }
+        };
+        let assets = sel_values.iter().map(|v| value_at(v.account.id)).filter(|t| *t > Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
+        let debts = sel_values.iter().map(|v| value_at(v.account.id)).filter(|t| *t < Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
         let hundred = PyDec::int(100);
         let mut rows: Vec<(Value, PyDec, Option<PyDec>)> = vec![];
         let mut row_values = vec![];
@@ -1490,7 +1537,7 @@ impl Web {
             Ok(m)
         })?;
         for v in &sel_values {
-            let total = PyDec::from(&v.total());
+            let total = PyDec::from(&value_at(v.account.id));
             let before = histories[&v.account.id].get(&start).map(PyDec::from);
             let share = if !assets.is_zero() && total.cmp(&zero).is_gt() { total.div(&assets).map(|q| q.mul(&hundred)) } else { None };
             let delta = before.as_ref().map(|b| total.sub(b));
@@ -1519,7 +1566,7 @@ impl Web {
         let mut vars: Vec<(&str, Value)> = vec![];
         match vue.as_str() {
             "evolution" => {
-                let series = analytics::build_series(&histories, &accounts, &selected, &par, start, today);
+                let series = analytics::build_series(&histories, &accounts, &selected, &par, start, end);
                 let stats = Value::dict(
                     series
                         .iter()
@@ -1547,56 +1594,51 @@ impl Web {
                 vars.push(("series", Value::list(series.iter().map(series_value).collect())));
                 vars.push(("stats", stats));
             }
-            "repartition" => {
-                let owned: Vec<crate::services::valuation::AccountValue> = sel_values.iter().map(|v| (*v).clone()).collect();
-                let items = analytics::repartition(&owned, &par);
-                let ring_total = items.iter().fold(PyDec::int(0), |a, x| a.add(&PyDec::from(&x.2)));
-                vars.push(("chart", charts::donut(&items, "Répartition").into()));
-                vars.push(("items", Value::list(items.iter().map(|(k, l, v)| Value::tuple(vec![k.clone().into(), l.clone().into(), (*v).into()])).collect())));
-                vars.push(("ring_total", Value::pydec(ring_total)));
-            }
-            "flux" => {
-                vars.push(("chart", charts::flow_chart(&flows, "Entrées et sorties par mois").into()));
-                vars.push(("flows", Value::list(flows.iter().map(flow_value).collect())));
-                let links: Vec<(Value, Value)> = flows
-                    .iter()
-                    .map(|f| (Value::Date(f.month), Value::str(url(&[("vue", "depenses"), ("par", ""), ("cat", ""), ("sens", ""), ("mois", &f.month.format("%Y-%m").to_string())]))))
-                    .collect();
-                vars.push(("flow_links", Value::dict(links)));
-            }
             _ => {
-                let report = report.unwrap_or_default();
                 let palette = charts::PALETTE_SIZE;
-                let top: Vec<&analytics::CategoryTotal> = report.categories.iter().take(palette - 1).collect();
-                let rest = report.categories.iter().skip(palette - 1).fold(PyDec::int(0), |a, x| a.add(&PyDec::from(&x.total)));
-                let mut ring: Vec<(String, String, Decimal)> = top.iter().map(|x| (x.id.to_string(), x.label.to_string(), x.total)).collect();
-                if !rest.is_zero() {
-                    ring.push(("reste".into(), "Autres catégories".into(), rest.to_decimal()));
+                let mut sides: Vec<Value> = vec![];
+                for (dir, report) in &reports {
+                    let out = *dir == "out";
+                    let top: Vec<&analytics::CategoryTotal> = report.categories.iter().take(palette - 1).collect();
+                    let rest = report.categories.iter().skip(palette - 1).fold(PyDec::int(0), |a, x| a.add(&PyDec::from(&x.total)));
+                    let mut ring: Vec<(String, String, Decimal)> = top.iter().map(|x| (x.id.to_string(), x.label.to_string(), x.total)).collect();
+                    if !rest.is_zero() {
+                        ring.push(("reste".into(), "Autres catégories".into(), rest.to_decimal()));
+                    }
+                    let sens_param = if out { "" } else { "entrees" };
+                    let links = Value::dict(report.categories.iter().map(|x| (Value::str(x.id), Value::str(url(&[("cat", x.id), ("sens", sens_param)])))).collect());
+                    sides.push(Value::sdict(vec![
+                        ("key", (*dir).into()),
+                        ("title", if out { "Dépenses" } else { "Revenus" }.into()),
+                        ("where", if out { "Où est parti l'argent" } else { "D'où il vient" }.into()),
+                        ("top_title", if out { "Plus gros bénéficiaires" } else { "Plus grosses sources" }.into()),
+                        ("css", if out { "out" } else { "in" }.into()),
+                        ("donut", if cat.is_empty() { charts::donut(&ring, if out { "Dépenses par catégorie" } else { "Revenus par catégorie" }) } else { String::new() }.into()),
+                        ("links", links),
+                        ("report", self.report_value(report)?),
+                    ]));
                 }
-                let ring_value = Value::list(
-                    top.iter()
-                        .map(|x| Value::tuple(vec![x.id.into(), x.label.into(), x.total.into()]))
-                        .chain((!rest.is_zero()).then(|| Value::tuple(vec!["reste".into(), "Autres catégories".into(), Value::pydec(rest.clone())])))
-                        .collect(),
-                );
-                let category_links = Value::dict(report.categories.iter().map(|x| (Value::str(x.id), Value::str(url(&[("cat", x.id)])))).collect());
-                vars.push(("donut", if cat.is_empty() { charts::donut(&ring, "Répartition par catégorie") } else { String::new() }.into()));
-                vars.push(("month_chart", charts::month_bars(&report.months, "Par mois", if direction == "out" { "neg" } else { "pos" }).into()));
-                vars.push(("options", Value::list(category_service::options(direction).into_iter().map(category_value).collect())));
-                vars.push(("category_links", category_links));
-                vars.push((
-                    "sens_links",
-                    Value::list(vec![
-                        Value::tuple(vec!["sorties".into(), "Dépenses".into(), url(&[("sens", ""), ("cat", "")]).into()]),
-                        Value::tuple(vec!["entrees".into(), "Revenus".into(), url(&[("sens", "entrees"), ("cat", "")]).into()]),
-                    ]),
-                ));
+                let first = reports.first().map(|(_, r)| r.clone()).unwrap_or_default();
+                if !cat.is_empty() {
+                    vars.push(("month_chart", charts::month_bars(&first.months, "Par mois", if direction == "out" { "neg" } else { "pos" }).into()));
+                    vars.push(("options", Value::list(category_service::options(direction).into_iter().map(category_value).collect())));
+                    vars.push(("report", self.report_value(&first)?));
+                }
+                let mut all_options: Vec<Value> = category_service::options("out").into_iter().map(category_value).collect();
+                all_options.extend(category_service::options("in").into_iter().map(category_value));
+                vars.push(("options_all", Value::list(all_options)));
+                vars.push(("sides", Value::list(sides)));
+                vars.push(("flow_chart", charts::flow_chart(&flows, "Entrées et sorties par mois").into()));
+                vars.push(("flows", Value::list(flows.iter().map(flow_value).collect())));
+                let links: Vec<(Value, Value)> = flows.iter().map(|f| (Value::Date(f.month), Value::str(url(&[("cat", ""), ("sens", ""), ("mois", &f.month.format("%Y-%m").to_string())])))).collect();
+                vars.push(("flow_links", Value::dict(links)));
+                vars.push(("total_out", first.total_out.into()));
+                vars.push(("total_in", first.total_in.into()));
+                vars.push(("saved", first.saved().into()));
                 vars.push(("all_link", url(&[("cat", "")]).into()));
                 vars.push(("month_off_link", url(&[("mois", "")]).into()));
                 vars.push(("month_label", month_range.map(|r| r.0.format("%m/%Y").to_string()).unwrap_or_default().into()));
                 vars.push(("this_url", url(&[]).into()));
-                vars.push(("ring", ring_value));
-                vars.push(("report", self.report_value(&report)?));
                 vars.push(("sens", sens.clone().into()));
                 vars.push(("cat", cat.clone().into()));
                 vars.push(("mois", mois.clone().into()));
@@ -1617,9 +1659,13 @@ impl Web {
             ("total", Value::pydec(assets.add(&debts))),
             ("variation", variation),
             ("start", start.into()),
+            ("end", end.into()),
             ("today", today.into()),
+            ("du", du_text.clone().into()),
+            ("au", au_text.clone().into()),
+            ("custom", custom.into()),
             ("views", Value::list(ANALYTICS_VIEWS.iter().map(|(code, label)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("vue", code), ("par", ""), ("cat", ""), ("mois", ""), ("sens", "")]).into()])).collect())),
-            ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("periode", code), ("mois", "")]).into()])).collect())),
+            ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("periode", code), ("du", ""), ("au", ""), ("mois", "")]).into()])).collect())),
             ("group_options", Value::list(groups.iter().map(|(code, label)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("par", code)]).into()])).collect())),
             ("palette", Value::Int(charts::PALETTE_SIZE as i64)),
         ];
