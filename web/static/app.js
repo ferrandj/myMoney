@@ -160,6 +160,25 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && menu && menu.open) menu.open = false;
 });
 
+// Look: "classic" (top bar) or "modern" (side panel, rounded cards); kept on this device like the style.
+const lookToggle = document.getElementById("look-toggle");
+function syncLookUi() {
+  if (!lookToggle) return;
+  const modern = root.getAttribute("data-look") === "modern";
+  lookToggle.setAttribute("aria-pressed", String(modern));
+  lookToggle.querySelector(".lbl").textContent = modern ? "Look classique" : "Look moderne";
+}
+if (lookToggle) {
+  lookToggle.addEventListener("click", () => {
+    const modern = root.getAttribute("data-look") === "modern";
+    if (modern) root.removeAttribute("data-look");
+    else root.setAttribute("data-look", "modern");
+    store("mymoney-look", modern ? null : "modern");
+    syncLookUi();
+  });
+  syncLookUi();
+}
+
 const privacyToggle = document.getElementById("privacy-toggle");
 function syncPrivacyUi() {
   if (!privacyToggle) return;

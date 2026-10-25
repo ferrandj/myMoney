@@ -294,6 +294,7 @@ const STATIC: &[(&str, &[u8], &str)] = &[
     ("icon.svg", include_bytes!("../../web/static/icon.svg"), "image/svg+xml"),
     ("logo.svg", include_bytes!("../../web/static/logo.svg"), "image/svg+xml"),
     ("style.css", include_bytes!("../../web/static/style.css"), "text/css; charset=utf-8"),
+    ("modern.css", include_bytes!("../../web/static/modern.css"), "text/css; charset=utf-8"),
     ("theme.js", include_bytes!("../../web/static/theme.js"), "text/javascript; charset=utf-8"),
 ];
 
@@ -1398,6 +1399,7 @@ impl Web {
         let mut p = Params::new(cx);
         let c_ids = p.query_int_list("c");
         let interne = p.query_int("interne", 0);
+        let sans_dettes = p.query_int("sans_dettes", 0);
         p.check()?;
         let mut vue = cx.q("vue").unwrap_or("evolution").to_string();
         if vue == "flux" {
@@ -1476,6 +1478,7 @@ impl Web {
                 ("au", au_text.clone()),
                 ("par", par.clone()),
                 ("interne", interne_text.clone()),
+                ("sans_dettes", if sans_dettes != 0 { "1".to_string() } else { String::new() }),
                 ("sens", if sens == "sorties" { String::new() } else { sens.clone() }),
                 ("cat", cat.clone()),
                 ("mois", mois.clone()),
@@ -1566,7 +1569,9 @@ impl Web {
         let mut vars: Vec<(&str, Value)> = vec![];
         match vue.as_str() {
             "evolution" => {
-                let series = analytics::build_series(&histories, &accounts, &selected, &par, start, end);
+                // a loan of several tens of thousands flattens everything else: the debts can be left out of the lines
+                let drawn: Vec<i64> = selected.iter().copied().filter(|i| sans_dettes == 0 || accounts[i].category() != "dettes").collect();
+                let series = analytics::build_series(&histories, &accounts, &drawn, &par, start, end);
                 let stats = Value::dict(
                     series
                         .iter()
@@ -1664,6 +1669,8 @@ impl Web {
             ("du", du_text.clone().into()),
             ("au", au_text.clone().into()),
             ("custom", custom.into()),
+            ("sans_dettes", (sans_dettes != 0).into()),
+            ("has_debts", selected.iter().any(|i| accounts[i].category() == "dettes").into()),
             ("views", Value::list(ANALYTICS_VIEWS.iter().map(|(code, label)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("vue", code), ("par", ""), ("cat", ""), ("mois", ""), ("sens", "")]).into()])).collect())),
             ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("periode", code), ("du", ""), ("au", ""), ("mois", "")]).into()])).collect())),
             ("group_options", Value::list(groups.iter().map(|(code, label)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("par", code)]).into()])).collect())),

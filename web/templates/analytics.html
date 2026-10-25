@@ -51,7 +51,7 @@
       {% for code, label, href in periods %}<a href="{{ href }}" {% if code == periode %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
     </div>
     <form method="get" action="/analytics" class="dates{{ ' active' if custom }}">
-      <input type="hidden" name="vue" value="{{ vue }}">{% if par and vue == 'evolution' %}<input type="hidden" name="par" value="{{ par }}">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
+      <input type="hidden" name="vue" value="{{ vue }}">{% if par and vue == 'evolution' %}<input type="hidden" name="par" value="{{ par }}">{% endif %}{% if sans_dettes %}<input type="hidden" name="sans_dettes" value="1">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
       {% if vue == 'depenses' %}{% if sens != 'sorties' %}<input type="hidden" name="sens" value="{{ sens }}">{% endif %}{% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}{% endif %}
       {% if not everything %}{% for a in accounts if a.id in selected %}<input type="hidden" name="c" value="{{ a.id }}">{% endfor %}{% endif %}
       <label>Du <input type="date" name="du" value="{{ du or start.isoformat() }}" max="{{ today.isoformat() }}"></label>
@@ -62,6 +62,14 @@
     <div class="seg" aria-label="Regrouper">
       {% for code, label, href in group_options %}<a href="{{ href }}" {% if code == par %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
     </div>
+    {% endif %}
+    {% if vue == 'evolution' and has_debts %}
+    <form method="get" action="/analytics" class="inline" data-autosubmit>
+      <input type="hidden" name="vue" value="{{ vue }}">{% if custom %}<input type="hidden" name="du" value="{{ du }}"><input type="hidden" name="au" value="{{ au }}">{% else %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
+      <input type="hidden" name="par" value="{{ par }}">
+      {% if not everything %}{% for a in accounts if a.id in selected %}<input type="hidden" name="c" value="{{ a.id }}">{% endfor %}{% endif %}
+      <label class="check"><input type="checkbox" name="sans_dettes" value="1" {% if sans_dettes %}checked{% endif %}> Masquer les dettes (prêts)</label>
+    </form>
     {% endif %}
     {% if vue == 'depenses' %}
     <form method="get" action="/analytics" class="inline" data-autosubmit>
@@ -251,7 +259,7 @@
     <summary>Comptes pris en compte ({{ selected|length }} sur {{ accounts|length }})</summary>
     <form method="get" action="/analytics" class="stack" data-autosubmit>
       <input type="hidden" name="vue" value="{{ vue }}">{% if custom %}<input type="hidden" name="du" value="{{ du }}"><input type="hidden" name="au" value="{{ au }}">{% else %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
-      <input type="hidden" name="par" value="{{ par }}">{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
+      <input type="hidden" name="par" value="{{ par }}">{% if sans_dettes %}<input type="hidden" name="sans_dettes" value="1">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
       {% if vue == 'depenses' %}{% if sens != 'sorties' %}<input type="hidden" name="sens" value="{{ sens }}">{% endif %}{% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}{% if mois %}<input type="hidden" name="mois" value="{{ mois }}">{% endif %}{% endif %}
       <div class="actions"><button type="button" class="btn small" data-check="all">Tout cocher</button><button type="button" class="btn small" data-check="none">Tout décocher</button></div>
       <div class="columns">

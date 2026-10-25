@@ -306,7 +306,8 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 
 /* Analyses : dates, deux colonnes dépenses / revenus, barres alignées */
 .dates { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
-.dates label { display: inline-flex; gap: 6px; align-items: center; font-size: .9rem; color: var(--muted); }
+.dates label { display: inline-flex; flex-direction: row; gap: 6px; align-items: center; font-size: .9rem; color: var(--muted); font-weight: 400; }
+.dates input[type="date"] { width: auto; }
 .dates input[type="date"] { padding: 4px 8px; }
 .dates.active input[type="date"] { border-color: var(--primary); }
 .duo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }

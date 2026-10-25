@@ -1,0 +1,114 @@
+/* Nouveau look : barre latérale sur ordinateur, barre d'onglets en bas sur téléphone, cartes arrondies, boutons en
+   pastille. Il ne touche pas aux couleurs : tous les styles (clairs et sombres) s'y appliquent. Actif quand la page
+   porte data-look="modern" (bouton « Look » de la barre, mémorisé sur l'appareil). */
+.nav-ico { display: none; }
+#look-toggle .ico-classic { display: none; }
+html:not([data-look="modern"]) #look-toggle .lbl { display: none; } /* icon only in the classic bar: it is already full */
+html[data-look="modern"] #look-toggle .ico-classic { display: inline; }
+html[data-look="modern"] #look-toggle .ico-modern { display: none; }
+
+html[data-look="modern"] {
+  --radius: 20px;
+  --grad: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 88%, var(--s3)));
+  --lift: 0 14px 34px -20px color-mix(in srgb, var(--text) 45%, transparent);
+  --hair: color-mix(in srgb, var(--border) 75%, transparent);
+}
+html[data-look="modern"] body {
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(1000px 520px at 88% -8%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 70%),
+    radial-gradient(800px 460px at -6% 108%, color-mix(in srgb, var(--s1) 11%, transparent), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+  letter-spacing: -.005em;
+}
+html[data-look="modern"] h1 { font-size: 1.9rem; letter-spacing: -.03em; }
+html[data-look="modern"] h2 { letter-spacing: -.02em; }
+
+/* Barre du haut : en barre latérale flottante */
+html[data-look="modern"] .topbar {
+  background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--hair); border-radius: 22px;
+  box-shadow: var(--lift); margin: 10px 12px 0; top: 10px; padding: 8px 12px;
+}
+html[data-look="modern"] .brand { display: inline-flex; align-items: center; gap: 8px; }
+html[data-look="modern"] .wordmark { font-size: 1.15rem; letter-spacing: -.03em; }
+html[data-look="modern"] .topbar nav { gap: 2px; }
+html[data-look="modern"] .topbar nav a { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 7px 14px; color: var(--muted); font-weight: 500; transition: background .15s, color .15s; }
+html[data-look="modern"] .topbar nav a:hover { background: color-mix(in srgb, var(--primary) 9%, transparent); color: var(--text); text-decoration: none; }
+html[data-look="modern"] .topbar nav a[aria-current="page"] { background: var(--grad); color: var(--primary-text); font-weight: 600; box-shadow: 0 8px 18px -10px var(--primary); }
+html[data-look="modern"] .nav-ico { display: inline-block; font-size: 1.05rem; line-height: 1; }
+html[data-look="modern"] .tools .btn { border-radius: 999px; }
+html[data-look="modern"] .whoami { font-size: .85rem; color: var(--muted); }
+
+/* Ordinateur : la barre devient un panneau à gauche */
+@media (min-width: 960px) {
+  html[data-look="modern"] .topbar { position: fixed; left: 12px; top: 12px; bottom: 12px; width: 232px; margin: 0; padding: 16px 12px; flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 14px; overflow: visible; }
+  html[data-look="modern"] .brand { padding: 4px 10px 10px; }
+  html[data-look="modern"] .topbar nav { flex: 1 1 auto; flex-direction: column; overflow: visible; }
+  html[data-look="modern"] .topbar nav a { padding: 10px 14px; }
+  html[data-look="modern"] .tools { display: flex; flex-direction: column; gap: 4px; }
+  html[data-look="modern"] .tools .btn, html[data-look="modern"] .lock .btn, html[data-look="modern"] .tools .menu { width: 100%; justify-content: flex-start; }
+  html[data-look="modern"] .tools .menu > summary { display: flex; width: 100%; }
+  html[data-look="modern"] .menu-panel { left: calc(100% + 14px); right: auto; top: auto; bottom: 0; }
+  html[data-look="modern"] .whoami { padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  html[data-look="modern"] .lock { margin: 0; }
+  html[data-look="modern"] main { margin-left: 268px; }
+}
+/* Téléphone : onglets en bas de l'écran, façon application */
+@media (max-width: 959px) {
+  html[data-look="modern"] body { padding-bottom: 92px; }
+  html[data-look="modern"] .topbar nav {
+    position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 40; order: 0; flex-basis: auto; justify-content: space-between; overflow: visible;
+    background: color-mix(in srgb, var(--surface) 90%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    border: 1px solid var(--hair); border-radius: 26px; padding: 6px; box-shadow: var(--lift);
+  }
+  html[data-look="modern"] .topbar nav a { flex: 1 1 0; flex-direction: column; gap: 2px; padding: 7px 2px; font-size: .68rem; border-radius: 20px; min-width: 0; justify-content: center; text-align: center; }
+  html[data-look="modern"] .nav-ico { font-size: 1.25rem; }
+  html[data-look="modern"] .tools .lbl, html[data-look="modern"] .whoami { display: none; }
+  html[data-look="modern"] .topbar nav a span:last-child { font-size: .62rem; }
+}
+
+/* Cartes, tuiles, bandeau */
+html[data-look="modern"] .card { border-color: var(--hair); border-radius: var(--radius); box-shadow: var(--lift); padding: 20px; }
+html[data-look="modern"] .hero { background: var(--grad); color: var(--primary-text); border-radius: 26px; padding: 26px 28px; margin: 6px 0 20px; box-shadow: 0 22px 44px -26px var(--primary); align-items: center; }
+html[data-look="modern"] .hero .muted { color: color-mix(in srgb, var(--primary-text) 78%, transparent); }
+html[data-look="modern"] .hero .big { font-size: 3rem; letter-spacing: -.04em; }
+html[data-look="modern"] .hero .btn { background: color-mix(in srgb, var(--primary-text) 16%, transparent); border-color: color-mix(in srgb, var(--primary-text) 28%, transparent); color: var(--primary-text); }
+html[data-look="modern"] .hero .btn.primary { background: var(--primary-text); color: var(--primary); border-color: transparent; }
+html[data-look="modern"] .tile { border-color: var(--hair); border-radius: 18px; box-shadow: var(--lift); transition: transform .15s, border-color .15s; position: relative; overflow: hidden; }
+html[data-look="modern"] .tile::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--grad); }
+html[data-look="modern"] a.tile:hover { transform: translateY(-2px); }
+html[data-look="modern"] .kpi, html[data-look="modern"] .small-big { letter-spacing: -.03em; }
+
+/* Boutons, champs, filtres */
+html[data-look="modern"] .btn { border-radius: 999px; padding: 9px 18px; border-color: var(--hair); transition: transform .12s, box-shadow .12s, border-color .12s; }
+html[data-look="modern"] .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 18px -12px var(--text); }
+html[data-look="modern"] .btn.primary { background: var(--grad); border-color: transparent; box-shadow: 0 10px 22px -12px var(--primary); }
+html[data-look="modern"] .btn.small { padding: 5px 12px; }
+html[data-look="modern"] input, html[data-look="modern"] select, html[data-look="modern"] textarea { border-radius: 14px; background: color-mix(in srgb, var(--surface) 70%, var(--bg)); border-color: var(--hair); padding: 10px 14px; }
+html[data-look="modern"] input:focus, html[data-look="modern"] select:focus, html[data-look="modern"] textarea:focus { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 32%, transparent); border-color: var(--primary); }
+html[data-look="modern"] .seg, html[data-look="modern"] .tabs { border: 1px solid var(--hair); background: color-mix(in srgb, var(--surface) 60%, var(--bg)); border-radius: 999px; padding: 3px; gap: 2px; overflow: hidden; }
+html[data-look="modern"] .tabs { display: inline-flex; max-width: 100%; margin: 4px 0 14px; }
+html[data-look="modern"] .seg a, html[data-look="modern"] .tabs a { border: 0; border-radius: 999px; padding: 6px 16px; }
+html[data-look="modern"] .tabs a[aria-current="page"], html[data-look="modern"] .seg a[aria-current="true"] { background: var(--grad); color: var(--primary-text); font-weight: 600; box-shadow: 0 6px 14px -8px var(--primary); }
+html[data-look="modern"] .status, html[data-look="modern"] .tag { background: color-mix(in srgb, var(--primary) 8%, var(--surface)); border-color: var(--hair); }
+html[data-look="modern"] .flash { border-radius: 16px; }
+
+/* Tableaux et listes */
+html[data-look="modern"] th { text-transform: none; letter-spacing: 0; font-size: .82rem; }
+html[data-look="modern"] tbody tr { transition: background .12s; }
+html[data-look="modern"] tbody tr:hover td { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+html[data-look="modern"] .bar { height: 12px; border-radius: 999px; }
+html[data-look="modern"] .bar .fill { rx: 6; }
+html[data-look="modern"] .account-card { border-radius: 20px; border-color: var(--hair); box-shadow: var(--lift); transition: transform .15s; }
+html[data-look="modern"] .account-card:hover { transform: translateY(-2px); }
+html[data-look="modern"] .chart-svg .line { stroke-width: 2.6; }
+html[data-look="modern"] .chart-svg .area { opacity: .16; }
+html[data-look="modern"] .menu-panel { border-radius: 20px; box-shadow: var(--lift); border-color: var(--hair); }
+html[data-look="modern"] .theme-chip, html[data-look="modern"] .theme-pick { border-radius: 14px; }
+html[data-look="modern"] details.menu > summary.btn { list-style: none; }
+html[data-look="modern"] .doc-link { font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-look="modern"] * { transition: none !important; }
+}

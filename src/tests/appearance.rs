@@ -48,7 +48,7 @@ fn contrast(a: &str, b: &str) -> f64 {
 fn test_there_are_at_least_ten_light_and_ten_dark_themes() {
     let light = themes::THEMES.iter().filter(|t| t.kind == "light").count();
     let dark = themes::THEMES.iter().filter(|t| t.kind == "dark").count();
-    assert!(light >= 10 && dark >= 10);
+    assert!(light >= 30 && dark >= 30);
     let ids: Vec<&str> = themes::THEMES.iter().map(|t| t.id).collect();
     assert_eq!(ids.iter().collect::<std::collections::BTreeSet<_>>().len(), ids.len());
     let safe = Regex::new(r"^[a-z-]+$").unwrap();
@@ -110,6 +110,46 @@ theme_tests! {
     test_every_theme_is_readable_dracula: "dracula";
     test_every_theme_is_readable_solarized_sombre: "solarized-sombre";
     test_every_theme_is_readable_oled: "oled";
+    test_every_theme_is_readable_aube: "aube";
+    test_every_theme_is_readable_brume: "brume";
+    test_every_theme_is_readable_coton: "coton";
+    test_every_theme_is_readable_perle: "perle";
+    test_every_theme_is_readable_lin: "lin";
+    test_every_theme_is_readable_amande: "amande";
+    test_every_theme_is_readable_pistache: "pistache";
+    test_every_theme_is_readable_citron: "citron";
+    test_every_theme_is_readable_abricot: "abricot";
+    test_every_theme_is_readable_corail: "corail";
+    test_every_theme_is_readable_peche: "peche";
+    test_every_theme_is_readable_framboise: "framboise";
+    test_every_theme_is_readable_lilas: "lilas";
+    test_every_theme_is_readable_glycine: "glycine";
+    test_every_theme_is_readable_ocean: "ocean";
+    test_every_theme_is_readable_lagune: "lagune";
+    test_every_theme_is_readable_givre: "givre";
+    test_every_theme_is_readable_argile: "argile";
+    test_every_theme_is_readable_nuage: "nuage";
+    test_every_theme_is_readable_pivoine: "pivoine";
+    test_every_theme_is_readable_cosmos: "cosmos";
+    test_every_theme_is_readable_orage: "orage";
+    test_every_theme_is_readable_encre: "encre";
+    test_every_theme_is_readable_obsidienne: "obsidienne";
+    test_every_theme_is_readable_sapin: "sapin";
+    test_every_theme_is_readable_bordeaux: "bordeaux";
+    test_every_theme_is_readable_prune: "prune";
+    test_every_theme_is_readable_cobalt: "cobalt";
+    test_every_theme_is_readable_abysse: "abysse";
+    test_every_theme_is_readable_braise: "braise";
+    test_every_theme_is_readable_cuivre: "cuivre";
+    test_every_theme_is_readable_mousse: "mousse";
+    test_every_theme_is_readable_crepuscule: "crepuscule";
+    test_every_theme_is_readable_aurore: "aurore";
+    test_every_theme_is_readable_fusain: "fusain";
+    test_every_theme_is_readable_ebene: "ebene";
+    test_every_theme_is_readable_petrole: "petrole";
+    test_every_theme_is_readable_neon: "neon";
+    test_every_theme_is_readable_cerise: "cerise";
+    test_every_theme_is_readable_brouillard: "brouillard";
 }
 
 #[test]
