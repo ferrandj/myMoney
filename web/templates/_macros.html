@@ -77,15 +77,15 @@
   </label>
   <div class="holder-names">
     <span class="holder-label">Nom <small>(un ou deux, selon ce que demande le document)</small></span>
-    <span class="holder-boxes">{% for v in b.last %}<input name="holder_{{ b.index }}_last_{{ loop.index0 }}" value="{{ v }}" placeholder="Nom {{ loop.index }}" autocomplete="off" aria-label="Nom {{ loop.index }}" {% if required and loop.first %}required{% endif %}>{% endfor %}</span>
+    <span class="holder-boxes">{% for v in b.last %}<input name="holder_{{ b.index }}_last_{{ loop.index0 }}" value="{{ v }}" placeholder="Nom {{ loop.index }}" autocomplete="off" autocapitalize="characters" aria-label="Nom {{ loop.index }}" {% if required and loop.first %}required{% endif %}>{% endfor %}</span>
   </div>
   <div class="holder-names">
     <span class="holder-label">Nom de naissance <small>(si différent)</small></span>
-    <span class="holder-boxes">{% for v in b.birth %}<input name="holder_{{ b.index }}_birth_{{ loop.index0 }}" value="{{ v }}" placeholder="Nom de naissance {{ loop.index }}" autocomplete="off" aria-label="Nom de naissance {{ loop.index }}">{% endfor %}</span>
+    <span class="holder-boxes">{% for v in b.birth %}<input name="holder_{{ b.index }}_birth_{{ loop.index0 }}" value="{{ v }}" placeholder="Nom de naissance {{ loop.index }}" autocomplete="off" autocapitalize="characters" aria-label="Nom de naissance {{ loop.index }}">{% endfor %}</span>
   </div>
   <div class="holder-names">
     <span class="holder-label">Prénom(s)</span>
-    <span class="holder-boxes">{% for v in b.first %}<input name="holder_{{ b.index }}_first_{{ loop.index0 }}" value="{{ v }}" placeholder="Prénom {{ loop.index }}" autocomplete="off" aria-label="Prénom {{ loop.index }}">{% endfor %}</span>
+    <span class="holder-boxes">{% for v in b.first %}<input name="holder_{{ b.index }}_first_{{ loop.index0 }}" value="{{ v }}" placeholder="Prénom {{ loop.index }}" autocomplete="off" autocapitalize="characters" aria-label="Prénom {{ loop.index }}">{% endfor %}</span>
   </div>
 </div>
 {% endmacro %}

@@ -295,3 +295,25 @@ function forgetPerson(event) {
 }
 document.addEventListener("input", forgetPerson);
 document.addEventListener("change", forgetPerson);
+
+// Names are kept in capitals: whatever is typed in a name box becomes upper case on the spot (the server does the same).
+document.addEventListener("input", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !input.closest(".holder-boxes")) return;
+  const upper = input.value.toUpperCase();
+  if (upper === input.value) return;
+  const at = input.selectionStart;
+  input.value = upper;
+  if (at !== null) input.setSelectionRange(at, at);
+});
+
+// Names are kept in capitals: whatever is typed in a name box becomes upper case on the spot (the server does the same).
+document.addEventListener("input", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !input.closest(".holder-boxes")) return;
+  const upper = input.value.toUpperCase();
+  if (upper === input.value) return;
+  const at = input.selectionStart;
+  input.value = upper;
+  if (at !== null) input.setSelectionRange(at, at);
+});

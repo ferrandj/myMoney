@@ -158,3 +158,24 @@ fn accounts_that_predate_the_cards_get_theirs_once() {
         Ok(())
     });
 }
+
+#[test]
+fn names_are_kept_in_capitals_whatever_is_typed() {
+    let core = core();
+    let id = core.save_account(None, &form(&[("name", "Compte"), ("account_type", "checking"), ("holder_0_civility", "M"), ("holder_0_last_0", "Dupont"), ("holder_0_birth_0", "martin"), ("holder_0_first_0", "Jean-paul")])).unwrap();
+    db(&core, |c| {
+        let a = Account::get(c, id)?.unwrap();
+        assert_eq!(a.holder_name.as_deref(), Some("M DUPONT JEAN-PAUL"));
+        let card = PersonCard::get(c, 1)?.unwrap();
+        assert_eq!((card.last_names, card.birth_names), (Some(serde_json::json!(["DUPONT"])), Some(serde_json::json!(["MARTIN"]))));
+        Ok(())
+    });
+    let mut client = client();
+    client.login();
+    let page = client.get("/accounts/new").text();
+    assert!(page.matches("autocapitalize=\"characters\"").count() >= 7, "every name box asks for capitals");
+    let css = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/static/style.css")).unwrap();
+    assert!(css.contains(".holder-boxes input { text-transform: uppercase; }"));
+    let js = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/static/app.js")).unwrap();
+    assert!(js.contains("toUpperCase()"));
+}
