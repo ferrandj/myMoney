@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Patrimoine{% endblock %}
-{% from "_macros.html" import gap_row with context %}
+{% from "_macros.html" import gap_row, rate_form with context %}
 {% block content %}
 <section class="hero">
   <div>
@@ -20,6 +20,17 @@
   <h2>Relevés manquants <span class="tag">{{ gaps|length }}</span></h2>
   <p class="small muted">Aucun relevé importé ne couvre ces périodes. Dépose le relevé manquant, ou dis que c'est normal (compte sans mouvement, relevé jamais émis…).</p>
   <ul class="gap-list">{% for g in gaps %}{{ gap_row(g, '/') }}{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if need_rate %}
+<section class="card rates-needed">
+  <h2>Taux à renseigner <span class="tag">{{ need_rate|length }}</span></h2>
+  <p class="small muted">Ces comptes rapportent un taux que personne ne publie (livret de ta banque, PEL, compte à terme, assurance-vie…). Indique-le une fois, tu pourras le modifier sur la fiche du compte. Les taux des livrets réglementés (Livret A, LDDS, LEP, CEL) sont lus tout seuls.</p>
+  {% for a in need_rate %}
+  <div class="rate-row"><a href="/accounts/{{ a.id }}">{{ a.name }}</a> <span class="muted small">{{ a.type_label }}{% if a.institution %} · {{ a.institution }}{% endif %}</span>
+    {{ rate_form(a, '/') }}</div>
+  {% endfor %}
 </section>
 {% endif %}
 

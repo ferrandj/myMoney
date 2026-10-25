@@ -329,6 +329,8 @@ enum R {
     PersonUpdate,
     PersonDelete,
     AccountQuick,
+    AccountRate,
+    RatesRefresh,
     AccountCreate,
     AccountDetail,
     ShareAdd,
@@ -405,6 +407,8 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/people/{person_id}/delete", R::PersonDelete),
     ("GET", "/accounts/new", R::AccountNew),
     ("POST", "/accounts/{account_id}/quick", R::AccountQuick),
+    ("POST", "/accounts/{account_id}/rate", R::AccountRate),
+    ("POST", "/settings/rates/refresh", R::RatesRefresh),
     ("POST", "/accounts/new", R::AccountCreate),
     ("GET", "/accounts/{account_id}", R::AccountDetail),
     ("POST", "/accounts/{account_id}/shares", R::ShareAdd),
@@ -843,6 +847,8 @@ impl Web {
             R::PersonUpdate => self.person_update(cx),
             R::PersonDelete => self.person_delete(cx),
             R::AccountQuick => self.account_quick(cx),
+            R::AccountRate => self.account_rate(cx),
+            R::RatesRefresh => self.rates_refresh(cx),
             R::AccountNew => self.page(cx, "account_form.html", vec![("account", Value::None)]),
             R::AccountCreate => self.account_create(cx),
             R::AccountDetail => self.account_detail(cx),
@@ -1330,6 +1336,15 @@ impl Web {
         let portfolio = self.core.portfolio(true)?;
         let (to_identify, gaps) = self.core.session(|c| Ok((contact_service::unresolved(c, false, None, None)?.len(), coverage_service::all_gaps(c, false)?)))?;
         let values = self.account_values(&portfolio.accounts)?;
+        // accounts whose rate only the user knows
+        let editable = self.core.session(|c| access::editable_ids(c))?;
+        let need_rate: Vec<Value> = portfolio
+            .accounts
+            .iter()
+            .zip(values.iter())
+            .filter(|(v, _)| rates::needs_rate(&v.account.account_type, v.account.interest_rate) && editable.as_ref().map(|e| e.contains(&v.account.id)).unwrap_or(true))
+            .filter_map(|(_, value)| value.attr("account"))
+            .collect();
         let mut groups: Vec<(&str, Vec<Value>)> = vec![];
         for (v, value) in portfolio.accounts.iter().zip(values.iter()) {
             let cat = v.account.category();
@@ -1359,6 +1374,7 @@ impl Web {
             vec![
                 ("portfolio", p),
                 ("groups", Value::list(groups)),
+                ("need_rate", Value::list(need_rate)),
                 ("chart", self.wealth_chart(&portfolio.accounts, &periode)?.into()),
                 ("periode", periode.clone().into()),
                 ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), Value::str(format!("/?periode={code}"))])).collect())),
@@ -1958,7 +1974,12 @@ impl Web {
                 ("total", value.total().into()),
             ],
         );
-        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into())];
+        let account_type = data.account.account_type.as_str();
+        // a rate typed on the account, or one that nobody publishes, is the user's to give and to change; the official
+        // rates and a loan's rate come from elsewhere (typing one over them stays possible from the account's form)
+        let rate_needed = rates::needs_rate(account_type, data.account.interest_rate) && !data.has_loan;
+        let rate_editable = !data.has_loan && (data.account.interest_rate.is_some() || rates::ASK_RATE_TYPES.contains(&account_type));
+        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into())];
         vars.extend(data.vars);
         self.page(cx, "account.html", vars)
     }
@@ -2163,6 +2184,35 @@ impl Web {
             people_service::delete(c, id)
         })?;
         msg("/people", "Fiche supprimée (les comptes gardent les noms, sans lien)")
+    }
+
+    /// "Taux à renseigner": the rate of an account, typed (a comma or a point), or "sans intérêt" (0 %).
+    fn account_rate(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let account_id = p.path_int(0, "account_id");
+        p.check()?;
+        let form = self.verified_form(cx)?;
+        let back = safe_next(get(&form, "next"), &format!("/accounts/{account_id}"));
+        let rate = if get(&form, "none").is_some() {
+            Some(Decimal::ZERO)
+        } else {
+            let text = py::strip(&get_or(&form, "rate", "").replace(',', ".").replace('%', "")).to_string();
+            crate::adapters::common::py_decimal(&text).filter(|r| *r >= Decimal::ZERO && *r <= Decimal::from(100))
+        };
+        let Some(rate) = rate else { return msg(&back, "Taux invalide : écris par exemple 2,5") };
+        match self.core.set_rate(account_id, rate) {
+            Ok(()) => msg(&back, if rate.is_zero() { "Compte noté sans intérêt".to_string() } else { format!("Taux enregistré : {} %", py::dec_str(&rate).replace('.', ",")) }),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn rates_refresh(&self, cx: &Cx) -> Out {
+        self.verified_form(cx)?;
+        let state = crate::services::public_rates::refresh(&self.settings.data_dir, true, crate::services::prices::now(), &crate::services::public_rates::http_get);
+        match state.error {
+            None => msg("/settings#taux", "Taux réglementés lus sur service-public.gouv.fr"),
+            Some(e) => msg("/settings#taux", format!("Lecture impossible ({e}) : la table intégrée s'applique")),
+        }
     }
 
     fn account_quick(&self, cx: &Cx) -> Out {
@@ -3003,12 +3053,22 @@ impl Web {
                 ("argon2_time_cost", (s.argon2_time_cost as i64).into()),
             ],
         );
+        let online = crate::services::public_rates::current().unwrap_or_default();
+        let when = |t: f64| if t > 0.0 { chrono::DateTime::from_timestamp(t as i64, 0).map(|d| d.with_timezone(&chrono::Local).format("%d/%m/%Y à %H:%M").to_string()).unwrap_or_default() } else { String::new() };
+        let online_value = Value::sdict(vec![
+            ("rates", Value::dict(online.rates.iter().map(|(k, v)| (Value::str(k), (*v).into())).collect())),
+            ("read_at", when(online.read_at).into()),
+            ("checked_at", when(online.checked_at).into()),
+            ("error", online.error.clone().map(Value::from).unwrap_or(Value::None)),
+            ("source", crate::services::public_rates::SOURCE.into()),
+        ]);
         let coingecko = !self.core.get_setting("coingecko_api_key", "")?.is_empty();
         self.page(
             cx,
             "settings.html",
             vec![
                 ("rates", rates_value),
+                ("online_rates", online_value),
                 ("settings", settings_value),
                 ("people", Value::list(people.iter().map(views::user).collect())),
                 ("owned", Value::dict(owned)),

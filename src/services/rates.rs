@@ -4,6 +4,8 @@
 //! announced; the right one is picked by date. A rate typed on an account always wins over these references.
 
 use chrono::NaiveDate;
+
+use crate::services::public_rates;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -56,8 +58,21 @@ pub fn reference_rate(account_type: &str, on: Option<NaiveDate>) -> Option<(Deci
 
 /// The rate that applies to an account and where it comes from.
 pub fn effective_rate(account_type: &str, over: Option<Decimal>, on: Option<NaiveDate>) -> (Option<Decimal>, String) {
+    effective_rate_with(public_rates::current().as_ref(), crate::services::prices::now(), account_type, over, on)
+}
+
+/// `effective_rate` with the online reading given (the one of the day, when asked about today).
+pub fn effective_rate_with(online: Option<&public_rates::State>, at: f64, account_type: &str, over: Option<Decimal>, on: Option<NaiveDate>) -> (Option<Decimal>, String) {
     if let Some(o) = over {
         return (Some(o), "saisi manuellement".into());
+    }
+    if on.is_none() {
+        let key = floor_of(account_type).unwrap_or(account_type);
+        if let Some((rate, read_at)) = online.and_then(|s| public_rates::online_rate(s, key, at)) {
+            let day = chrono::DateTime::from_timestamp(read_at as i64, 0).map(|d| d.with_timezone(&chrono::Local).format("%d/%m/%Y").to_string()).unwrap_or_default();
+            let suffix = if floor_of(account_type).is_some() { " (minimum légal)" } else { "" };
+            return (Some(rate), format!("taux officiel lu le {day} sur {}{suffix}", public_rates::SOURCE));
+        }
     }
     match reference_rate(account_type, on) {
         None => (None, String::new()),
@@ -119,4 +134,12 @@ pub fn guess_account_type(label: &str, default: &str) -> String {
         }
     }
     default.to_string()
+}
+
+/// Products that pay a rate nobody publishes (a bank's own savings account, a PEL which depends on its opening date, a
+/// term deposit, a life insurance fund, a crowdlending line): the application asks for it.
+pub const ASK_RATE_TYPES: &[&str] = &["savings", "pel", "term_deposit", "life_insurance", "crowdfunding"];
+
+pub fn needs_rate(account_type: &str, typed: Option<Decimal>) -> bool {
+    typed.is_none() && ASK_RATE_TYPES.contains(&account_type)
 }

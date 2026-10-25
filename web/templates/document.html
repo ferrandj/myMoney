@@ -333,6 +333,8 @@
       <label>Type <select name="account_type">
         {% for code, (label, cat) in ACCOUNT_TYPES.items() %}<option value="{{ code }}" {% if st.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
       </select></label>
+      <label>Taux (% par an) <input name="interest_rate" inputmode="decimal" placeholder="à renseigner pour un livret, un PEL, un compte à terme, une assurance-vie" autocomplete="off">
+        <small>Les livrets réglementés (Livret A, LDDS, LEP, CEL) ont leur taux officiel tout seul ; pour les autres, tu peux le donner maintenant ou plus tard (l'accueil te le redemandera).</small></label>
     </fieldset>
     {% set candidate = st.balance if st.balance is not none else (st.candidate_balances[0][1] if st.candidate_balances else '') %}
     <label class="check"><input type="checkbox" name="update_balance" {% if candidate != '' and plan.newer_balance %}checked{% endif %}> Mettre à jour le solde du compte{% if not plan.newer_balance %} <span class="warn small">(le compte a déjà un solde plus récent)</span>{% endif %}</label>

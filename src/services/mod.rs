@@ -9,6 +9,7 @@ pub mod loans;
 pub mod naming;
 pub mod people;
 pub mod prices;
+pub mod public_rates;
 pub mod rates;
 pub mod statements;
 pub mod users;
