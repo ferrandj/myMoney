@@ -12,6 +12,11 @@ pub mod security;
 pub mod services;
 pub mod web;
 
+#[cfg(test)]
+mod testkit;
+#[cfg(test)]
+mod tests;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 3 && args[1] == "pdf-words" {
