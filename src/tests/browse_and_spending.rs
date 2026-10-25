@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::app::MyMoney;
 use crate::error::AppError;
-use crate::models::{Account, CategoryRule, Document, Transaction};
+use crate::models::{CategoryRule, Document, Transaction};
 use crate::services::access;
 use crate::services::analytics::{self, SpendingReport};
 use crate::services::categories;
@@ -535,6 +535,3 @@ fn test_web_quick_form_offers_the_contacts_already_known() {
     let nothing = web.post("/contacts/identify", &[("csrf", &csrf), ("next", "/contacts"), ("iban", ""), ("printed_name", "ACME SAS"), ("name", "")]);
     assert!(nothing.text().contains("choisis un contact déjà enregistré"));
 }
-
-#[allow(dead_code)]
-fn _unused(_: Account) {}

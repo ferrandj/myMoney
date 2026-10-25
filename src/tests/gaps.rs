@@ -1,6 +1,5 @@
 //! python/tests/test_gaps.py: missing periods between statements: found, shown, uploaded later or marked as normal.
 
-use chrono::{Datelike, NaiveDate};
 use regex::Regex;
 use rust_decimal::Decimal;
 
@@ -10,7 +9,7 @@ use crate::error::AppError;
 use crate::models::{Account, GapAck, Statement};
 use crate::services::coverage::{self, Gap};
 use crate::services::statements;
-use crate::testkit::env::{client, core, Client, Core, Upload};
+use crate::testkit::env::{client, core, Client, Upload};
 use crate::testkit::fixtures::*;
 use crate::testkit::{db, drop_file, form, num};
 
@@ -54,10 +53,6 @@ fn load_months(core: &MyMoney, year: i32, months: &[u32], account_id: Option<i64
 
 fn gaps(core: &MyMoney, include_acknowledged: bool) -> Vec<Gap> {
     db(core, |c| coverage::all_gaps(c, include_acknowledged))
-}
-
-fn ex(core: &Core) -> &MyMoney {
-    core
 }
 
 // ------------------------------------------------------------------------------------------ detection
@@ -276,10 +271,4 @@ fn test_web_stale_or_forged_gap_forms_change_nothing() {
         assert!(GapAck::query(c, "", [])?.is_empty());
         Ok(())
     });
-}
-
-#[allow(dead_code)]
-fn _unused(core: &Core, d: NaiveDate) -> i32 {
-    let _ = ex(core);
-    d.year()
 }

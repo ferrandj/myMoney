@@ -3,9 +3,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use chrono::Duration;
-use regex::Regex;
 use rust_decimal::Decimal;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::adapters::base::{Adapter, Detection, ParsedStatement, SourceDocument};
 use crate::adapters::registry::{identify, OVERRIDE};
@@ -14,7 +13,7 @@ use crate::models::{utcnow, Account, Counterparty, Document, Statement, Transact
 use crate::services::counterparties as cps;
 use crate::testkit::env::{client, core, Client, Core, Upload};
 use crate::testkit::fixtures::*;
-use crate::testkit::{db, drop_file, form, num};
+use crate::testkit::{db, form, num};
 
 fn d(s: &str) -> Decimal {
     dec(s)
@@ -78,13 +77,6 @@ fn expect_value<T: std::fmt::Debug>(result: Result<T, AppError>, needle: &str) {
     match result {
         Err(AppError::Value(m)) => assert!(m.contains(needle), "{m:?} does not contain {needle:?}"),
         other => panic!("expected a ValueError containing {needle:?}, got {other:?}"),
-    }
-}
-
-fn object(v: Value) -> Map<String, Value> {
-    match v {
-        Value::Object(m) => m,
-        _ => unreachable!(),
     }
 }
 
@@ -1081,12 +1073,4 @@ fn test_web_upload_summary_counts_duplicates() {
         ],
     );
     assert!(r.text().contains("1 doublon(s) sans différence écarté(s)") && r.text().contains("1 déjà importé(s) mais différent(s)"));
-}
-
-#[allow(dead_code)]
-fn _unused() -> Option<Map<String, Value>> {
-    let _ = object(json!({}));
-    let _ = Regex::new("");
-    let _ = drop_file;
-    None
 }

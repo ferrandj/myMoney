@@ -418,7 +418,7 @@ impl MyMoney {
                 let h = Holding::query(c, "WHERE account_id = ?", [a.id]).unwrap_or_default();
                 (a, h)
             }).collect();
-            let mut valuator = Valuator::new(&prices);
+            let mut valuator = Valuator::new(&*prices);
             valuator.prefetch(&with);
             let values: Vec<AccountValue> = with.iter().map(|(a, h)| valuator.account_value(a, h)).collect();
             let mut totals: HashMap<&'static str, Decimal> = HashMap::new();

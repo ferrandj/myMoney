@@ -181,6 +181,8 @@ src/
     boursobank/, fortuneo/, revolut/, generic/ (OFX, QIF, CSV et PDF « devinés »)
   services/    import (doublons, cohérence), prêts, utilisateurs, droits et partages, contacts, catégories, prix, valorisation, taux réglementés
   app.rs       le cœur de l'application (coffre, documents, imports, relecture)
+  tests/       les 298 tests de la version Python, portés un à un (mêmes noms, mêmes documents fictifs, mêmes vérifications)
+  testkit/     de quoi les écrire : générateur de PDF fictifs, relevés BoursoBank/Fortuneo/prêts, client web à cookies
   web/         serveur HTTP, routes, sessions et CSRF, Cloudflare Access, graphiques SVG, thèmes, PWA,
                et un moteur de gabarits compatible Jinja2 (les gabarits de web/templates sont ceux de la version Python)
 web/           gabarits, fichiers statiques et icônes
@@ -198,6 +200,7 @@ python ../tools/diff_parse.py ../target/release/mymoney $(find /tmp/corpus -type
 cd .. && ./tools/diff_jinja.sh                                                          # mêmes gabarits que Jinja2
 python3 tools/diff_http.py --docs /tmp/corpus --work /tmp/http --keep                 # même application, requête par requête
 python3 tools/diff_http.py --existing /tmp/http/py/data                                # Rust ouvre les données de la version Python
+python3 tools/check_test_parity.py                                                      # chaque test Python a son équivalent Rust
 ```
 
 `tools/gen_edge_cases.py` (CSV, OFX et QIF piégés) et `tools/gen_pdf_variants.py` (PDF chiffrés ou abîmés, avec pypdf)

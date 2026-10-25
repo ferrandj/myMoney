@@ -6,7 +6,7 @@ use rust_decimal::Decimal;
 
 use crate::models::{Account, Holding};
 use crate::py;
-use crate::services::prices::PriceService;
+use crate::services::prices::{PriceError, PriceService};
 
 pub const BASE: &str = "EUR";
 
@@ -35,13 +35,32 @@ impl AccountValue {
     }
 }
 
+/// What the valuation needs from the price sources (the tests give it fixed prices).
+pub trait PriceSource {
+    fn convert(&self, amount: Decimal, from: &str, to: &str) -> Result<Decimal, PriceError>;
+    fn crypto_prices(&self, symbols: &[String], currency: &str, ids: &HashMap<String, String>) -> HashMap<String, Decimal>;
+    fn security_price(&self, isin: Option<&str>, symbol: Option<&str>) -> Option<(Decimal, String)>;
+}
+
+impl PriceSource for PriceService {
+    fn convert(&self, amount: Decimal, from: &str, to: &str) -> Result<Decimal, PriceError> {
+        PriceService::convert(self, amount, from, to)
+    }
+    fn crypto_prices(&self, symbols: &[String], currency: &str, ids: &HashMap<String, String>) -> HashMap<String, Decimal> {
+        PriceService::crypto_prices(self, symbols, currency, ids)
+    }
+    fn security_price(&self, isin: Option<&str>, symbol: Option<&str>) -> Option<(Decimal, String)> {
+        PriceService::security_price(self, isin, symbol)
+    }
+}
+
 pub struct Valuator<'a> {
-    pub prices: &'a PriceService,
+    pub prices: &'a dyn PriceSource,
     crypto: HashMap<String, Decimal>,
 }
 
 impl<'a> Valuator<'a> {
-    pub fn new(prices: &'a PriceService) -> Self {
+    pub fn new(prices: &'a dyn PriceSource) -> Self {
         Valuator { prices, crypto: HashMap::new() }
     }
 

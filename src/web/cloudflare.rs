@@ -102,6 +102,20 @@ impl CloudflareAccess {
         }
     }
 
+    /// The verified e-mail of the visitor named by the token in the request headers.
+    pub fn email_of(&self, headers: &[(String, String)]) -> Option<String> {
+        self.verify(headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(HEADER)).map(|(_, v)| v.as_str()))
+    }
+
+    /// The tests make the cached keys older (the look-up for unknown keys is rate-limited).
+    #[cfg(test)]
+    pub fn age_cache(&self, seconds: u64) {
+        let mut cache = self.cache.lock().unwrap();
+        if let Some(t) = cache.fetched_at {
+            cache.fetched_at = t.checked_sub(Duration::from_secs(seconds));
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         !self.host.is_empty() && !self.audience.is_empty()
     }

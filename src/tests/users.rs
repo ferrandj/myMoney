@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use chrono::NaiveDate;
 use regex::Regex;
 use rust_decimal::Decimal;
 
@@ -673,6 +672,3 @@ fn test_a_database_from_before_users_gets_its_new_columns() {
     let rows: Vec<(String, Option<i64>)> = conn.prepare("SELECT name, owner_id FROM accounts").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
     assert_eq!(rows, vec![("Ancien compte".to_string(), None)]);
 }
-
-#[allow(dead_code)]
-fn _unused(_: NaiveDate) {}

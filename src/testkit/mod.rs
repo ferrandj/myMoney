@@ -1,6 +1,8 @@
+#![allow(dead_code)]
 //! What the tests share: a small PDF writer, the synthetic documents (ported from the Python tests' fixtures) and a
 //! few helpers. Only compiled for tests.
 
+pub mod cloudflare;
 pub mod env;
 pub mod fixtures;
 pub mod fortuneo;
@@ -96,4 +98,72 @@ pub fn unzip(data: &[u8]) -> Vec<(String, Vec<u8>)> {
         at += 46 + name_len + extra_len + comment_len;
     }
     out
+}
+
+/// A decoded 8-bit RGBA PNG (the icons are drawn that way).
+pub struct Png {
+    pub width: usize,
+    pub height: usize,
+    pixels: Vec<u8>,
+}
+
+impl Png {
+    pub fn pixel(&self, x: usize, y: usize) -> [u8; 4] {
+        let i = (y * self.width + x) * 4;
+        [self.pixels[i], self.pixels[i + 1], self.pixels[i + 2], self.pixels[i + 3]]
+    }
+}
+
+pub fn decode_png(data: &[u8]) -> Png {
+    use std::io::Read;
+    assert_eq!(&data[..8], b"\x89PNG\r\n\x1a\n", "not a PNG");
+    let (mut at, mut width, mut height, mut idat) = (8, 0usize, 0usize, vec![]);
+    while at + 8 <= data.len() {
+        let len = u32::from_be_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+        let kind = &data[at + 4..at + 8];
+        let body = &data[at + 8..at + 8 + len];
+        match kind {
+            b"IHDR" => {
+                width = u32::from_be_bytes(body[0..4].try_into().unwrap()) as usize;
+                height = u32::from_be_bytes(body[4..8].try_into().unwrap()) as usize;
+                assert_eq!((body[8], body[9], body[12]), (8, 6, 0), "only 8-bit RGBA, not interlaced");
+            }
+            b"IDAT" => idat.extend(body),
+            _ => {}
+        }
+        at += 12 + len;
+    }
+    let mut raw = vec![];
+    flate2::read::ZlibDecoder::new(&idat[..]).read_to_end(&mut raw).unwrap();
+    let stride = width * 4;
+    let mut pixels = vec![0u8; stride * height];
+    for y in 0..height {
+        let filter = raw[y * (stride + 1)];
+        let line = &raw[y * (stride + 1) + 1..(y + 1) * (stride + 1)];
+        for x in 0..stride {
+            let a = if x >= 4 { pixels[y * stride + x - 4] as i32 } else { 0 };
+            let b = if y > 0 { pixels[(y - 1) * stride + x] as i32 } else { 0 };
+            let c = if x >= 4 && y > 0 { pixels[(y - 1) * stride + x - 4] as i32 } else { 0 };
+            let predicted = match filter {
+                0 => 0,
+                1 => a,
+                2 => b,
+                3 => (a + b) / 2,
+                4 => {
+                    let p = a + b - c;
+                    let (pa, pb, pc) = ((p - a).abs(), (p - b).abs(), (p - c).abs());
+                    if pa <= pb && pa <= pc {
+                        a
+                    } else if pb <= pc {
+                        b
+                    } else {
+                        c
+                    }
+                }
+                other => panic!("PNG filter {other}"),
+            };
+            pixels[y * stride + x] = (line[x] as i32 + predicted) as u8;
+        }
+    }
+    Png { width, height, pixels }
 }

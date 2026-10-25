@@ -2,8 +2,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, NaiveDateTime};
-use regex::Regex;
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde_json::json;
 
@@ -303,6 +302,3 @@ fn test_web_analytics_needs_login() {
     let mut client = client();
     assert_eq!(client.get_raw("/analytics").status, 303);
 }
-
-#[allow(dead_code)]
-fn _unused(_: NaiveDateTime, _: Regex) {}

@@ -1841,7 +1841,7 @@ impl Web {
             other => other?,
         };
         let prices = self.core.prices();
-        let mut valuator = crate::services::valuation::Valuator::new(&prices);
+        let mut valuator = crate::services::valuation::Valuator::new(&*prices);
         let with = vec![(data.account.clone(), data.holdings.clone())];
         valuator.prefetch(&with);
         let value = valuator.account_value(&data.account, &data.holdings);

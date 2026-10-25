@@ -1,6 +1,5 @@
 //! python/tests/test_fortuneo.py: monthly statement, yearly fees recap and the FGDR letter, on synthetic documents.
 
-use chrono::NaiveDate;
 use regex::Regex;
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
@@ -9,7 +8,7 @@ use crate::adapters::base::{ParsedStatement, SourceDocument};
 use crate::adapters::registry::{identify, Identification};
 use crate::error::AppError;
 use crate::models::{Account, Document, FeeSummary, Transaction};
-use crate::testkit::env::{client, core, csrf_of, Client, Core, Upload};
+use crate::testkit::env::{client, core, Client, Core, Upload};
 use crate::testkit::fixtures::*;
 use crate::testkit::fortuneo::*;
 use crate::testkit::{db, drop_file, form, num};
@@ -862,9 +861,4 @@ fn test_web_the_bank_fees_are_shown_next_to_the_spending() {
     assert!(page.contains("Détail des services (2)") && page.contains("INACTIVITE CARTE EXEMPLE"));
     // No fees to show for another direction or inside one category.
     assert!(!client.get("/analytics?vue=depenses&periode=tout&sens=entrees").text().contains("id=\"frais\""));
-}
-
-#[allow(dead_code)]
-fn _unused(_: NaiveDate, _: &str) -> String {
-    csrf_of("")
 }

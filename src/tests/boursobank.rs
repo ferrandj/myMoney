@@ -1,6 +1,5 @@
 //! python/tests/test_boursobank.py
 
-use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde_json::json;
 
@@ -31,7 +30,7 @@ fn s(v: &str) -> Option<String> {
 }
 
 #[test]
-fn detected_and_chosen_without_asking() {
+fn test_detected_and_chosen_without_asking() {
     let found = identify(&SourceDocument::new("releve.pdf", boursobank_statement_pdf(&september())));
     assert_eq!(found.decision, "auto");
     let chosen = found.chosen.unwrap();
@@ -41,7 +40,7 @@ fn detected_and_chosen_without_asking() {
 }
 
 #[test]
-fn identity_of_the_account_and_its_holder() {
+fn test_identity_of_the_account_and_its_holder() {
     let st = parse(&september());
     assert_eq!(st.holder_name, s("M DUPONT JEAN"));
     assert_eq!(st.holder_address, Some(address().join("\n")));
@@ -56,7 +55,7 @@ fn identity_of_the_account_and_its_holder() {
 }
 
 #[test]
-fn balances_reconcile_with_the_operations() {
+fn test_balances_reconcile_with_the_operations() {
     let spec = september();
     let st = parse(&spec);
     assert_eq!(st.opening_balance, Some(dec("1000.00")));
@@ -70,7 +69,7 @@ fn balances_reconcile_with_the_operations() {
 }
 
 #[test]
-fn each_kind_of_line_is_understood() {
+fn test_each_kind_of_line_is_understood() {
     let st = parse(&september());
 
     let card = by_label(&st, "TRAINS DE FRANCE");
@@ -113,7 +112,7 @@ fn each_kind_of_line_is_understood() {
 }
 
 #[test]
-fn transfers_between_own_accounts_are_marked_internal() {
+fn test_transfers_between_own_accounts_are_marked_internal() {
     let st = parse(&september());
     let from_savings = by_label(&st, "LIVRET DEVELOPPE");
     assert_eq!(details(from_savings), json!({"internal": true}));
@@ -123,7 +122,7 @@ fn transfers_between_own_accounts_are_marked_internal() {
 }
 
 #[test]
-fn credit_and_debit_columns_and_value_dates() {
+fn test_credit_and_debit_columns_and_value_dates() {
     let st = parse(&september());
     let incoming = st.transactions.iter().find(|t| t.counterparty.as_deref() == Some("LEROY CLAIRE") && t.amount > Decimal::ZERO).unwrap();
     assert_eq!(incoming.amount, dec("60.00"));
@@ -134,7 +133,7 @@ fn credit_and_debit_columns_and_value_dates() {
 }
 
 #[test]
-fn many_pages_still_reconcile() {
+fn test_many_pages_still_reconcile() {
     let mut entries: Vec<Entry> = (0..70)
         .map(|i| Entry { day: ymd(2026, 9, 1 + (i % 28) as u32), lines: vec![format!("CARTE 01/09/26 SHOP {i} CB*1234")], amount: dec(&format!("-{}.50", i + 1)), value_day: None })
         .collect();
@@ -149,7 +148,7 @@ fn many_pages_still_reconcile() {
 }
 
 #[test]
-fn accents_mangled_by_the_pdf_font_do_not_break_the_reading() {
+fn test_accents_mangled_by_the_pdf_font_do_not_break_the_reading() {
     let clean = parse(&september());
     let garbled = parse(&Spec { garble: true, ..september() });
     assert_eq!(garbled.confidence, "high");
@@ -161,19 +160,19 @@ fn accents_mangled_by_the_pdf_font_do_not_break_the_reading() {
 }
 
 #[test]
-fn fix_text_repairs_mangled_glyphs() {
+fn test_fix_text() {
     assert_eq!(fix_text("LibellØ DØbit RŁf (cid:224) 20h 5(cid:176) 10(cid:128)"), "Libellé Débit Rèf à 20h 5° 10€");
 }
 
 #[test]
-fn a_statement_that_does_not_add_up_is_flagged() {
+fn test_a_statement_that_does_not_add_up_is_flagged() {
     let st = parse(&Spec { wrong_closing: Some(dec("1.00")), ..september() });
     assert_eq!(st.confidence, "low");
     assert!(st.warnings.iter().any(|w| w.contains("écart")));
 }
 
 #[test]
-fn other_documents_do_not_trigger_this_adapter() {
+fn test_other_documents_do_not_trigger_this_adapter() {
     let rows = vec![vec![(10.0, "BFORBANK - Releve de compte courant")], vec![(10.0, "Date"), (30.0, "Libelle"), (140.0, "Debit"), (175.0, "Credit")]];
     let found = identify(&SourceDocument::new("releve.pdf", rows_pdf(&rows)));
     assert_eq!(found.decision, "fallback");
@@ -181,14 +180,14 @@ fn other_documents_do_not_trigger_this_adapter() {
 }
 
 #[test]
-fn same_brand_but_another_document_is_not_taken_for_a_statement() {
+fn test_same_brand_but_another_document_is_not_taken_for_a_statement() {
     let rows = vec![vec![(10.0, "BoursoBank - Avis d'opere")], vec![(10.0, "Detail des frais de tenue de compte")]];
     let found = identify(&SourceDocument::new("avis.pdf", rows_pdf(&rows)));
     assert_ne!(found.decision, "auto");
 }
 
 #[test]
-fn name_key_matches_the_same_person_written_differently() {
+fn test_name_key_matches_the_same_person_written_differently() {
     assert_eq!(name_key("M DUPONT Jean"), name_key("Jean DUPONT"));
     assert_eq!(name_key("Jean DUPONT"), name_key("MME dupont  jean"));
     assert_eq!(name_key("ACME CONSULTING SAS"), name_key("Acme Consulting"));
@@ -208,7 +207,7 @@ fn parse_pel(spec: &SavingsSpec) -> ParsedStatement {
 }
 
 #[test]
-fn a_savings_extract_picks_its_own_adapter_and_not_the_current_account_one() {
+fn test_a_savings_extract_picks_its_own_adapter_and_not_the_current_account_one() {
     let found = identify(&SourceDocument::new("pel.pdf", boursobank_savings_pdf(&pel_spec())));
     assert_eq!(found.decision, "auto");
     let chosen = found.chosen.as_ref().unwrap();
@@ -222,7 +221,7 @@ fn a_savings_extract_picks_its_own_adapter_and_not_the_current_account_one() {
 }
 
 #[test]
-fn savings_identity_has_an_account_number_but_no_iban() {
+fn test_savings_identity_has_an_account_number_but_no_iban() {
     let st = parse_pel(&pel_spec());
     assert_eq!(st.account_number, s("00099999999"));
     assert_eq!(st.currency, "EUR");
@@ -236,7 +235,7 @@ fn savings_identity_has_an_account_number_but_no_iban() {
 }
 
 #[test]
-fn savings_balances_reconcile_and_lines_are_understood() {
+fn test_savings_balances_reconcile_and_lines_are_understood() {
     let spec = pel_spec();
     let st = parse_pel(&spec);
     assert_eq!(st.opening_balance, Some(dec("3000.00")));
@@ -254,7 +253,7 @@ fn savings_balances_reconcile_and_lines_are_understood() {
 }
 
 #[test]
-fn savings_debits_are_read_from_the_debit_column() {
+fn test_savings_debits_are_read_from_the_debit_column() {
     let mut spec = pel_spec();
     spec.entries.push(entry(ymd(2026, 9, 29), &["VIR RETRAIT PARTIEL"], "-500.00"));
     let st = parse_pel(&spec);
@@ -265,7 +264,7 @@ fn savings_debits_are_read_from_the_debit_column() {
 
 // --------------------------------------------------------------- savings account and joint account (same layout)
 #[test]
-fn a_savings_account_in_the_current_account_layout_is_typed_from_its_product_line() {
+fn test_a_savings_account_in_the_current_account_layout_is_typed_from_its_product_line() {
     let three = sample_entries()[..3].to_vec();
     let st = parse(&Spec { product: "Livret Developpement Durable Solidaire".into(), ..Spec::new(three.clone()) });
     assert_eq!(st.account_type, s("ldds"));
@@ -279,7 +278,7 @@ fn a_savings_account_in_the_current_account_layout_is_typed_from_its_product_lin
 }
 
 #[test]
-fn a_joint_account_is_labelled_and_its_cut_holder_line_is_flagged() {
+fn test_a_joint_account_is_labelled_and_its_cut_holder_line_is_flagged() {
     let three = sample_entries()[..3].to_vec();
     let st = parse(&Spec { holder: joint_holder(), address: joint_address(), ..Spec::new(three.clone()) });
     assert_eq!(st.holder_name, s("M DUPONT OU MME LEROY CLAIRE"));
@@ -291,13 +290,10 @@ fn a_joint_account_is_labelled_and_its_cut_holder_line_is_flagged() {
 }
 
 #[test]
-fn a_word_cut_by_the_bank_at_the_end_of_a_line_is_glued_back() {
+fn test_a_word_cut_by_the_bank_at_the_end_of_a_line_is_glued_back() {
     let e = entry(ymd(2026, 9, 24), &["VIR Virement depuis BOURSORAMA Mathi", "eu", "DUPONT JEAN"], "50.00");
     let st = parse(&Spec::new(vec![e]));
     let [t] = &st.transactions[..] else { panic!("one line expected") };
     assert_eq!(t.counterparty, s("DUPONT JEAN"));
     assert_eq!(t.memo, s("Virement depuis BOURSORAMA Mathieu"));
 }
-
-#[allow(dead_code)]
-fn _unused(_: NaiveDate) {}

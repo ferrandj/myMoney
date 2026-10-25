@@ -9,18 +9,57 @@ fn detect_format(filename: &str, data: &[u8]) -> String {
     SourceDocument::new(filename, data.to_vec()).format().to_string()
 }
 
-#[test]
-fn parse_amount_cases() {
-    for (raw, expected) in [
-        ("1 234,56", Some("1234.56")), ("-1,234.56", Some("-1234.56")), ("1.234,56 €", Some("1234.56")), ("12,00-", Some("-12.00")),
-        ("(45.10)", Some("-45.10")), ("+3,5", Some("3.5")), ("1 000,00", Some("1000.00")), ("0.00012345", Some("0.00012345")), ("", None),
-    ] {
-        assert_eq!(parse_amount(Some(raw)), expected.map(dec), "{raw}");
-    }
+fn check_parse_amount(raw: &str, expected: Option<&str>) {
+    assert_eq!(parse_amount(Some(raw)), expected.map(dec), "{raw}");
 }
 
 #[test]
-fn parse_date_cases() {
+fn test_parse_amount_thousands_space() {
+    check_parse_amount("1 234,56", Some("1234.56"));
+}
+
+#[test]
+fn test_parse_amount_english_thousands() {
+    check_parse_amount("-1,234.56", Some("-1234.56"));
+}
+
+#[test]
+fn test_parse_amount_euro_sign() {
+    check_parse_amount("1.234,56 €", Some("1234.56"));
+}
+
+#[test]
+fn test_parse_amount_trailing_minus() {
+    check_parse_amount("12,00-", Some("-12.00"));
+}
+
+#[test]
+fn test_parse_amount_parentheses() {
+    check_parse_amount("(45.10)", Some("-45.10"));
+}
+
+#[test]
+fn test_parse_amount_plus_sign() {
+    check_parse_amount("+3,5", Some("3.5"));
+}
+
+#[test]
+fn test_parse_amount_space_thousands() {
+    check_parse_amount("1 000,00", Some("1000.00"));
+}
+
+#[test]
+fn test_parse_amount_tiny() {
+    check_parse_amount("0.00012345", Some("0.00012345"));
+}
+
+#[test]
+fn test_parse_amount_empty() {
+    check_parse_amount("", None);
+}
+
+#[test]
+fn test_parse_date() {
     assert_eq!(parse_date(Some("03/02/2026"), None), Some(ymd(2026, 2, 3)));
     assert_eq!(parse_date(Some("2026-02-03"), None), Some(ymd(2026, 2, 3)));
     assert_eq!(parse_date(Some("03.02.26"), None), Some(ymd(2026, 2, 3)));
@@ -29,13 +68,13 @@ fn parse_date_cases() {
 }
 
 #[test]
-fn find_iban_cases() {
+fn test_find_iban() {
     assert_eq!(find_iban("IBAN : FR76 3000 1007 9412 3456 7890 185 BIC XXX").as_deref(), Some("FR7630001007941234567890185"));
     assert_eq!(find_iban("FR76 3000 1007 9412 3456 7890 186"), None);
 }
 
 #[test]
-fn csv_french_bank() {
+fn test_csv_french_bank() {
     let text = "Compte courant;FR76 3000 1007 9412 3456 7890 185\n\nDate opération;Date valeur;Libellé;Débit;Crédit;Solde\n05/02/2026;05/02/2026;CARTE CARREFOUR;45,20;;1 954,80\n03/02/2026;03/02/2026;VIR SALAIRE;;2 000,00;2 000,00\n";
     let data: Vec<u8> = text.chars().map(|c| crate::testkit::cp1252_byte(c)).collect();
     let st = parse_document("export.csv", data).remove(0);
@@ -46,7 +85,7 @@ fn csv_french_bank() {
 }
 
 #[test]
-fn csv_revolut() {
+fn test_csv_revolut() {
     let data = "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance\nCARD_PAYMENT,Current,2026-02-01 10:00:00,2026-02-02 10:00:00,Amazon,-20.00,0.50,EUR,COMPLETED,79.50\nTOPUP,Current,2026-02-03 10:00:00,,Top-up,100.00,0.00,EUR,PENDING,\n";
     let st = parse_document("revolut.csv", data.as_bytes().to_vec()).remove(0);
     assert_eq!(st.institution.as_deref(), Some("Revolut"));
@@ -55,7 +94,7 @@ fn csv_revolut() {
 }
 
 #[test]
-fn csv_holdings() {
+fn test_csv_holdings() {
     let st = parse_document("nexo.csv", b"Symbol;Quantity\nBTC;0,5\nETH;2\n".to_vec()).remove(0);
     let holdings: std::collections::BTreeMap<String, rust_decimal::Decimal> = st.holdings.as_ref().unwrap().iter().map(|h| (h.symbol.clone().unwrap(), h.quantity)).collect();
     assert_eq!(holdings, [("BTC".to_string(), dec("0.5")), ("ETH".to_string(), dec("2"))].into_iter().collect());
@@ -82,7 +121,7 @@ NEWFILEUID:NONE
 ";
 
 #[test]
-fn ofx() {
+fn test_ofx() {
     assert_eq!(detect_format("x.ofx", OFX.as_bytes()), "ofx");
     let st = parse_document("fortuneo.ofx", OFX.as_bytes().to_vec()).remove(0);
     assert_eq!(st.balance, Some(dec("3210.55")));
@@ -92,7 +131,7 @@ fn ofx() {
 }
 
 #[test]
-fn pdf_statement_with_debit_credit_columns() {
+fn test_pdf_statement_with_debit_credit_columns() {
     let rows = vec![
         vec![(10.0, "BFORBANK - Releve de compte courant")],
         vec![(10.0, "Compte courant joint")],
@@ -120,7 +159,7 @@ fn pdf_statement_with_debit_credit_columns() {
 }
 
 #[test]
-fn pdf_other_document_offers_candidate_amounts() {
+fn test_pdf_other_document_offers_candidate_amounts() {
     let rows = vec![
         vec![(10.0, "Spirica - Releve de situation annuel")],
         vec![(10.0, "Contrat Linxea Avenir")],
