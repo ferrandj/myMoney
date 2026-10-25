@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "_macros.html" import holder_block, copy with context %}
+{% block title %}{{ person.card.label if person else 'Nouvelle personne' }}{% endblock %}
+{% block content %}
+<nav class="tabs" aria-label="Comptes et personnes">
+  <a href="/accounts">Comptes</a><a href="/people" aria-current="page">Personnes</a>
+</nav>
+
+{% if person %}
+<section class="hero">
+  <div>
+    <p class="muted">Personne</p>
+    <h1 class="sensitive">{{ person.card.label }}</h1>
+    <p class="big">{{ person.total|money }}</p>
+    <p class="muted small">Somme des comptes ci-dessous (un compte joint est compté en entier pour chacun de ses titulaires).</p>
+  </div>
+  <div class="actions">
+    {% if person.ids %}<a class="btn primary" href="/analytics?periode=tout{% for i in person.ids %}&c={{ i }}{% endfor %}">📈 Voir dans les analyses</a>{% endif %}
+    <a class="btn" href="/people">Toutes les personnes</a>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Comptes de cette personne <span class="tag">{{ person.accounts|length }}</span></h2>
+  {% if person.accounts %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Compte</th><th>Établissement</th><th>Type</th><th>Avec</th><th class="num">Solde</th></tr></thead>
+    <tbody>
+    {% for x in person.accounts %}
+    <tr>
+      <td><a href="/accounts/{{ x.account.id }}">{{ x.account.name }}</a>{% if x.account.archived %} <span class="tag">archivé</span>{% endif %}</td>
+      <td class="small">{{ x.account.institution or '' }}</td>
+      <td class="small">{{ x.account.type_label }}</td>
+      <td class="small sensitive">{% for p in x.account.people if p.id != person.card.id %}{% if p.id %}<a href="/people/{{ p.id }}">{{ [p.civility, p.last_names|join(' '), p.first_names|join(' ')]|select|join(' ') }}</a>{% else %}{{ [p.civility, p.last_names|join(' '), p.first_names|join(' ')]|select|join(' ') }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">seul(e)</span>{% endfor %}</td>
+      <td class="num">{{ x.total|money(x.account.currency) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Aucun compte rattaché. Choisis cette personne comme titulaire sur la fiche d'un compte, ou à l'import d'un document.</p>{% endif %}
+</section>
+{% else %}
+<h1>Nouvelle personne</h1>
+{% endif %}
+
+<form method="post" action="{{ '/people/' ~ person.card.id if person else '/people/new' }}" class="card stack">
+  <h2>{{ 'Modifier la fiche' if person else 'Fiche' }}</h2>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if person and not person.editable %}<p class="warn small">Cette fiche t'est partagée en lecture seule.</p>{% endif %}
+  {{ holder_block(blocks[0], True) }}
+  <label>Notes <textarea name="notes" rows="2" placeholder="Date de naissance, numéro de sécu, ce que tu veux retrouver ici…">{{ person.card.notes or '' if person else '' }}</textarea></label>
+  <div class="actions"><button class="btn primary" {% if person and not person.editable %}disabled{% endif %}>Enregistrer</button></div>
+  {% if person %}<p class="muted small">Un changement ici est copié dans tous les comptes de la personne, et leurs fichiers sont renommés.</p>{% endif %}
+</form>
+
+{% if person and person.editable %}
+<form method="post" action="/people/{{ person.card.id }}/delete" class="danger-zone" data-confirm="Supprimer cette fiche ? Les comptes gardent les noms mais ne sont plus liés à la fiche.">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn danger">Supprimer la fiche</button>
+</form>
+{% endif %}
+{% endblock %}

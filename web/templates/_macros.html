@@ -60,6 +60,15 @@
 {# One person behind an account: civility, last name(s), birth name(s) when different, first name(s). Several boxes each, because documents ask for one name or both. #}
 {% macro holder_block(b, required=False) %}
 <div class="holder-block">
+  <input type="hidden" name="holder_{{ b.index }}_person" value="{{ b.person }}">
+  {% if people_options %}
+  <label class="holder-pick">Personne déjà enregistrée
+    <select class="person-pick" aria-label="Personne déjà enregistrée">
+      <option value="">— nouvelle personne (saisie ci-dessous) —</option>
+      {% for o in people_options %}<option value="{{ o.id }}" data-civility="{{ o.civility }}" data-last="{{ o.last|join('|') }}" data-birth="{{ o.birth|join('|') }}" data-first="{{ o.first|join('|') }}" {% if b.person == (o.id ~ '') %}selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
   <label class="holder-civility">Civilité
     <select name="holder_{{ b.index }}_civility">
       <option value="">—</option>

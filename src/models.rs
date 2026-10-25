@@ -585,6 +585,21 @@ impl GapAck {
     fn touch(&mut self) {}
 }
 
+// A person's card: who is behind one or several accounts (a joint account links two cards). Names are lists because
+// documents ask for one name or both, the birth name, several first names.
+table!(PersonCard, "people", false, {
+    owner_id: Option<i64> = None,
+    civility: String = String::new(),
+    last_names: Json = None,
+    birth_names: Json = None,
+    first_names: Json = None,
+    notes: Option<String> = None,
+    created_at: NaiveDateTime = utcnow(),
+});
+impl PersonCard {
+    fn touch(&mut self) {}
+}
+
 table!(Counterparty, "counterparties", false, {
     name: String = String::new(),
     kind: String = "person".into(),

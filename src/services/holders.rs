@@ -22,6 +22,8 @@ pub const MAX_PEOPLE: usize = 6;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Person {
+    /// The card (`people` table) this person is linked to; None for names only typed on an account.
+    pub id: Option<i64>,
     pub civility: String,
     /// Last name(s) as used: some documents want one, some both.
     pub last_names: Vec<String>,
@@ -133,7 +135,13 @@ pub fn to_json(people: &[Person]) -> Value {
         people
             .iter()
             .filter(|p| !p.is_empty())
-            .map(|p| json!({"civility": p.civility, "last_names": p.last_names, "birth_names": p.birth_names, "first_names": p.first_names}))
+            .map(|p| {
+                let mut v = json!({"civility": p.civility, "last_names": p.last_names, "birth_names": p.birth_names, "first_names": p.first_names});
+                if let Some(id) = p.id {
+                    v["id"] = json!(id);
+                }
+                v
+            })
             .collect(),
     )
 }
@@ -147,6 +155,7 @@ pub fn from_json(v: &Value) -> Vec<Person> {
         .map(|a| {
             a.iter()
                 .map(|p| Person {
+                    id: p.get("id").and_then(|i| i.as_i64()),
                     civility: p.get("civility").and_then(|c| c.as_str()).unwrap_or("").to_string(),
                     last_names: strings(p.get("last_names")),
                     birth_names: strings(p.get("birth_names")),
@@ -188,8 +197,9 @@ pub fn from_form(form: &HashMap<String, String>) -> Option<Vec<Person>> {
             out
         };
         let civility = civility_of(form.get(&format!("holder_{i}_civility")).map(|s| s.as_str()).unwrap_or("")).unwrap_or("").to_string();
-        let person = Person { civility, last_names: boxes("last"), birth_names: boxes("birth"), first_names: boxes("first") };
-        if !person.is_empty() {
+        let id = form.get(&format!("holder_{i}_person")).and_then(|v| v.trim().parse::<i64>().ok());
+        let person = Person { id, civility, last_names: boxes("last"), birth_names: boxes("birth"), first_names: boxes("first") };
+        if !person.is_empty() || person.id.is_some() {
             people.push(person);
         }
     }
@@ -211,6 +221,7 @@ pub fn form_blocks(people: &[Person], minimum: usize) -> Value {
                 let p = people.get(i).cloned().unwrap_or_default();
                 json!({
                     "index": i,
+                    "person": p.id.map(|i| i.to_string()).unwrap_or_default(),
                     "civility": p.civility,
                     "last": padded(&p.last_names, LAST_SLOTS),
                     "birth": padded(&p.birth_names, BIRTH_SLOTS),

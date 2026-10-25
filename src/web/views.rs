@@ -15,6 +15,7 @@ use crate::services::access::Identity;
 use crate::services::coverage::Gap;
 use crate::services::holders::{self, Person};
 use crate::services::loans;
+use crate::services::people;
 use crate::services::statements::ImportPlan;
 
 pub fn obj(class: &'static str, mut fields: Vec<(&'static str, Value)>, extra: Vec<(&'static str, Value)>) -> Value {
@@ -58,8 +59,21 @@ pub fn account(c: &Connection, a: &Account) -> AppResult<Value> {
     Ok(account_with(a, owner, holdings.iter().map(holding).collect()))
 }
 
+/// A card as the "existing person" list of the forms and the pages show it.
+pub fn person_card(card: &crate::models::PersonCard) -> Value {
+    let p = people::person_of(card);
+    let strs = |v: &[String]| Value::list(v.iter().map(|s| s.clone().into()).collect());
+    let mut f = card.fields();
+    f.push(("label", people::label(card).into()));
+    f.push(("last", strs(&p.last_names)));
+    f.push(("birth", strs(&p.birth_names)));
+    f.push(("first", strs(&p.first_names)));
+    Value::obj("PersonCard", f)
+}
+
 fn person(p: &Person) -> Value {
     Value::sdict(vec![
+        ("id", p.id.map(Value::Int).unwrap_or(Value::None)),
         ("civility", p.civility.clone().into()),
         ("last_names", Value::list(p.last_names.iter().map(|s| s.clone().into()).collect())),
         ("birth_names", Value::list(p.birth_names.iter().map(|s| s.clone().into()).collect())),
@@ -256,7 +270,8 @@ pub fn plan(c: &Connection, p: &ImportPlan) -> AppResult<Value> {
     let candidates = p.candidates.iter().map(|a| account(c, a)).collect::<AppResult<Vec<_>>>()?;
     // The holders the form offers: the account's own, else a reading of the line the bank prints.
     let known = p.account.as_ref().map(holders::of_account).unwrap_or_default();
-    let people = if known.is_empty() { holders::parse_printed(st.holder_name.as_deref().unwrap_or("")) } else { known };
+    // a printed name that is a known card's is offered with that card, so the names are not typed again
+    let people = if known.is_empty() { people::match_guess(&people::visible(c)?, &holders::parse_printed(st.holder_name.as_deref().unwrap_or(""))) } else { known };
     let shown = if p.ask_holder || people.len() >= 2 { people.len().max(2) } else { 1 };
     Ok(Value::obj(
         "ImportPlan",

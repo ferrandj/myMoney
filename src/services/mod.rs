@@ -7,6 +7,7 @@ pub mod holders;
 pub mod ledger;
 pub mod loans;
 pub mod naming;
+pub mod people;
 pub mod prices;
 pub mod rates;
 pub mod statements;

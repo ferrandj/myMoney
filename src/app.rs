@@ -25,7 +25,7 @@ use crate::security::keystore::Keystore;
 use crate::security::vault::{Vault, VaultError};
 use crate::services::access::{self, Identity};
 use crate::services::statements::{self as statement_service, Form, ImportPlan};
-use crate::services::{holders, ledger, loans as loan_service, naming, prices::PriceService, users as user_service, valuation::{AccountValue, Valuator}};
+use crate::services::{holders, ledger, loans as loan_service, naming, people, prices::PriceService, users as user_service, valuation::{AccountValue, Valuator}};
 
 /// how long a duplicate set aside waits for the user's decision
 pub const QUARANTINE_HOURS: i64 = 24;
@@ -505,10 +505,11 @@ impl MyMoney {
                     *field = Some(py::strip(v).to_string()).filter(|s| !s.is_empty());
                 }
             }
-            if let Some(people) = holders::from_form(data) {
-                // the holders typed in the form (one block per person) are the truth; the single line is derived from them
-                account.holders = if people.is_empty() { None } else { Some(holders::to_json(&people)) };
-                account.holder_name = Some(holders::compose(&people)).filter(|s| !s.is_empty());
+            if let Some(typed) = holders::from_form(data) {
+                // the holders of the form (one block per person) are the truth: each has a card, and the single line is
+                // derived from them
+                let linked = people::resolve(c, typed)?;
+                people::link(&mut account, &linked);
             }
             account.notes = get("notes").filter(|s| !s.is_empty());
             account.archived = get("archived").as_deref() == Some("on");
