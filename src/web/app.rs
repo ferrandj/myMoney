@@ -13,7 +13,7 @@ use super::http::{http_date, Request, Response};
 use super::jinja::{Environment, Value};
 use super::security::{same, Sessions, WebSession, COOKIE, SECURITY_HEADERS};
 use super::{charts, pwa, themes, views};
-use crate::adapters::registry::{self, ADAPTERS};
+use crate::adapters::registry;
 use crate::app::{MyMoney, QUARANTINE_HOURS};
 use crate::config::Settings;
 use crate::error::{AppError, AppResult};
@@ -1841,7 +1841,7 @@ impl Web {
             other => other?,
         };
         let prices = self.core.prices();
-        let mut valuator = crate::services::valuation::Valuator::new(&prices);
+        let mut valuator = crate::services::valuation::Valuator::new(&*prices);
         let with = vec![(data.account.clone(), data.holdings.clone())];
         valuator.prefetch(&with);
         let value = valuator.account_value(&data.account, &data.holdings);
@@ -2280,7 +2280,7 @@ impl Web {
                 ("plans", Value::list(plans)),
                 ("accounts", Value::list(accounts)),
                 ("candidates", Value::list(candidates)),
-                ("adapters", Value::list(ADAPTERS.iter().map(|a| adapter_value(*a)).collect())),
+                ("adapters", Value::list(registry::adapters().into_iter().map(adapter_value).collect())),
                 ("to_identify", Value::list(to_identify.iter().map(unresolved_value).collect())),
                 ("original", original),
                 ("queue", queue),

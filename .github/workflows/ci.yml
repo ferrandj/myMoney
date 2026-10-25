@@ -47,6 +47,8 @@ jobs:
           MYMONEY_CAPTURE="$RUNNER_TEMP/corpus" PYTHONPATH=.. python -m pytest -q -p tools.capture_docs
       - name: Rust tests
         run: cargo test --release --locked
+      - name: Every Python test has its Rust counterpart
+        run: python tools/check_test_parity.py
       - name: Rust build
         run: cargo build --release --locked
       - name: Templates rendered like Jinja2

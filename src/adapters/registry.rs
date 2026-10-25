@@ -45,6 +45,21 @@ pub static ADAPTERS: &[&dyn Adapter] = &[
     &GenericPdf,
 ];
 
+#[cfg(test)]
+thread_local! {
+    /// The tests replace the registry (the Python tests monkeypatch `ADAPTERS`).
+    pub static OVERRIDE: std::cell::RefCell<Option<Vec<&'static dyn Adapter>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The adapters in use: the registry (the tests may replace it for the thread that runs them).
+pub fn adapters() -> Vec<&'static dyn Adapter> {
+    #[cfg(test)]
+    if let Some(list) = OVERRIDE.with(|o| o.borrow().clone()) {
+        return list;
+    }
+    ADAPTERS.to_vec()
+}
+
 pub const AUTO_SCORE: f64 = 0.8; // a candidate at least this sure, and clearly ahead of the others, is used without asking
 pub const AUTO_MARGIN: f64 = 0.2;
 pub const PLAUSIBLE: f64 = 0.4;
@@ -76,12 +91,12 @@ pub struct Identification {
 }
 
 pub fn get_adapter(adapter_id: &str) -> Result<&'static dyn Adapter, String> {
-    ADAPTERS.iter().copied().find(|a| a.id() == adapter_id).ok_or_else(|| format!("Adapter inconnu : {adapter_id}"))
+    adapters().into_iter().find(|a| a.id() == adapter_id).ok_or_else(|| format!("Adapter inconnu : {adapter_id}"))
 }
 
 pub fn identify(doc: &SourceDocument) -> Identification {
     let mut candidates: Vec<Candidate> = vec![];
-    for adapter in ADAPTERS.iter().copied() {
+    for adapter in adapters() {
         let detection = match adapter.detect(doc) {
             Ok(d) => d,
             Err(e) => {
@@ -172,7 +187,7 @@ fn enrich(st: &mut ParsedStatement) {
 /// Adapters by institution, for the "supported documents" list.
 pub fn catalog() -> Vec<(String, Vec<&'static dyn Adapter>)> {
     let mut groups: Vec<(String, Vec<&'static dyn Adapter>)> = vec![];
-    for adapter in ADAPTERS.iter().copied() {
+    for adapter in adapters() {
         let key = adapter.institution().unwrap_or("Formats génériques").to_string();
         match groups.iter_mut().find(|(k, _)| *k == key) {
             Some(g) => g.1.push(adapter),

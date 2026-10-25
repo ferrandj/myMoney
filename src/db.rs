@@ -85,7 +85,7 @@ fn table_exists(c: &Connection, name: &str) -> rusqlite::Result<bool> {
 }
 
 /// `Base.metadata.create_all`: the missing tables, with their indexes, in SQLAlchemy's order and text.
-fn create_all(c: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn create_all(c: &Connection) -> rusqlite::Result<()> {
     for (name, ddl, indexes) in schema::TABLES {
         if table_exists(c, name)? {
             continue;
@@ -99,7 +99,7 @@ fn create_all(c: &Connection) -> rusqlite::Result<()> {
 }
 
 /// Light schema upgrade: a database created by an older version gets the columns added since (all nullable).
-fn add_missing_columns(c: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn add_missing_columns(c: &Connection) -> rusqlite::Result<()> {
     for (table, column, sqltype, nullable) in schema::COLUMNS {
         if !nullable || !table_exists(c, table)? {
             continue;

@@ -163,7 +163,7 @@ pub fn period_start(period: &str, today: NaiveDate, earliest: NaiveDate) -> Naiv
     }
 }
 
-fn days(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
+pub(crate) fn days(start: NaiveDate, end: NaiveDate) -> Vec<NaiveDate> {
     let count = (end - start).num_days() + 1;
     let step = 1.max((count + MAX_POINTS - 1) / MAX_POINTS);
     let mut out: Vec<NaiveDate> = (0..count).step_by(step as usize).map(|i| start + Duration::days(i)).collect();

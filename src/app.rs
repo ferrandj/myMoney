@@ -153,6 +153,14 @@ impl MyMoney {
         self.db.session(f)
     }
 
+    /// The tests forget the failed logins (`core._failed_logins, core._next_login_at = 0, 0.0`).
+    #[cfg(test)]
+    pub fn reset_throttle(&self) {
+        let mut t = self.throttle.lock().unwrap();
+        t.failed = 0;
+        t.next_at = Instant::now();
+    }
+
     // ------------------------------------------------------------ security
 
     fn check_throttle(&self) -> AppResult<()> {
@@ -410,7 +418,7 @@ impl MyMoney {
                 let h = Holding::query(c, "WHERE account_id = ?", [a.id]).unwrap_or_default();
                 (a, h)
             }).collect();
-            let mut valuator = Valuator::new(&prices);
+            let mut valuator = Valuator::new(&*prices);
             valuator.prefetch(&with);
             let values: Vec<AccountValue> = with.iter().map(|(a, h)| valuator.account_value(a, h)).collect();
             let mut totals: HashMap<&'static str, Decimal> = HashMap::new();
