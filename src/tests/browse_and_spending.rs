@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::app::MyMoney;
 use crate::error::AppError;
-use crate::models::{CategoryRule, Document, Transaction};
+use crate::models::{Account, CategoryRule, Document, Transaction};
 use crate::services::access;
 use crate::services::analytics::{self, SpendingReport};
 use crate::services::categories;
@@ -359,9 +359,19 @@ fn labels(v: &Value) -> Vec<String> {
     items(v).iter().map(|x| at(x, "label").as_str().unwrap().to_string()).collect()
 }
 
+fn account_named(id: i64, name: &str, institution: &str, kind: &str) -> Account {
+    let mut a = Account::default();
+    a.id = id;
+    a.name = name.into();
+    a.institution = s(institution);
+    a.account_type = kind.into();
+    a
+}
+
 #[test]
 fn test_documents_are_grouped_by_bank_then_type_then_year_newest_first() {
-    let docs = vec![
+    // Rust also groups by account between the bank and the type.
+    let mut docs = vec![
         doc(1, "a.pdf", Some("BoursoBank"), Some("x"), "statement", Some(ymd(2026, 9, 30))),
         doc(2, "b.pdf", Some("BoursoBank"), Some("x"), "statement", Some(ymd(2025, 12, 31))),
         doc(3, "c.pdf", Some("BoursoBank"), Some("x"), "savings_statement", Some(ymd(2026, 6, 30))),
@@ -371,19 +381,42 @@ fn test_documents_are_grouped_by_bank_then_type_then_year_newest_first() {
         doc(7, "g.pdf", Some("BoursoBank"), Some("x"), "statement", Some(ymd(2026, 3, 31))),
         doc(8, "h.pdf", Some("Fortuneo"), None, "statement", None),
     ];
-    let tree = document_tree(&docs);
+    // two documents of the checking account, one of the savings account, the fees recap of a Fortuneo account
+    for (id, account) in [(1, 10), (2, 10), (7, 10), (3, 11), (4, 12)] {
+        docs.iter_mut().find(|d| d.id == id).unwrap().account_id = Some(account);
+    }
+    let accounts: std::collections::HashMap<i64, Account> = [
+        account_named(10, "Compte courant", "BoursoBank", "checking"),
+        account_named(11, "Mon PEL", "BoursoBank", "pel"),
+        account_named(12, "Compte Fortuneo", "Fortuneo", "checking"),
+    ]
+    .into_iter()
+    .map(|a| (a.id, a))
+    .collect();
+    let tree = document_tree(&docs, &accounts);
     assert_eq!(labels(&tree), vec!["BoursoBank", "Fortuneo", "Autres documents"]);
     assert_eq!(items(&tree).iter().map(|b| at(b, "count").as_int().unwrap()).collect::<Vec<_>>(), vec![4, 3, 1]);
     let bourso = idx(&tree, 0);
-    assert_eq!(labels(&at(&bourso, "kinds")), vec!["Relevé d'épargne", "Relevé de compte"]);
-    let statements = idx(&at(&bourso, "kinds"), 1);
+    assert_eq!(labels(&at(&bourso, "accounts")), vec!["Compte courant", "Mon PEL"]);
+    let checking = idx(&at(&bourso, "accounts"), 0);
+    assert_eq!(at(&checking, "subtitle").as_str(), Some("Compte courant"));
+    assert_eq!(labels(&at(&checking, "kinds")), vec!["Relevé de compte"]);
+    let statements = idx(&at(&checking, "kinds"), 0);
     let years: Vec<(i64, Vec<i64>)> = items(&at(&statements, "years"))
         .iter()
         .map(|y| (idx(y, 0).as_int().unwrap(), items(&idx(y, 1)).iter().map(|row| at(&idx(row, 0), "id").as_int().unwrap()).collect()))
         .collect();
     assert_eq!(years, vec![(2026, vec![1, 7]), (2025, vec![2])]);
-    assert_eq!(labels(&at(&idx(&tree, 1), "kinds")), vec!["Récapitulatif des frais", "Relevé de compte", "Non reconnu"]); // unrecognised files last
-    assert_eq!(labels(&at(&idx(&tree, 2), "kinds"))[0], "Non reconnu");
+    let pel = idx(&at(&bourso, "accounts"), 1);
+    assert_eq!(labels(&at(&pel, "kinds")), vec!["Relevé d'épargne"]);
+    // Fortuneo: the account first, then what belongs to no account; unrecognised files last
+    let fortuneo = idx(&tree, 1);
+    assert_eq!(labels(&at(&fortuneo, "accounts")), vec!["Compte Fortuneo", "Sans compte"]);
+    assert_eq!(labels(&at(&idx(&at(&fortuneo, "accounts"), 0), "kinds")), vec!["Récapitulatif des frais"]);
+    assert_eq!(labels(&at(&idx(&at(&fortuneo, "accounts"), 1), "kinds")), vec!["Relevé de compte", "Non reconnu"]);
+    let others = idx(&tree, 2);
+    assert_eq!(labels(&at(&others, "accounts")), vec!["Sans compte"]);
+    assert_eq!(labels(&at(&idx(&at(&others, "accounts"), 0), "kinds")), vec!["Non reconnu"]);
 }
 
 fn drop_documents(web: &mut Client, csrf: &str) -> std::collections::HashMap<String, i64> {
@@ -396,7 +429,7 @@ fn drop_documents(web: &mut Client, csrf: &str) -> std::collections::HashMap<Str
     ];
     for (name, data) in files {
         web.post_files("/documents", &[("csrf", csrf)], &[Upload { field: "files", filename: name, data: &data, content_type: "application/pdf" }]);
-        let id = db(&web.core, |c| Ok(Document::query_one(c, "WHERE filename = ?", [name])?.unwrap().id));
+        let id = db(&web.core, |c| Ok(Document::query_one(c, "WHERE filename = ?1 OR original_filename = ?1", [name])?.unwrap().id));
         ids.insert(name.to_string(), id);
         if name == "sept.pdf" || name == "fortuneo.pdf" {
             web.post(&format!("/documents/{id}/import/0"), &[("csrf", csrf), ("account_id", "new"), ("name", name), ("import_transactions", "on")]);
@@ -425,13 +458,13 @@ fn test_web_download_one_file_as_it_is_or_several_as_a_zip() {
     let ids = drop_documents(&mut web, &csrf);
     let (sept, frais) = (ids["sept.pdf"].to_string(), ids["frais.pdf"].to_string());
     let one = web.post("/documents/download", &[("csrf", &csrf), ("ids", &sept)]);
-    assert!(one.status == 200 && one.body.starts_with(b"%PDF") && one.header("content-disposition").unwrap().contains("sept.pdf"));
+    assert!(one.status == 200 && one.body.starts_with(b"%PDF") && one.header("content-disposition").unwrap().contains("BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf"));
     let many = web.post("/documents/download", &[("csrf", &csrf), ("ids", &sept), ("ids", &frais), ("ids", &sept), ("ids", "junk")]);
     assert_eq!(many.header("content-type"), Some("application/zip"));
     assert!(many.header("content-disposition").unwrap().contains(".zip"));
     let mut archive = unzip(&many.body);
     archive.sort();
-    assert_eq!(archive.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(), vec!["frais.pdf", "sept.pdf"]);
+    assert_eq!(archive.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(), vec!["BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf", "FORTUNEO_COMPTE-COURANT_RECAPITULATIF-DES-FRAIS_MARTIN_PAUL_2023-12-31.pdf"]);
     assert!(archive.iter().all(|(_, data)| data.starts_with(b"%PDF"))); // asked twice, sent once
     assert!(web.post("/documents/download", &[("csrf", &csrf)]).text().contains("au moins un document"));
     assert_eq!(web.post("/documents/download", &[("ids", &sept)]).status, 403); // CSRF

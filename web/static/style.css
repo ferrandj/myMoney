@@ -271,6 +271,9 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .doc-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
 .doc-bank { border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; padding: 4px 10px; }
 .doc-bank > summary { padding: 8px 0; font-size: 1.05rem; }
+.doc-account { margin: 6px 0 6px 8px; padding-left: 10px; border-left: 3px solid var(--primary); }
+.doc-account > summary { padding: 4px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.doc-link { color: var(--primary); font-weight: 600; }
 .doc-kind { margin: 4px 0 6px 12px; border-left: 3px solid var(--border); padding-left: 10px; }
 .doc-kind > summary { padding: 4px 0; display: flex; align-items: center; gap: 8px; }
 .doc-all { margin-left: auto; font-size: .8rem; color: var(--muted); }
@@ -279,3 +282,13 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .doc-check input { width: 18px; height: 18px; }
 .fill.s0 { fill: var(--s0); } .fill.s1 { fill: var(--s1); } .fill.s2 { fill: var(--s2); } .fill.s3 { fill: var(--s3); }
 .fill.s4 { fill: var(--s4); } .fill.s5 { fill: var(--s5); } .fill.s6 { fill: var(--s6); } .fill.s7 { fill: var(--s7); }
+
+/* Holders of an account: one block per person, several boxes for names and first names */
+.holders { display: grid; gap: 10px; }
+.holder-block { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.holder-civility { max-width: 140px; }
+.holder-names { display: grid; gap: 4px; }
+.holder-label { font-size: .85rem; color: var(--muted); }
+.holder-boxes { display: flex; gap: 8px; flex-wrap: wrap; }
+.holder-boxes input { flex: 1 1 150px; min-width: 0; }
+.more-holders > summary { cursor: pointer; color: var(--primary); padding: 4px 0; }

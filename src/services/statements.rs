@@ -15,7 +15,7 @@ use crate::adapters::base::ParsedStatement;
 use crate::error::{value_err, AppError, AppResult};
 use crate::models::{account_type, Account, Document, FeeSummary, Holding, Statement, Transaction};
 use crate::py;
-use crate::services::{access, coverage, ledger, loans};
+use crate::services::{access, coverage, holders, ledger, loans, naming};
 
 pub type Form = HashMap<String, String>;
 
@@ -272,6 +272,7 @@ fn holder_unconfirmed(st: &ParsedStatement, account: Option<&Account>) -> bool {
     // Once the user has typed the full names they differ from what the bank prints: never ask again for this account.
     match account {
         None => true,
+        Some(a) if a.holders.as_ref().map(|h| !holders::from_json(h).is_empty()).unwrap_or(false) => false,
         Some(a) => match nonempty(&a.holder_name) {
             None => true,
             Some(h) => Some(h) == nonempty(&a.holder_alias).or(st.holder_name.as_deref()),
@@ -385,7 +386,8 @@ fn fill_identity(account: &mut Account, st: &ParsedStatement, latest: bool) {
     }
     // Holder and address change over time: the newest statement wins, older ones only fill the blanks. Names the
     // user completed by hand (different from the printed line) are never overwritten by the cut version of the bank.
-    let edited = matches!((nonempty(&account.holder_name), nonempty(&account.holder_alias)), (Some(a), Some(b)) if a != b);
+    let typed = account.holders.as_ref().map(|h| !holders::from_json(h).is_empty()).unwrap_or(false);
+    let edited = typed || matches!((nonempty(&account.holder_name), nonempty(&account.holder_alias)), (Some(a), Some(b)) if a != b);
     if nonempty(&st.holder_name).is_some() && (latest || nonempty(&account.holder_name).is_none()) && !edited {
         account.holder_name = st.holder_name.clone();
     }
@@ -471,6 +473,43 @@ fn lines_str(v: &Value) -> String {
 }
 
 pub fn import_statement(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: &Form) -> AppResult<Map<String, Value>> {
+    let result = import_inner(c, doc, st, form)?;
+    // imported: the file takes its standard name (the name it was dropped with is kept)
+    naming::rename_document(c, doc)?;
+    Ok(result)
+}
+
+/// An imported document read again: the blanks of its account are filled from the new reading (never overwriting what
+/// is there), and the file gets its standard name.
+pub fn refresh_identity(c: &Connection, doc: &mut Document) -> AppResult<()> {
+    let st = doc.parse_result.as_ref().and_then(|r| r.get("statements")).and_then(|s| s.as_array()).and_then(|a| a.first()).map(ParsedStatement::from_json);
+    if let (Some(account_id), Some(st)) = (doc.account_id, st) {
+        if !document_only(st.document_kind.as_deref()) || st.document_kind.as_deref() == Some("fees_summary") {
+            if let Some(mut account) = Account::get(c, account_id)? {
+                let before = account.clone();
+                fill_identity(&mut account, &st, false);
+                account.save(c, &before)?;
+            }
+        }
+    }
+    naming::rename_document(c, doc)?;
+    Ok(())
+}
+
+/// The people typed in the form become the account's holders; the line the bank prints is kept to recognise it.
+fn apply_holders(c: &Connection, account: &mut Account, st: &ParsedStatement, form: &Form) -> AppResult<()> {
+    let Some(people) = holders::from_form(form).filter(|p| !p.is_empty()) else { return Ok(()) };
+    let before = account.clone();
+    if nonempty(&st.holder_name).is_some() && nonempty(&account.holder_alias).is_none() {
+        account.holder_alias = st.holder_name.clone();
+    }
+    account.holders = Some(holders::to_json(&people));
+    account.holder_name = Some(holders::compose(&people));
+    account.save(c, &before)?;
+    Ok(())
+}
+
+fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: &Form) -> AppResult<Map<String, Value>> {
     if st.document_kind.as_deref() == Some("info") {
         return file_document(c, doc);
     }
@@ -496,6 +535,7 @@ pub fn import_statement(c: &Connection, doc: &mut Document, st: &ParsedStatement
         access::check_edit(c, a.id)?;
         a
     };
+    apply_holders(c, &mut account, st, form)?;
     match st.document_kind.as_deref() {
         Some("fees_summary") => return attach_fee_summary(c, doc, st, &mut account, form),
         k if is_loan(k) => return loans::attach(c, doc, st, &mut account, form),
@@ -511,7 +551,7 @@ pub fn import_statement(c: &Connection, doc: &mut Document, st: &ParsedStatement
     let before = account.clone();
     fill_identity(&mut account, st, latest);
     let full_names = py::split_ws(form.get("holder_name").map(|s| s.as_str()).unwrap_or("")).join(" ");
-    if !full_names.is_empty() {
+    if !full_names.is_empty() && holders::from_form(form).is_none() {
         // the user completed the names the bank cut
         account.holder_name = Some(full_names);
     }
@@ -605,6 +645,7 @@ pub fn undo_import(c: &Connection, doc: &mut Document) -> AppResult<i64> {
     doc.status = if has { "parsed".into() } else { "uploaded".into() };
     doc.account_id = None;
     doc.save(c, &before)?;
+    naming::restore_name(c, doc)?; // waiting again: it shows the name it was dropped with
     ledger::mark_internal(c)?; // a line can still be internal by its name
     Ok(removed)
 }

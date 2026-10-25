@@ -525,7 +525,7 @@ fn import_by_hand(client: &mut Client, csrf: &str, name: &str, data: &[u8], acco
 }
 
 fn statuses(client: &Client) -> std::collections::BTreeMap<String, String> {
-    db(&client.core, |c| Ok(Document::query(c, "", [])?.into_iter().map(|d| (d.filename, d.status)).collect()))
+    db(&client.core, |c| Ok(Document::query(c, "", [])?.into_iter().map(|d| (d.original_filename.clone().unwrap_or(d.filename), d.status)).collect()))
 }
 
 #[test]
@@ -562,7 +562,7 @@ fn test_web_invalidate_everything_one_institution_or_one_type() {
     });
 
     // The ticked documents.
-    let fgdr = db(&client.core, |c| Ok(Document::query_one(c, "WHERE filename = 'fgdr.pdf'", [])?.unwrap().id)).to_string();
+    let fgdr = db(&client.core, |c| Ok(Document::query_one(c, "WHERE filename = 'fgdr.pdf' OR original_filename = 'fgdr.pdf'", [])?.unwrap().id)).to_string();
     client.post("/documents/invalidate", &[("csrf", &csrf), ("ids", &fgdr)]);
     assert_eq!(statuses(&client)["fgdr.pdf"], "parsed");
     assert_eq!(statuses(&client)["septembre.pdf"], "imported");

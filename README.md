@@ -8,7 +8,10 @@ Gestionnaire de patrimoine personnel **auto-hébergé** (NAS, Docker) : comptes 
 - **Copier ses coordonnées en un clic** : sur la fiche d'un compte, un bouton « Copier » à côté du titulaire, de l'adresse, de l'IBAN (copié sans espaces), du BIC et du RIB, et « Tout copier » pour envoyer titulaire + IBAN + BIC + RIB d'un coup. Même chose pour l'IBAN des contacts. (Sans HTTPS, le navigateur interdit l'accès direct au presse-papiers : l'application passe alors par la méthode de secours, qui marche aussi.)
 - **Masquer les données sensibles** : le bouton « Masquer » de la barre du haut floute les montants, les IBAN et RIB, les noms, adresses, libellés d'opérations, noms de fichiers et les graphiques (infobulles comprises), et empêche de les sélectionner. Le mode reste actif sur l'appareil jusqu'à « Afficher ».
 - **20 styles** (bouton « Style ») : 10 clairs (Clair, Neige, Sable, Menthe, Lavande, Ciel, Rose poudré, Papier, Solarized clair, Agrume) et 10 sombres (Sombre, Minuit, Ardoise, Charbon, Forêt, Aubergine, Nord, Dracula, Solarized sombre, Noir OLED), plus « Automatique » qui suit l'appareil. Le contraste de chaque style est vérifié par les tests (texte, liens, montants, graphiques). Le choix est gardé sur l'appareil. Les couleurs sont définies dans `src/web/themes.rs`.
-- **Documents classés comme un dossier** : établissement → type de document (relevé de compte, récapitulatif des frais, offre de prêt…) → année → fichier. On clique pour déplier, on coche les fichiers voulus (ou tout un groupe) et « Télécharger la sélection » donne le fichier, ou un zip s'il y en a plusieurs.
+- **Documents classés comme un dossier** : établissement → **compte** → type de document (relevé de compte, récapitulatif des frais, offre de prêt…) → année → fichier. On clique pour déplier, on coche les fichiers voulus (ou tout un groupe) et « Télécharger la sélection » donne le fichier, ou un zip s'il y en a plusieurs. Chaque ligne affiche à gauche « Type de fichier - date » (lien bleu qui ouvre le document), et à côté les noms qui y figurent, le nom du fichier, son état et la fiabilité.
+- **Fichiers importés renommés** : à l'import, chaque fichier prend un nom standard, sans accents, en majuscules : `ETABLISSEMENT_TYPE-DE-COMPTE_TYPE-DE-FICHIER_NOM_PRENOM_AAAA-MM-JJ.extension` (les mots et la date sont séparés par des `-`, les champs par des `_`). Si le nom dépasse la taille maximale d'un nom de fichier, les prénoms sont retirés, puis tous les noms. Deux fichiers au même nom reçoivent `_2`, `_3`… Le nom d'origine est gardé (visible sur la page du document) et revient si l'import est annulé. Un changement des titulaires du compte renomme ses documents.
+- **Titulaires en plusieurs cases** : sur un compte (et dans le formulaire d'import), une civilité (M, MME, MLLE), plusieurs cases de nom, de nom de naissance (si différent) et de prénom, et autant de personnes que nécessaire pour un compte joint, pour remplir les formulaires qui demandent un seul nom ou les deux. Les cases sont préremplies d'après le nom imprimé sur le document. La fiche du compte a un bouton « Copier » pour chaque champ.
+- **« Actualiser à la dernière version »** : quand la lecture s'améliore, la page Documents repère les fichiers (validés ou non) lus par une version plus ancienne et propose un bouton pour les repasser tous dans la lecture actuelle (renommage et titulaires compris), ou un par un depuis la page du document.
 - **Où part l'argent** (Analyses → Dépenses) : chaque opération reçoit une catégorie (Courses, Restaurants, Transports, Énergie et eau, Abonnements, Santé, Impôts, Crédit, Frais bancaires…) deviné d'après le libellé et le type d'opération, sans rien envoyer à personne. On voit le total par catégorie (anneau et barres), les dépenses mois par mois, puis, en cliquant une catégorie, **chez qui** (par bénéficiaire) et **quand** (chaque opération). Si une catégorie est fausse, tu la changes pour un bénéficiaire : c'est retenu pour toutes ses opérations, y compris les prochaines (réglage personnel de chaque utilisateur ; « Automatique » le retire). « Autres dépenses » regroupe ce qui n'a pas été reconnu. Même vue pour les revenus, et un clic sur un mois de « Entrées / sorties » ouvre le détail de ce mois.
 - **« Qui est-ce ? » sans doublon** : dans la liste « À identifier », on choisit un contact déjà enregistré (la même personne avec un autre compte ou un autre nom imprimé) au lieu d'en créer un nouveau ; son nom imprimé et son IBAN sont ajoutés à ce contact.
 - **Tout est rendu cohérent et contrôlé** :
@@ -160,7 +163,8 @@ Les lectures s'améliorent (nouveaux formats, corrections). Dans **Documents →
 
 L'application est écrite en **Rust** (un seul binaire, sans dépendance à l'exécution). La version Python d'origine est
 gardée telle quelle dans [`python/`](python/), en secours et comme **référence** : la CI vérifie à chaque push que la
-version Rust lit les mêmes documents, affiche les mêmes pages et répond pareil à chaque requête.
+version Rust lit les mêmes documents et rend les mêmes gabarits, et que son application web répond sans régression
+(les nouveautés propres à Rust étant tolérées).
 
 ```bash
 cargo build --release
@@ -179,9 +183,9 @@ src/
     base.rs        contrat (Adapter, SourceDocument, ParsedStatement, TransactionData)
     registry.rs    choix automatique de l'adapter (score de chaque adapter, question à l'utilisateur en cas de doute)
     boursobank/, fortuneo/, revolut/, generic/ (OFX, QIF, CSV et PDF « devinés »)
-  services/    import (doublons, cohérence), prêts, utilisateurs, droits et partages, contacts, catégories, prix, valorisation, taux réglementés
+  services/    import (doublons, cohérence), titulaires (holders.rs), noms de fichiers standard (naming.rs), prêts, utilisateurs, droits et partages, contacts, catégories, prix, valorisation, taux réglementés
   app.rs       le cœur de l'application (coffre, documents, imports, relecture)
-  tests/       les 298 tests de la version Python, portés un à un (mêmes noms, mêmes documents fictifs, mêmes vérifications)
+  tests/       les 298 tests de la version Python, portés un à un, plus ceux des fonctions propres à Rust
   testkit/     de quoi les écrire : générateur de PDF fictifs, relevés BoursoBank/Fortuneo/prêts, client web à cookies
   web/         serveur HTTP, routes, sessions et CSRF, Cloudflare Access, graphiques SVG, thèmes, PWA,
                et un moteur de gabarits compatible Jinja2 (les gabarits de web/templates sont ceux de la version Python)
@@ -190,7 +194,7 @@ python/        la version Python d'origine (FastAPI + Jinja), avec ses tests
 tools/         comparaisons différentielles Rust ↔ Python
 ```
 
-### Vérifier que les deux versions sont identiques
+### Comparer avec la version Python
 
 Depuis `python/` (après `pip install -e ".[dev]"`), avec le binaire Rust construit :
 
@@ -198,15 +202,20 @@ Depuis `python/` (après `pip install -e ".[dev]"`), avec le binaire Rust constr
 MYMONEY_CAPTURE=/tmp/corpus PYTHONPATH=.. python -m pytest -q -p tools.capture_docs   # garde chaque document lu par les tests
 python ../tools/diff_parse.py ../target/release/mymoney $(find /tmp/corpus -type f)   # même lecture, au caractère près
 cd .. && ./tools/diff_jinja.sh                                                          # mêmes gabarits que Jinja2
-python3 tools/diff_http.py --docs /tmp/corpus --work /tmp/http --keep                 # même application, requête par requête
-python3 tools/diff_http.py --existing /tmp/http/py/data                                # Rust ouvre les données de la version Python
+python3 tools/diff_http.py --docs /tmp/corpus --work /tmp/http --keep --tolerant      # même application, requête par requête
+python3 tools/diff_http.py --existing /tmp/http/py/data --tolerant                     # Rust ouvre les données de la version Python
 python3 tools/check_test_parity.py                                                      # chaque test Python a son équivalent Rust
 ```
 
 `tools/gen_edge_cases.py` (CSV, OFX et QIF piégés) et `tools/gen_pdf_variants.py` (PDF chiffrés ou abîmés, avec pypdf)
 fabriquent d'autres documents fictifs à comparer.
 
-**Seul écart connu**, volontaire : un montant écrit en notation scientifique (`1e2` dans un OFX, ce qu'aucune banque
+Depuis que la version Rust a des fonctions que la version Python n'a pas (arbre par compte, noms de fichiers
+standard, titulaires en plusieurs cases, actualisation), la comparaison web est **tolérante** (`--tolerant`) : les
+différences sont listées, et elle n'échoue que si Rust plante (5xx) ou refuse ce que Python accepte. La lecture des
+documents (`diff_parse`) et les gabarits (`diff_jinja`) restent comparés strictement.
+
+**Écart de lecture connu**, volontaire : un montant écrit en notation scientifique (`1e2` dans un OFX, ce qu'aucune banque
 n'écrit) est gardé `1E+2` par Python et `100` par Rust. La valeur et l'affichage (« 100,00 € ») sont les mêmes.
 
 ### Écrire un adapter

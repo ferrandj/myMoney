@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import holder_fields with context %}
 {% block title %}{{ 'Modifier' if account else 'Nouveau compte' }}{% endblock %}
 {% block main_class %}narrow{% endblock %}
 {% block content %}
@@ -26,7 +27,11 @@
   <fieldset>
     <legend>Titulaire et coordonnées</legend>
     <small class="muted">Remplis automatiquement à partir des relevés importés ; corrige-les ici si besoin.</small>
-    <label>Titulaire <input name="holder_name" value="{{ account.holder_name or '' if account else '' }}" autocomplete="off"></label>
+    <div class="holders">
+      <strong>Titulaire(s)</strong>
+      <small class="muted">Une personne par bloc. Pour un compte joint, remplis aussi le cotitulaire ; plusieurs cases quand un document demande un nom ou les deux, ou plusieurs prénoms.</small>
+      {% if account %}{{ holder_fields(account.holder_blocks, account.holder_shown) }}{% else %}{{ holder_fields(BLANK_HOLDERS, 1) }}{% endif %}
+    </div>
     <label>Adresse <textarea name="holder_address" rows="2">{{ account.holder_address or '' if account else '' }}</textarea></label>
     <label>IBAN <input name="iban" value="{{ account.iban or '' if account else '' }}" autocomplete="off"></label>
     <label>BIC <input name="bic" value="{{ account.bic or '' if account else '' }}" autocomplete="off"></label>

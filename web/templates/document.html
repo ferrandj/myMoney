@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import unresolved_table, copy with context %}
+{% from "_macros.html" import unresolved_table, copy, holder_fields with context %}
 {% block title %}{{ doc.filename }}{% endblock %}
 {% block content %}
 <p><a href="/documents">← Documents</a></p>
@@ -7,7 +7,7 @@
 <p class="muted small">
   <span class="tag status-{{ doc.status }}">{{ DOCUMENT_STATUS.get(doc.status, doc.status) }}</span>
   {% if result.adapter %}Lu avec <strong>{{ adapters|selectattr('id', 'equalto', result.adapter)|map(attribute='label')|first }}</strong>{% endif %}
-  · stocké chiffré, {{ (doc.size / 1024)|round(0)|int }} Ko
+  · stocké chiffré, {{ (doc.size / 1024)|round(0)|int }} Ko{% if doc.original_filename %} · nom d'origine : <span class="sensitive">{{ doc.original_filename }}</span>{% endif %}
 </p>
 
 {% if queue %}
@@ -21,7 +21,11 @@
 </section>
 {% endif %}
 {% if not current_reading and doc.status == 'imported' %}
-<p class="card warn">Ce document a été lu par une <strong>version plus ancienne</strong> de l'application : les contrôles ci-dessous peuvent être périmés. <em>Documents → Tout relire depuis les fichiers</em> le relit avec la version actuelle.</p>
+<form method="post" action="/documents/{{ doc.id }}/refresh" class="card warn">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p>Ce document a été lu par une <strong>version plus ancienne</strong> de l'application : les contrôles ci-dessous peuvent être périmés et son nom n'est peut-être pas au format actuel. L'actualisation le relit avec la version actuelle <strong>sans toucher aux opérations</strong> déjà importées.</p>
+  <button class="btn primary">Actualiser à la dernière version</button>
+</form>
 {% endif %}
 {% if result.message %}<p class="card warn">{{ result.message }}</p>{% endif %}
 {% if result.error %}<p class="card warn">Lecture impossible : {{ result.error }}. Le document reste stocké chiffré ; tu peux choisir une autre lecture ci-dessous, ou saisir le solde à la main sur le compte.</p>{% endif %}
@@ -317,13 +321,12 @@
         {% for a in accounts %}<option value="{{ a.id }}" {% if plan.account and plan.account.id == a.id %}selected{% endif %}>{{ a.institution or '' }} · {{ a.name }}{% if a.holder_name %} · {{ a.holder_name }}{% endif %}</option>{% endfor %}
       </select>
     </label>
-    {% if plan.ask_holder %}
-    <fieldset class="ask-names">
-      <legend>Noms complets des titulaires</legend>
-      <label>Titulaire(s) <input name="holder_name" value="{{ st.holder_name }}" required autocomplete="off">
-        <small>Sur ce document la banque tronque le nom (« {{ st.holder_name }} »). Écris-le en entier, par exemple « M PRÉNOM NOM OU MME PRÉNOM NOM ». Il sert à reconnaître tes virements entre comptes et n'est demandé qu'une fois.</small></label>
+    <fieldset class="holders{{ ' ask-names' if plan.ask_holder }}">
+      <legend>Titulaire(s) du compte</legend>
+      {% if plan.ask_holder %}<small>Sur ce document la banque tronque le nom (« {{ st.holder_name }} »). Complète ici les noms et prénoms de chaque titulaire. Ils servent à reconnaître tes virements entre comptes et ne sont demandés qu'une fois.</small>
+      {% else %}<small class="muted">Préremplis d'après le document : corrige si besoin. Pour un compte joint, ajoute le cotitulaire ; plusieurs cases quand un document demande un nom ou les deux, ou plusieurs prénoms.</small>{% endif %}
+      {{ holder_fields(plan.holder_blocks, plan.holder_shown, plan.ask_holder) }}
     </fieldset>
-    {% endif %}
     <fieldset class="new-account">
       <legend>Nouveau compte</legend>
       <label>Nom <input name="name" value="{{ st.account_label or '' }}"></label>

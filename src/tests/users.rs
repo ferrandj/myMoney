@@ -234,7 +234,7 @@ fn test_documents_follow_the_same_rules() {
     });
     access::as_user(Some(identity(&core, BOB)), || {
         assert!(core.document_visible(doc).unwrap());
-        assert_eq!(core.read_document(doc).unwrap().0, "releve.pdf");
+        assert_eq!(core.read_document(doc).unwrap().0, "BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf");
         denied(core.delete_document(doc), "");
         denied(core.undo_import(doc), "");
     });
@@ -536,7 +536,7 @@ fn test_web_documents_are_private_to_their_owner_and_to_those_the_account_is_sha
     let doc: i64 = Regex::new(r"/documents/(\d+)").unwrap().captures(&up.url).unwrap()[1].parse().unwrap();
     let imported = web.post(&format!("/documents/{doc}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Courant"), ("import_transactions", "on")]);
     let account: i64 = Regex::new(r"/accounts/(\d+)").unwrap().captures(&imported.url).unwrap()[1].parse().unwrap();
-    assert!(web.get("/documents").text().contains("secret.pdf") && !bob.get("/documents").text().contains("secret.pdf"));
+    assert!(web.get("/documents").text().contains("BOURSOBANK_COMPTE-COURANT_RELEVE-DE-COMPTE_DUPONT_JEAN_2026-09-30.pdf") && !bob.get("/documents").text().contains("DUPONT"));
     assert_eq!(bob.get(&format!("/documents/{doc}")).status, 404);
     assert_eq!(bob.get(&format!("/documents/{doc}/download")).status, 404);
     assert_eq!(bob.post(&format!("/documents/{doc}/delete"), &[("csrf", &bob_csrf)]).status, 404);

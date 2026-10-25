@@ -98,9 +98,12 @@ pub(crate) fn create_all(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Columns added since the Python models were frozen (nullable, so the Python version still opens the same database).
+const EXTRA_COLUMNS: &[(&str, &str, &str, bool)] = &[("accounts", "holders", "TEXT", true), ("documents", "original_filename", "VARCHAR(300)", true)];
+
 /// Light schema upgrade: a database created by an older version gets the columns added since (all nullable).
 pub(crate) fn add_missing_columns(c: &Connection) -> rusqlite::Result<()> {
-    for (table, column, sqltype, nullable) in schema::COLUMNS {
+    for (table, column, sqltype, nullable) in schema::COLUMNS.iter().chain(EXTRA_COLUMNS) {
         if !nullable || !table_exists(c, table)? {
             continue;
         }

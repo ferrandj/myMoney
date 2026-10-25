@@ -56,3 +56,41 @@
 </table></div>
 {% if items|length > limit %}<p class="small muted">{{ items|length - limit }} autre(s) sur la page <a href="/contacts">Contacts</a>.</p>{% endif %}
 {% endmacro %}
+
+{# One person behind an account: civility, last name(s), birth name(s) when different, first name(s). Several boxes each, because documents ask for one name or both. #}
+{% macro holder_block(b, required=False) %}
+<div class="holder-block">
+  <label class="holder-civility">Civilité
+    <select name="holder_{{ b.index }}_civility">
+      <option value="">—</option>
+      {% for c in ['M', 'MME', 'MLLE'] %}<option value="{{ c }}" {% if b.civility == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select>
+  </label>
+  <div class="holder-names">
+    <span class="holder-label">Nom <small>(un ou deux, selon ce que demande le document)</small></span>
+    <span class="holder-boxes">{% for v in b.last %}<input name="holder_{{ b.index }}_last_{{ loop.index0 }}" value="{{ v }}" placeholder="Nom {{ loop.index }}" autocomplete="off" aria-label="Nom {{ loop.index }}" {% if required and loop.first %}required{% endif %}>{% endfor %}</span>
+  </div>
+  <div class="holder-names">
+    <span class="holder-label">Nom de naissance <small>(si différent)</small></span>
+    <span class="holder-boxes">{% for v in b.birth %}<input name="holder_{{ b.index }}_birth_{{ loop.index0 }}" value="{{ v }}" placeholder="Nom de naissance {{ loop.index }}" autocomplete="off" aria-label="Nom de naissance {{ loop.index }}">{% endfor %}</span>
+  </div>
+  <div class="holder-names">
+    <span class="holder-label">Prénom(s)</span>
+    <span class="holder-boxes">{% for v in b.first %}<input name="holder_{{ b.index }}_first_{{ loop.index0 }}" value="{{ v }}" placeholder="Prénom {{ loop.index }}" autocomplete="off" aria-label="Prénom {{ loop.index }}">{% endfor %}</span>
+  </div>
+</div>
+{% endmacro %}
+
+{# The holders of an account, one block per person; `shown` blocks are open, the others wait behind "ajouter un cotitulaire". #}
+{% macro holder_fields(blocks, shown, required=False) %}
+{% for b in blocks %}{% if loop.index0 < shown %}
+{{ holder_block(b, required and loop.first) }}
+{% endif %}{% endfor %}
+{% if blocks|length > shown %}
+<details class="more-holders"><summary>Ajouter un cotitulaire (compte joint)</summary>
+{% for b in blocks %}{% if loop.index0 >= shown %}
+{{ holder_block(b, False) }}
+{% endif %}{% endfor %}
+</details>
+{% endif %}
+{% endmacro %}

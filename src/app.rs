@@ -25,7 +25,7 @@ use crate::security::keystore::Keystore;
 use crate::security::vault::{Vault, VaultError};
 use crate::services::access::{self, Identity};
 use crate::services::statements::{self as statement_service, Form, ImportPlan};
-use crate::services::{ledger, loans as loan_service, prices::PriceService, users as user_service, valuation::{AccountValue, Valuator}};
+use crate::services::{holders, ledger, loans as loan_service, naming, prices::PriceService, users as user_service, valuation::{AccountValue, Valuator}};
 
 /// how long a duplicate set aside waits for the user's decision
 pub const QUARANTINE_HOURS: i64 = 24;
@@ -505,11 +505,18 @@ impl MyMoney {
                     *field = Some(py::strip(v).to_string()).filter(|s| !s.is_empty());
                 }
             }
+            if let Some(people) = holders::from_form(data) {
+                // the holders typed in the form (one block per person) are the truth; the single line is derived from them
+                account.holders = if people.is_empty() { None } else { Some(holders::to_json(&people)) };
+                account.holder_name = Some(holders::compose(&people)).filter(|s| !s.is_empty());
+            }
             account.notes = get("notes").filter(|s| !s.is_empty());
             account.archived = get("archived").as_deref() == Some("on");
             match before {
                 Some(b) => {
                     account.save(c, &b)?;
+                    // its documents carry its institution, type and holders in their name
+                    naming::rename_account_documents(c, account.id)?;
                 }
                 None => {
                     account.insert(c)?;
@@ -605,15 +612,9 @@ impl MyMoney {
         })
     }
 
-    /// Find the adapter for a stored document (or use the one the user chose) and parse it. Returns its status.
-    pub fn analyze_document(&self, doc_id: i64, adapter_id: Option<&str>, data: Option<Vec<u8>>) -> AppResult<String> {
-        self.session(|c| self.doc(c, doc_id, true).map(|_| ()))?;
-        let (filename, data) = match data {
-            Some(d) => (self.filename(doc_id)?, d),
-            None => self.read_document(doc_id)?,
-        };
-        let source = SourceDocument::new(&filename, data);
-        let found = identify(&source);
+    /// What the adapters make of a file: the stored result, the status it leads to, the kind of document, the adapter used.
+    fn read_source(doc_id: i64, adapter_id: Option<&str>, source: &SourceDocument) -> (Map<String, Value>, String, String, Option<String>) {
+        let found = identify(source);
         let mut result = Map::new();
         result.insert("decision".into(), (if adapter_id.is_some() { "chosen" } else { found.decision }).into());
         result.insert("message".into(), (if adapter_id.is_some() { String::new() } else { found.message.clone() }).into());
@@ -629,7 +630,7 @@ impl MyMoney {
                 result.insert("error".into(), found.message.clone().into());
             }
             Some(id) => {
-                let parsed = get_adapter(id).and_then(|a| parse_with(a.id(), &source).map(|s| (a, s)));
+                let parsed = get_adapter(id).and_then(|a| parse_with(a.id(), source).map(|s| (a, s)));
                 match parsed {
                     Ok((a, statements)) => {
                         result.insert("adapter".into(), id.clone().into());
@@ -645,6 +646,18 @@ impl MyMoney {
                 }
             }
         }
+        (result, status, kind, chosen)
+    }
+
+    /// Find the adapter for a stored document (or use the one the user chose) and parse it. Returns its status.
+    pub fn analyze_document(&self, doc_id: i64, adapter_id: Option<&str>, data: Option<Vec<u8>>) -> AppResult<String> {
+        self.session(|c| self.doc(c, doc_id, true).map(|_| ()))?;
+        let (filename, data) = match data {
+            Some(d) => (self.filename(doc_id)?, d),
+            None => self.read_document(doc_id)?,
+        };
+        let source = SourceDocument::new(&filename, data);
+        let (result, status, kind, chosen) = Self::read_source(doc_id, adapter_id, &source);
         self.session(|c| {
             let mut doc = Document::get(c, doc_id)?.ok_or_else(|| AppError::Other("document".into()))?;
             let before = doc.clone();
@@ -658,7 +671,6 @@ impl MyMoney {
         Ok(status)
     }
 
-    /// The document, if the current user may open it (or change it, with `edit`).
     pub fn doc(&self, c: &Connection, doc_id: i64, edit: bool) -> AppResult<Document> {
         access::check_document(c, Document::get(c, doc_id)?, edit)
     }
@@ -862,6 +874,78 @@ impl MyMoney {
 
     pub fn reading_is_current(&self, doc: &Document) -> bool {
         result_str(doc, "reader").as_deref() == Some(reader_version())
+    }
+
+    /// Documents read by an older version of the reading code than the current one, validated or not (the duplicates
+    /// set aside are about to disappear and are left out).
+    pub fn stale_documents(&self) -> AppResult<Vec<Document>> {
+        self.session(|c| {
+            let mut out = vec![];
+            for d in access::visible_documents(c)? {
+                // only the ones the user may change
+                if d.status != "duplicate" && result_str(&d, "reader").as_deref() != Some(reader_version()) && access::check_document(c, Some(d.clone()), true).is_ok() {
+                    out.push(d);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// Bring one document to the latest version of the analysis. A waiting document is read again like a new one. A
+    /// validated one is read again too, but keeps its status, its account and its operations: only what the reading
+    /// says (and what is derived from it: the account's blanks, the standard file name) is brought up to date; to take
+    /// the operations from the new reading, invalidate the import and validate it again. The user's choice of reading
+    /// stays. Returns "relu" when the document was read again.
+    pub fn refresh_document(&self, doc_id: i64) -> AppResult<&'static str> {
+        let (status, chosen) = self.session(|c| {
+            let doc = self.doc(c, doc_id, true)?;
+            let chosen = if result_str(&doc, "decision").as_deref() == Some("chosen") { result_str(&doc, "adapter") } else { None };
+            Ok((doc.status.clone(), chosen))
+        })?;
+        if ["parsed", "needs_choice", "failed", "uploaded"].contains(&status.as_str()) {
+            if self.analyze_document(doc_id, chosen.as_deref(), None)? == "parsed" {
+                self.check_duplicate(doc_id)?;
+            }
+            return Ok("relu");
+        }
+        let (filename, data) = self.read_document(doc_id)?;
+        let source = SourceDocument::new(&filename, data);
+        let (mut result, new_status, kind, adapter) = Self::read_source(doc_id, chosen.as_deref(), &source);
+        if new_status != "parsed" {
+            return value_err("La lecture actuelle n'arrive pas à relire ce document : l'ancienne lecture est conservée");
+        }
+        self.session(|c| {
+            let mut doc = self.doc(c, doc_id, true)?;
+            let before = doc.clone();
+            if let Some(replaced) = doc.parse_result.as_ref().and_then(|r| r.get("replaced")).cloned() {
+                result.insert("replaced".into(), replaced);
+            }
+            doc.parse_result = Some(Value::Object(result.clone()));
+            doc.adapter_id = adapter.clone();
+            doc.kind = kind.clone();
+            doc.save(c, &before)?;
+            if doc.status == "imported" {
+                statement_service::refresh_identity(c, &mut doc)?;
+            }
+            Ok(())
+        })?;
+        Ok("relu")
+    }
+
+    /// Bring every stale document (or the given ones) to the latest version. Returns (done, failed).
+    pub fn refresh_documents(&self, only: Option<&[i64]>) -> AppResult<(usize, usize)> {
+        let ids: Vec<i64> = self.stale_documents()?.into_iter().map(|d| d.id).filter(|i| only.map(|o| o.contains(i)).unwrap_or(true)).collect();
+        let (mut done, mut failed) = (0, 0);
+        for id in ids {
+            match self.refresh_document(id) {
+                Ok(_) => done += 1,
+                Err(e) => {
+                    log::warn!("Actualisation de {id} impossible : {e}");
+                    failed += 1;
+                }
+            }
+        }
+        Ok((done, failed))
     }
 
     /// Everything the review page shows: what was understood, and what importing it would do.

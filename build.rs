@@ -1,5 +1,5 @@
-//! Build-time facts: the fingerprint of the reading code (every adapter and the PDF reader), which a document
-//! remembers so that a reading made by older code is redone.
+//! Build-time facts: the fingerprint of the reading code (every adapter, the PDF reader, and the rules that name the
+//! people and the files), which a document remembers so that a reading made by older code is redone.
 
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -22,6 +22,10 @@ fn main() {
     for dir in ["adapters", "pdf"] {
         files(&src.join(dir), &mut all);
         println!("cargo:rerun-if-changed=src/{dir}");
+    }
+    for file in ["services/naming.rs", "services/holders.rs"] {
+        all.push(src.join(file));
+        println!("cargo:rerun-if-changed=src/{file}");
     }
     let mut rel: Vec<(String, PathBuf)> = all.into_iter().map(|p| (p.strip_prefix(src).unwrap().to_string_lossy().replace('\\', "/"), p)).collect();
     rel.sort();
