@@ -100,7 +100,7 @@ impl Page {
 pub struct Client {
     pub web: Arc<Web>,
     pub core: Arc<MyMoney>,
-    pub dir: Dir,
+    pub dir: Arc<Dir>,
     pub cookie: Option<String>,
     pub headers: Vec<(String, String)>,
 }
@@ -114,7 +114,7 @@ pub fn client_with(dir: Dir, tweak: impl FnOnce(Settings) -> Settings) -> Client
     let settings = tweak(settings(&dir));
     let core = MyMoney::new(settings).unwrap();
     let web = Web::new(core.clone()).unwrap();
-    Client { web, core, dir, cookie: None, headers: vec![] }
+    Client { web, core, dir: Arc::new(dir), cookie: None, headers: vec![] }
 }
 
 pub struct Upload<'a> {
@@ -134,6 +134,11 @@ fn split_url(url: &str) -> (String, String) {
 }
 
 impl Client {
+    /// Another browser on the same application (its own cookie).
+    pub fn another(&self) -> Client {
+        Client { web: self.web.clone(), core: self.core.clone(), dir: self.dir.clone(), cookie: None, headers: vec![] }
+    }
+
     pub fn send(&mut self, method: &str, url: &str, body: Vec<u8>, content_type: Option<&str>, extra: &[(&str, &str)]) -> Page {
         let (path, query) = split_url(url);
         let mut headers = self.headers.clone();

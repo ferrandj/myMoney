@@ -4,3 +4,5 @@ mod adapters_generic;
 mod boursobank;
 mod fortuneo;
 mod import_flow;
+mod loans;
+mod users;

@@ -153,6 +153,14 @@ impl MyMoney {
         self.db.session(f)
     }
 
+    /// The tests forget the failed logins (`core._failed_logins, core._next_login_at = 0, 0.0`).
+    #[cfg(test)]
+    pub fn reset_throttle(&self) {
+        let mut t = self.throttle.lock().unwrap();
+        t.failed = 0;
+        t.next_at = Instant::now();
+    }
+
     // ------------------------------------------------------------ security
 
     fn check_throttle(&self) -> AppResult<()> {
