@@ -1,10 +1,12 @@
 pub mod adapters;
+pub mod app;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod models;
 pub mod pdf;
 pub mod py;
+pub mod scenario;
 pub mod schema;
 pub mod security;
 pub mod services;
@@ -37,6 +39,8 @@ fn main() {
                 Ok(())
             }).unwrap();
         }
+    } else if args.len() >= 4 && args[1] == "scenario" {
+        std::process::exit(scenario::main(&args[2], &args[3]));
     } else if args.len() >= 3 && args[1] == "parse" {
         // identify + parse_with, as JSON, for comparing with the Python reader
         let data = std::fs::read(&args[2]).expect("read");

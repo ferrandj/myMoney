@@ -245,6 +245,205 @@ pub fn dec_parse(s: &str) -> Option<Decimal> {
     Some(signed_zero(d, t))
 }
 
+// ------------------------------------------------------------------------- decimal arithmetic
+
+const PREC: usize = 28;
+
+fn parts(d: &Decimal) -> (bool, num_bigint::BigUint, i64) {
+    (d.is_sign_negative(), num_bigint::BigUint::from(d.mantissa().unsigned_abs()), -(d.scale() as i64))
+}
+
+fn pow10(n: u32) -> num_bigint::BigUint {
+    num_bigint::BigUint::from(10u32).pow(n)
+}
+
+/// Round a coefficient to `PREC` digits, half to even (decimal's `_fix` under the default context).
+fn fix(coeff: num_bigint::BigUint, exp: i64) -> (num_bigint::BigUint, i64) {
+    use num_traits::{One, Zero};
+    let digits = coeff.to_string().len();
+    if coeff.is_zero() || digits <= PREC {
+        return (coeff, exp);
+    }
+    let drop = (digits - PREC) as u32;
+    let div = pow10(drop);
+    let (mut q, r) = (&coeff / &div, &coeff % &div);
+    let half = &div / num_bigint::BigUint::from(2u32);
+    let odd = (&q % num_bigint::BigUint::from(2u32)).is_one();
+    if r > half || (r == half && odd) {
+        q += num_bigint::BigUint::one();
+    }
+    // a carry can make it PREC + 1 digits (999.. -> 1000..)
+    if q.to_string().len() > PREC {
+        return (q / num_bigint::BigUint::from(10u32), exp + drop as i64 + 1);
+    }
+    (q, exp + drop as i64)
+}
+
+/// Back to rust_decimal (a positive exponent becomes plain digits; more than 28 decimals are rounded half to even).
+fn build(neg: bool, coeff: num_bigint::BigUint, exp: i64) -> Decimal {
+    use num_traits::ToPrimitive;
+    let (coeff, scale) = if exp > 0 {
+        (coeff * pow10(exp as u32), 0u32)
+    } else if exp < -28 {
+        let drop = (-exp - 28) as u32;
+        let div = pow10(drop);
+        let (q, r) = (&coeff / &div, &coeff % &div);
+        let half = &div / num_bigint::BigUint::from(2u32);
+        let odd = (&q % num_bigint::BigUint::from(2u32)) == num_bigint::BigUint::from(1u32);
+        let q = if r > half || (r == half && odd) { q + num_bigint::BigUint::from(1u32) } else { q };
+        (q, 28)
+    } else {
+        (coeff, (-exp) as u32)
+    };
+    let m = coeff.to_i128().unwrap_or(i128::MAX);
+    let mut d = Decimal::try_from_i128_with_scale(if neg { -m } else { m }, scale).unwrap_or(Decimal::MAX);
+    if neg && d.is_zero() {
+        d.set_sign_negative(true);
+    }
+    d
+}
+
+/// A decimal as Python's `decimal` holds it (any exponent), for chains of operations whose intermediate results
+/// rust_decimal cannot hold (more than 28 decimals).
+#[derive(Clone, Debug)]
+pub struct PyDec {
+    neg: bool,
+    coeff: num_bigint::BigUint,
+    exp: i64,
+}
+
+impl PyDec {
+    pub fn from(d: &Decimal) -> PyDec {
+        let (neg, coeff, exp) = parts(d);
+        PyDec { neg, coeff, exp }
+    }
+
+    pub fn int(n: i64) -> PyDec {
+        PyDec::from(&Decimal::from(n))
+    }
+
+    /// `self / other` (28 significant digits, half to even, the ideal exponent when exact). None for a zero divisor.
+    pub fn div(&self, other: &PyDec) -> Option<PyDec> {
+        use num_traits::Zero;
+        if other.coeff.is_zero() {
+            return None;
+        }
+        let neg = self.neg != other.neg;
+        if self.coeff.is_zero() {
+            return Some(PyDec { neg, coeff: self.coeff.clone(), exp: self.exp - other.exp });
+        }
+        let shift = other.coeff.to_string().len() as i64 - self.coeff.to_string().len() as i64 + PREC as i64 + 1;
+        let mut exp = self.exp - other.exp - shift;
+        let (mut coeff, rem) = if shift >= 0 {
+            let n = &self.coeff * pow10(shift as u32);
+            (&n / &other.coeff, &n % &other.coeff)
+        } else {
+            let d = &other.coeff * pow10((-shift) as u32);
+            (&self.coeff / &d, &self.coeff % &d)
+        };
+        if !rem.is_zero() {
+            // not exact: make sure the rounding sees it
+            if (&coeff % num_bigint::BigUint::from(5u32)).is_zero() {
+                coeff += num_bigint::BigUint::from(1u32);
+            }
+        } else {
+            let ideal = self.exp - other.exp;
+            while exp < ideal && (&coeff % num_bigint::BigUint::from(10u32)).is_zero() {
+                coeff /= num_bigint::BigUint::from(10u32);
+                exp += 1;
+            }
+        }
+        let (coeff, exp) = fix(coeff, exp);
+        Some(PyDec { neg, coeff, exp })
+    }
+
+    /// `self * other` (exact, then 28 significant digits).
+    pub fn mul(&self, other: &PyDec) -> PyDec {
+        let (coeff, exp) = fix(&self.coeff * &other.coeff, self.exp + other.exp);
+        PyDec { neg: self.neg != other.neg, coeff, exp }
+    }
+
+    pub fn to_decimal(&self) -> Decimal {
+        build(self.neg, self.coeff.clone(), self.exp)
+    }
+
+    /// `str(Decimal)`.
+    pub fn py_str(&self) -> String {
+        let digits = self.coeff.to_string();
+        let n = digits.len() as i64;
+        let leftdigits = self.exp + n;
+        let dotplace = if self.exp <= 0 && leftdigits > -6 { leftdigits } else { 1 };
+        let (intpart, fracpart) = if dotplace <= 0 {
+            ("0".to_string(), format!(".{}{}", "0".repeat((-dotplace) as usize), digits))
+        } else if dotplace >= n {
+            (format!("{}{}", digits, "0".repeat((dotplace - n) as usize)), String::new())
+        } else {
+            (digits[..dotplace as usize].to_string(), format!(".{}", &digits[dotplace as usize..]))
+        };
+        let exp = if leftdigits == dotplace { String::new() } else { format!("E{:+}", leftdigits - dotplace) };
+        format!("{}{intpart}{fracpart}{exp}", if self.neg { "-" } else { "" })
+    }
+
+    /// `float(Decimal)`: the closest double.
+    pub fn to_f64(&self) -> f64 {
+        self.py_str().parse().unwrap_or(0.0)
+    }
+
+    pub fn is_zero(&self) -> bool {
+        use num_traits::Zero;
+        self.coeff.is_zero()
+    }
+}
+
+/// `a / b` with Python's decimal. None for b = 0.
+pub fn py_div(a: &Decimal, b: &Decimal) -> Option<Decimal> {
+    PyDec::from(a).div(&PyDec::from(b)).map(|q| q.to_decimal())
+}
+
+/// `a * b` with Python's decimal (exact, then 28 significant digits).
+pub fn py_mul(a: &Decimal, b: &Decimal) -> Decimal {
+    PyDec::from(a).mul(&PyDec::from(b)).to_decimal()
+}
+
+/// `str(Decimal(d).normalize())`: trailing zeros dropped, a positive exponent written out ("100" is "1E+2").
+pub fn dec_normalize_str(d: &Decimal) -> String {
+    let neg = d.is_sign_negative();
+    let mut digits = d.mantissa().unsigned_abs().to_string();
+    let mut exp: i64 = -(d.scale() as i64);
+    if digits == "0" {
+        return if neg { "-0".into() } else { "0".into() };
+    }
+    while digits.len() > 1 && digits.ends_with('0') {
+        digits.pop();
+        exp += 1;
+    }
+    let sign = if neg { "-" } else { "" };
+    let n = digits.len() as i64;
+    let adjusted = exp + n - 1;
+    if exp <= 0 && adjusted >= -6 {
+        if exp == 0 {
+            return format!("{sign}{digits}");
+        }
+        let point = n + exp; // digits before the point
+        return if point > 0 {
+            format!("{sign}{}.{}", &digits[..point as usize], &digits[point as usize..])
+        } else {
+            format!("{sign}0.{}{}", "0".repeat((-point) as usize), digits)
+        };
+    }
+    let mut out = format!("{sign}{}", &digits[..1]);
+    if n > 1 {
+        out.push('.');
+        out.push_str(&digits[1..]);
+    }
+    out.push('E');
+    if adjusted >= 0 {
+        out.push('+');
+    }
+    out.push_str(&adjusted.to_string());
+    out
+}
+
 /// Python keeps the sign of "-0.00"; rust_decimal reads it as a plain zero.
 pub fn signed_zero(d: Decimal, text: &str) -> Decimal {
     if d.is_zero() && text.starts_with('-') && !d.is_sign_negative() {
@@ -464,6 +663,26 @@ mod tests {
         assert_eq!(dec_str(&Decimal::from_str("-0.99").unwrap()), "-0.99");
         assert_eq!(dec_str(&Decimal::from_str("0.0000001").unwrap()), "1E-7");
         assert_eq!(dec_str(&Decimal::from_str("0.000001").unwrap()), "0.000001");
+    }
+
+    #[test]
+    fn normalize_like_python() {
+        for (a, b) in [("100", "1E+2"), ("12.50", "12.5"), ("0.00", "0"), ("1200.00", "1.2E+3"), ("0.0000001", "1E-7"), ("-5", "-5"), ("0.001", "0.001"), ("-12.340", "-12.34")] {
+            assert_eq!(dec_normalize_str(&Decimal::from_str(a).unwrap()), b);
+        }
+    }
+
+    #[test]
+    fn arithmetic_like_python() {
+        let d = |s: &str| Decimal::from_str(s).unwrap();
+        for (a, b, q) in [("10", "3", "3.333333333333333333333333333"), ("1.00", "2", "0.50"), ("100", "4", "25"), ("1", "3", "0.3333333333333333333333333333"), ("12.50", "12.50", "1"), ("-7", "2", "-3.5"), ("2", "3", "0.6666666666666666666666666667")] {
+            assert_eq!(dec_str(&py_div(&d(a), &d(b)).unwrap()), q, "{a}/{b}");
+        }
+        assert_eq!(dec_str(&py_mul(&d("1.5"), &d("2.25"))), "3.375");
+        let share = PyDec::from(&d("12.34")).div(&PyDec::from(&d("311616.21"))).unwrap().mul(&PyDec::int(100));
+        assert_eq!(share.py_str(), "0.003959999385141100329793498227");
+        assert_eq!(PyDec::from(&d("1E+2")).py_str(), "100");
+        assert_eq!(dec_str(&py_mul(&d("3.3333333333333333333333333333"), &d("3"))), "10.00000000000000000000000000");
     }
 
     #[test]

@@ -11,35 +11,41 @@ use crate::schema;
 pub struct Database {
     pub path: PathBuf,
     conn: Mutex<Option<Connection>>,
+    /// A second connection, for reads that Python made in a session of their own (the price cache, read while
+    /// a portfolio is being computed in the main one).
+    reader: Mutex<Option<Connection>>,
 }
 
 impl Database {
     pub fn new(path: PathBuf) -> Self {
-        Database { path, conn: Mutex::new(None) }
+        Database { path, conn: Mutex::new(None), reader: Mutex::new(None) }
     }
 
     /// Open with the raw 256-bit key (SQLCipher skips its own KDF: the key already comes from Argon2id).
     pub fn open(&self, key: &[u8]) -> Result<(), String> {
-        let conn = Connection::open(&self.path).map_err(|e| e.to_string())?;
-        let hex_key = hex::encode(key);
-        conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\";")).map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA cipher_memory_security = ON;").map_err(|e| e.to_string())?;
-        // Fails here (instead of later) when the key is wrong or the file is corrupted.
-        conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;").map_err(|e| e.to_string())?;
-        conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())).map_err(|e| e.to_string())?;
+        let conn = connect(&self.path, key)?;
         create_all(&conn).map_err(|e| e.to_string())?;
         add_missing_columns(&conn).map_err(|e| e.to_string())?;
+        let reader = connect(&self.path, key)?;
         *self.conn.lock().unwrap() = Some(conn);
+        *self.reader.lock().unwrap() = Some(reader);
         Ok(())
     }
 
     pub fn close(&self) {
         self.conn.lock().unwrap().take();
+        self.reader.lock().unwrap().take();
     }
 
     pub fn is_open(&self) -> bool {
         self.conn.lock().unwrap().is_some()
+    }
+
+    /// A read on the second connection: it sees what is committed, like a separate session.
+    pub fn read<T>(&self, f: impl FnOnce(&Connection) -> AppResult<T>) -> AppResult<T> {
+        let guard = self.reader.lock().unwrap();
+        let conn = guard.as_ref().ok_or(AppError::Locked)?;
+        f(conn)
     }
 
     /// Run `f` in a transaction: committed when it returns Ok, rolled back otherwise (the Python session).
@@ -59,6 +65,19 @@ impl Database {
             }
         }
     }
+}
+
+fn connect(path: &std::path::Path, key: &[u8]) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| e.to_string())?;
+    let hex_key = hex::encode(key);
+    conn.execute_batch(&format!("PRAGMA key = \"x'{hex_key}'\";")).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA cipher_memory_security = ON;").map_err(|e| e.to_string())?;
+    // Fails here (instead of later) when the key is wrong or the file is corrupted.
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;").map_err(|e| e.to_string())?;
+    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(())).map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(|e| e.to_string())?;
+    Ok(conn)
 }
 
 fn table_exists(c: &Connection, name: &str) -> rusqlite::Result<bool> {

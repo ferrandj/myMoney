@@ -1,3 +1,12 @@
 pub mod access;
+pub mod analytics;
+pub mod categories;
+pub mod counterparties;
+pub mod coverage;
+pub mod ledger;
+pub mod loans;
+pub mod prices;
 pub mod rates;
+pub mod statements;
 pub mod users;
+pub mod valuation;

@@ -37,6 +37,10 @@ pub fn parse_date(s: &str) -> Option<NaiveDate> {
 pub trait Col: Sized {
     fn to_sql(&self) -> SqlValue;
     fn from_sql(v: ValueRef) -> Self;
+    /// SQLAlchemy's `compare_values`: an attribute set to an equal value is no change (no UPDATE for it).
+    fn same(&self, other: &Self) -> bool {
+        self.to_sql() == other.to_sql()
+    }
 }
 
 fn text_of(v: ValueRef) -> Option<String> {
@@ -108,6 +112,9 @@ impl Col for Decimal {
     fn from_sql(v: ValueRef) -> Self {
         text_of(v).and_then(|t| py::dec_parse(&t)).unwrap_or_default()
     }
+    fn same(&self, other: &Self) -> bool {
+        self == other
+    }
 }
 
 impl Col for Option<Decimal> {
@@ -116,6 +123,9 @@ impl Col for Option<Decimal> {
     }
     fn from_sql(v: ValueRef) -> Self {
         text_of(v).and_then(|t| py::dec_parse(&t))
+    }
+    fn same(&self, other: &Self) -> bool {
+        self == other
     }
 }
 
@@ -155,18 +165,23 @@ impl Col for Option<NaiveDateTime> {
     }
 }
 
+/// JSON columns have three states, as with SQLAlchemy: never set (`None`, SQL NULL: the column was left out of the
+/// INSERT), set to Python None (`Some(Value::Null)`, stored as the JSON text "null"), or a value.
 impl Col for Json {
     fn to_sql(&self) -> SqlValue {
-        // SQLAlchemy's JSON type stores Python None as the JSON text "null".
-        SqlValue::Text(py::json_dumps(self.as_ref().unwrap_or(&Value::Null)))
+        match self {
+            None => SqlValue::Null,
+            Some(v) => SqlValue::Text(py::json_dumps(v)),
+        }
     }
     fn from_sql(v: ValueRef) -> Self {
         let t = text_of(v)?;
-        match serde_json::from_str::<Value>(&t) {
-            Ok(Value::Null) => None,
-            Ok(v) => Some(v),
-            Err(_) => None,
-        }
+        serde_json::from_str::<Value>(&t).ok()
+    }
+    /// Python reads both NULL and "null" as None: setting None over either is no change.
+    fn same(&self, other: &Self) -> bool {
+        let norm = |v: &Self| v.clone().filter(|x| !x.is_null());
+        norm(self) == norm(other)
     }
 }
 
@@ -235,6 +250,39 @@ macro_rules! table {
                 vals.push(SqlValue::Integer(self.id));
                 c.execute(&format!("UPDATE {} SET {} WHERE id = ?", $table, sets.join(", ")), params_from_iter(vals))?;
                 Ok(())
+            }
+
+            /// Write the columns that changed since `before` (SQLAlchemy's flush): nothing at all when none did,
+            /// and only then is `updated_at` refreshed. Returns whether a row was written.
+            pub fn save(&mut self, c: &Connection, before: &Self) -> rusqlite::Result<bool> {
+                let mut sets: Vec<String> = vec![];
+                let mut vals: Vec<SqlValue> = vec![];
+                $(
+                    if !Col::same(&self.$field, &before.$field) {
+                        sets.push(format!("\"{}\" = ?", stringify!($field)));
+                        vals.push(Col::to_sql(&self.$field));
+                    }
+                )*
+                if sets.is_empty() {
+                    return Ok(false);
+                }
+                if $touch {
+                    self.touch();
+                    if let Some(i) = Self::COLUMNS.iter().position(|c| *c == "updated_at") {
+                        let v = self.values().swap_remove(i);
+                        let name = "\"updated_at\" = ?".to_string();
+                        match sets.iter().position(|s| *s == name) {
+                            Some(p) => vals[p] = v,
+                            None => {
+                                sets.push(name);
+                                vals.push(v);
+                            }
+                        }
+                    }
+                }
+                vals.push(SqlValue::Integer(self.id));
+                c.execute(&format!("UPDATE {} SET {} WHERE id = ?", $table, sets.join(", ")), params_from_iter(vals))?;
+                Ok(true)
             }
 
             pub fn get(c: &Connection, id: i64) -> rusqlite::Result<Option<Self>> {

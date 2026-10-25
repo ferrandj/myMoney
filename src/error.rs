@@ -29,8 +29,17 @@ impl std::fmt::Display for AppError {
 impl std::error::Error for AppError {}
 
 impl From<rusqlite::Error> for AppError {
+    /// As SQLAlchemy words it (its first line: the SQL and parameters it adds are left out).
     fn from(e: rusqlite::Error) -> Self {
-        AppError::Other(format!("Base de données : {e}"))
+        let kind = match &e {
+            rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => "IntegrityError",
+            _ => "OperationalError",
+        };
+        let msg = match &e {
+            rusqlite::Error::SqliteFailure(_, Some(m)) => m.clone(),
+            other => other.to_string(),
+        };
+        AppError::Other(format!("(sqlcipher3.dbapi2.{kind}) {msg}"))
     }
 }
 
