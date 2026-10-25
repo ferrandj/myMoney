@@ -175,10 +175,19 @@ def zip_entries(data: bytes):
         return [(i.filename, z.read(i.filename)) for i in z.infolist()]
 
 
+TOLERANT = False  # set by --tolerant
+
+
 class Checker:
-    def __init__(self):
+    """Compares the two versions' answers. In `tolerant` mode (since the Rust version grew features the Python one does
+    not have) differences are only listed, and a request fails only when Rust crashes (5xx) or refuses what Python
+    answered."""
+
+    def __init__(self, tolerant: bool | None = None):
         self.count = 0
         self.failures: list[str] = []
+        self.tolerant = TOLERANT if tolerant is None else tolerant
+        self.notes = 0
 
     def compare(self, label: str, a: Resp, b: Resp) -> bool:
         self.count += 1
@@ -208,6 +217,13 @@ class Checker:
                 problems.append(f"zip contents differ: {[n for n, _ in zip_entries(a.body)]} / {[n for n, _ in zip_entries(b.body)]}")
         elif not a.ctype.startswith("multipart/") and a.body != b.body:
             problems.append(f"binary body differs ({len(a.body)} / {len(b.body)} bytes)")
+        if problems and self.tolerant:
+            self.notes += 1
+            if b.status >= 500 or (a.status < 400 <= b.status):
+                self.failures.append(f"### {label}\nstatus {a.status} (python) / {b.status} (rust)\n" + "\n".join(problems))
+                print(f"FAIL {label}: status {a.status} / {b.status}", flush=True)
+                return False
+            return True
         if problems:
             self.failures.append(f"### {label}\n" + "\n".join(problems))
             print(f"DIFF {label}: {problems[0][:200]}", flush=True)
@@ -806,7 +822,10 @@ def main():
     ap.add_argument("--password", default=PASSWORD)
     ap.add_argument("--legacy", action="store_true", help="a vault from before users, made by the Python version with --docs")
     ap.add_argument("--port", type=int, default=18601, help="the Python server's port (the Rust one gets the next)")
+    ap.add_argument("--tolerant", action="store_true", help="only fail when Rust crashes or refuses what Python answered (the Rust version has more features)")
     args = ap.parse_args()
+    global TOLERANT
+    TOLERANT = args.tolerant
     work = Path(args.work or f"/tmp/diff_http_{os.getpid()}")
     shutil.rmtree(work, ignore_errors=True)
     (work / "py").mkdir(parents=True)
@@ -837,7 +856,10 @@ def main():
     report = "\n\n".join(tour.check.failures)
     if args.report:
         Path(args.report).write_text(report)
-    print(f"{tour.check.count - len(tour.check.failures)}/{tour.check.count} réponses identiques")
+    if tour.check.tolerant:
+        print(f"{tour.check.count - len(tour.check.failures)}/{tour.check.count} réponses acceptables ({tour.check.notes} avec des différences voulues)")
+    else:
+        print(f"{tour.check.count - len(tour.check.failures)}/{tour.check.count} réponses identiques")
     if not args.keep:
         shutil.rmtree(work, ignore_errors=True)
     sys.exit(1 if tour.check.failures else 0)

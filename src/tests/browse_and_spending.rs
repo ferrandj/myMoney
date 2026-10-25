@@ -369,7 +369,8 @@ fn account_named(id: i64, name: &str, institution: &str, kind: &str) -> Account 
 }
 
 #[test]
-fn test_documents_are_grouped_by_bank_then_account_then_type_then_year_newest_first() {
+fn test_documents_are_grouped_by_bank_then_type_then_year_newest_first() {
+    // Rust also groups by account between the bank and the type.
     let mut docs = vec![
         doc(1, "a.pdf", Some("BoursoBank"), Some("x"), "statement", Some(ymd(2026, 9, 30))),
         doc(2, "b.pdf", Some("BoursoBank"), Some("x"), "statement", Some(ymd(2025, 12, 31))),

@@ -33,6 +33,13 @@
     {% if account.holder_name or account.holder_address or account.iban or account.rib %}
     <dl class="kv">
       {% if account.holder_name %}<dt>Titulaire</dt><dd><span class="sensitive">{{ account.holder_name }}</span> {{ copy(account.holder_name) }}</dd>{% endif %}
+      {% for p in account.people %}{% if account.people|length > 1 or p.birth_names or p.last_names|length > 1 or p.first_names|length > 1 %}
+      <dt>{{ 'Titulaire ' ~ loop.index if account.people|length > 1 else 'Détail' }}</dt>
+      <dd><span class="sensitive">{{ p.civility }} {{ p.last_names|join(' ') }}{% if p.birth_names %} (né(e) {{ p.birth_names|join(' ') }}){% endif %} {{ p.first_names|join(' ') }}</span>
+        {% if p.last_names %}{{ copy(p.last_names|join(' '), 'Nom', 'Copier le nom') }}{% endif %}
+        {% if p.birth_names %}{{ copy(p.birth_names|join(' '), 'Naissance', 'Copier le nom de naissance') }}{% endif %}
+        {% if p.first_names %}{{ copy(p.first_names|join(' '), 'Prénoms', 'Copier les prénoms') }}{% endif %}</dd>
+      {% endif %}{% endfor %}
       {% if account.holder_address %}<dt>Adresse</dt><dd><span class="sensitive">{{ account.holder_address|e|replace('\n', '<br>'|safe) }}</span> {{ copy(account.holder_address) }}</dd>{% endif %}
       {% if account.iban %}<dt>IBAN</dt><dd><code>{{ account.iban|iban }}</code> {{ copy(account.iban|replace(' ', '')) }}</dd>{% endif %}
       {% if account.bic %}<dt>BIC</dt><dd><code>{{ account.bic }}</code> {{ copy(account.bic) }}</dd>{% endif %}
