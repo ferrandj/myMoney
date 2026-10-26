@@ -118,6 +118,7 @@
 <form method="post" action="/accounts/{{ a.id }}/rate" class="inline-identify rate-form">
   <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ next }}">
   <input name="rate" inputmode="decimal" placeholder="Taux en % par an, ex. 2,5" aria-label="Taux en % par an" required autocomplete="off">
+  <select name="basis" aria-label="Taux brut ou net"><option value="gross" {% if a.interest_basis != 'net' %}selected{% endif %}>Brut</option><option value="net" {% if a.interest_basis == 'net' %}selected{% endif %}>Net</option></select>
   <button class="btn small primary">Enregistrer</button>
   <button class="btn small ghost" name="none" value="1" formnovalidate title="Ce compte ne rapporte rien (0 %)">Sans intérêt</button>
 </form>

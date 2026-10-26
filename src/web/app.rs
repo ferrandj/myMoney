@@ -331,6 +331,7 @@ enum R {
     AccountQuick,
     AccountRate,
     RatesRefresh,
+    FlatTaxSave,
     AccountCreate,
     AccountDetail,
     ShareAdd,
@@ -409,6 +410,7 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/accounts/{account_id}/quick", R::AccountQuick),
     ("POST", "/accounts/{account_id}/rate", R::AccountRate),
     ("POST", "/settings/rates/refresh", R::RatesRefresh),
+    ("POST", "/settings/flat-tax", R::FlatTaxSave),
     ("POST", "/accounts/new", R::AccountCreate),
     ("GET", "/accounts/{account_id}", R::AccountDetail),
     ("POST", "/accounts/{account_id}/shares", R::ShareAdd),
@@ -849,6 +851,7 @@ impl Web {
             R::AccountQuick => self.account_quick(cx),
             R::AccountRate => self.account_rate(cx),
             R::RatesRefresh => self.rates_refresh(cx),
+            R::FlatTaxSave => self.flat_tax_save(cx),
             R::AccountNew => self.page(cx, "account_form.html", vec![("account", Value::None)]),
             R::AccountCreate => self.account_create(cx),
             R::AccountDetail => self.account_detail(cx),
@@ -1975,11 +1978,23 @@ impl Web {
             ],
         );
         let account_type = data.account.account_type.as_str();
+        // the rate as given, and its other side once the flat tax is taken into account
+        let flat = self.core.flat_tax();
+        let (rate_gross, rate_net, taxed) = match rate {
+            Some(r) if !data.has_loan => {
+                let share = rates::tax_share(account_type, &flat);
+                // a rate read from the official pages, or from the table, is a regulated one: tax free, same both ways
+                let basis = if data.account.interest_rate.is_some() { data.account.interest_basis.as_deref() } else { None };
+                let (g, n) = rates::gross_and_net(r, basis, share);
+                (Value::from(g), Value::from(n), !share.is_zero())
+            }
+            _ => (Value::None, Value::None, false),
+        };
         // a rate typed on the account, or one that nobody publishes, is the user's to give and to change; the official
         // rates and a loan's rate come from elsewhere (typing one over them stays possible from the account's form)
         let rate_needed = rates::needs_rate(account_type, data.account.interest_rate) && !data.has_loan;
         let rate_editable = !data.has_loan && (data.account.interest_rate.is_some() || rates::ASK_RATE_TYPES.contains(&account_type));
-        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into())];
+        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into()), ("rate_gross", rate_gross), ("rate_net", rate_net), ("rate_taxed", taxed.into()), ("flat_tax", Value::from(flat.total())), ("flat_source", flat.source.clone().into())];
         vars.extend(data.vars);
         self.page(cx, "account.html", vars)
     }
@@ -2200,9 +2215,27 @@ impl Web {
             crate::adapters::common::py_decimal(&text).filter(|r| *r >= Decimal::ZERO && *r <= Decimal::from(100))
         };
         let Some(rate) = rate else { return msg(&back, "Taux invalide : écris par exemple 2,5") };
-        match self.core.set_rate(account_id, rate) {
+        match self.core.set_rate(account_id, rate, get(&form, "basis")) {
             Ok(()) => msg(&back, if rate.is_zero() { "Compte noté sans intérêt".to_string() } else { format!("Taux enregistré : {} %", py::dec_str(&rate).replace('.', ",")) }),
             Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The flat tax typed in the settings (a total in %), or removed to go back to the automatic reading.
+    fn flat_tax_save(&self, cx: &Cx) -> Out {
+        let form = self.verified_form(cx)?;
+        self.admin_only(cx)?;
+        if get(&form, "auto").is_some() {
+            self.core.set_setting("flat_tax_rate", "")?;
+            return msg("/settings#taux", "Flat tax : lecture automatique rétablie");
+        }
+        let text = py::strip(&get_or(&form, "flat_tax", "").replace(',', ".").replace('%', "")).to_string();
+        match crate::adapters::common::py_decimal(&text).filter(|r| *r > Decimal::ZERO && *r < Decimal::from(100)) {
+            Some(r) => {
+                self.core.set_setting("flat_tax_rate", &py::dec_str(&r))?;
+                msg("/settings#taux", format!("Flat tax enregistrée : {} %", py::dec_str(&r).replace('.', ",")))
+            }
+            None => msg("/settings#taux", "Taux invalide : écris par exemple 31,4"),
         }
     }
 
@@ -3062,6 +3095,14 @@ impl Web {
             ("error", online.error.clone().map(Value::from).unwrap_or(Value::None)),
             ("source", crate::services::public_rates::SOURCE.into()),
         ]);
+        let flat = self.core.flat_tax();
+        let flat_value = Value::sdict(vec![
+            ("total", Value::from(flat.total())),
+            ("ir", Value::from(flat.ir)),
+            ("social", Value::from(flat.social)),
+            ("source", flat.source.clone().into()),
+            ("typed", self.core.get_setting("flat_tax_rate", "")?.into()),
+        ]);
         let coingecko = !self.core.get_setting("coingecko_api_key", "")?.is_empty();
         self.page(
             cx,
@@ -3069,6 +3110,7 @@ impl Web {
             vec![
                 ("rates", rates_value),
                 ("online_rates", online_value),
+                ("flat_tax", flat_value),
                 ("settings", settings_value),
                 ("people", Value::list(people.iter().map(views::user).collect())),
                 ("owned", Value::dict(owned)),

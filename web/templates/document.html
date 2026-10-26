@@ -171,7 +171,7 @@
   {% else %}<p class="flash">✓ Rattaché {% if doc.account_id %}à <a href="/accounts/{{ doc.account_id }}">ce prêt</a>{% endif %}.</p>
   <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Retirer du prêt ce que ce document a apporté ?">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn">Invalider l'import</button>
+    <button class="btn danger" data-clicks="3">Invalider l'import</button>
   </form>{% endif %}
 </section>
 {% elif st.document_kind == 'fees_summary' %}
@@ -333,7 +333,9 @@
       <label>Type <select name="account_type">
         {% for code, (label, cat) in ACCOUNT_TYPES.items() %}<option value="{{ code }}" {% if st.account_type == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
       </select></label>
-      <label>Taux (% par an) <input name="interest_rate" inputmode="decimal" placeholder="à renseigner pour un livret, un PEL, un compte à terme, une assurance-vie" autocomplete="off">
+      <label>Taux (% par an)
+        <span class="rate-line"><input name="interest_rate" inputmode="decimal" placeholder="livret, PEL, compte à terme, assurance-vie" autocomplete="off">
+        <select name="interest_basis" aria-label="Taux brut ou net"><option value="gross" selected>Brut</option><option value="net">Net</option></select></span>
         <small>Les livrets réglementés (Livret A, LDDS, LEP, CEL) ont leur taux officiel tout seul ; pour les autres, tu peux le donner maintenant ou plus tard (l'accueil te le redemandera).</small></label>
     </fieldset>
     {% set candidate = st.balance if st.balance is not none else (st.candidate_balances[0][1] if st.candidate_balances else '') %}
@@ -385,7 +387,7 @@
   <p>{% if doc.account_id %}Les opérations de ce document sont dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>. {% endif %}Pour le relire ou le réimporter, invalide-le : ses opérations sont retirées du compte et le fichier reste conservé.</p>
   <form method="post" action="/documents/{{ doc.id }}/undo" data-confirm="Invalider cet import ? Les opérations apportées par ce document sont retirées du compte (le fichier reste conservé).">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn">Invalider l'import</button>
+    <button class="btn danger" data-clicks="3">Invalider l'import</button>
   </form>
 </section>
 {% if to_identify %}

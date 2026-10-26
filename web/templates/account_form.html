@@ -22,7 +22,9 @@
   <label>Solde / valeur actuelle <input name="balance" inputmode="decimal" value="{{ account.balance if account else '' }}" placeholder="0,00">
     <small>Pour un crédit, indique le capital restant dû. Pour un compte avec positions (crypto, PEA…), laisse 0 et ajoute les positions. Un relevé importé met le solde à jour.</small></label>
   <label>Devise <input name="currency" value="{{ account.currency if account else 'EUR' }}" maxlength="10"></label>
-  <label>Taux d'intérêt (% / an) <input name="interest_rate" inputmode="decimal" value="{{ account.interest_rate if account and account.interest_rate is not none else '' }}">
+  <label>Taux d'intérêt (% / an)
+    <span class="rate-line"><input name="interest_rate" inputmode="decimal" value="{{ account.interest_rate if account and account.interest_rate is not none else '' }}">
+    <select name="interest_basis" aria-label="Taux brut ou net"><option value="gross" {% if not account or account.interest_basis != 'net' %}selected{% endif %}>Brut</option><option value="net" {% if account and account.interest_basis == 'net' %}selected{% endif %}>Net</option></select></span>
     <small>Laisse vide pour un livret réglementé (Livret A, LDDS, LEP, CEL, Livret Jeune) : le taux officiel en vigueur est appliqué automatiquement.</small></label>
   <fieldset>
     <legend>Titulaire et coordonnées</legend>

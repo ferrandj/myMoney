@@ -362,6 +362,8 @@ table!(Account, "accounts", true, {
     holder_address: Option<String> = None,
     // the people behind the account (civility, names, birth names, first names) as JSON; see services::holders
     holders: Json = None,
+    // "gross" or "net": what the interest rate typed on the account means (see services::rates)
+    interest_basis: Option<String> = None,
     interest_rate: Option<Decimal> = None,
     archived: bool = false,
     notes: Option<String> = None,

@@ -57,7 +57,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
 .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
 .btn.ghost { background: transparent; border-color: transparent; }
 .btn.small { padding: 4px 8px; font-size: .85rem; }
-.btn.danger { background: var(--neg); border-color: var(--neg); color: #fff; }
 .danger-text { color: var(--neg); }
 .danger-zone { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin: 16px 0; }
 .flash { background: color-mix(in srgb, var(--primary) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border)); padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
@@ -337,3 +336,14 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .rate-form { flex: 1 1 320px; }
 .rate-form input[name="rate"] { flex: 2 1 200px; }
 .rates-needed { border-color: var(--warn); }
+
+/* Boutons destructifs : tout rouges, plusieurs clics de suite (data-clicks) */
+.btn.danger { background: var(--neg); border-color: var(--neg); color: var(--bg); font-weight: 600; }
+.btn.danger:hover { filter: brightness(1.08); border-color: var(--neg); }
+.btn.danger.armed { box-shadow: 0 0 0 3px color-mix(in srgb, var(--neg) 35%, transparent); animation: armed 1s ease-in-out infinite alternate; }
+@keyframes armed { from { filter: brightness(1); } to { filter: brightness(1.25); } }
+@media (prefers-reduced-motion: reduce) { .btn.danger.armed { animation: none; } }
+
+.rate-line { display: flex; gap: 8px; }
+.rate-line input { flex: 1 1 auto; }
+.rate-line select { flex: 0 0 90px; width: auto; }

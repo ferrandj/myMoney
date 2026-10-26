@@ -56,8 +56,8 @@
     <div class="doc-toolbar">
       <button class="btn primary" id="download-selected" disabled>Télécharger la sélection <span id="download-count"></span></button>
       {% if imported_count %}
-      <button class="btn small" formaction="/documents/invalidate" data-confirm="Invalider les documents cochés ? Leurs opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Invalider la sélection</button>
-      <button class="btn small danger" form="invalidate-form" name="scope" value="all" data-confirm="Invalider les {{ imported_count }} import(s) ? Les opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Tout invalider ({{ imported_count }})</button>
+      <button class="btn small danger" data-clicks="3" formaction="/documents/invalidate" data-confirm="Invalider les documents cochés ? Leurs opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Invalider la sélection</button>
+      <button class="btn small danger" data-clicks="3" form="invalidate-form" name="scope" value="all" data-confirm="Invalider les {{ imported_count }} import(s) ? Les opérations sont retirées des comptes ; les fichiers sont conservés et reviennent dans « À valider ».">Tout invalider ({{ imported_count }})</button>
       {% endif %}
       <button type="button" class="btn ghost small" data-expand="all">Tout déplier</button>
       <button type="button" class="btn ghost small" data-expand="none">Tout replier</button>
@@ -65,15 +65,15 @@
     {% for bank in tree %}
     <details class="doc-bank" {% if tree|length == 1 or loop.first %}open{% endif %}>
       <summary><strong>{{ bank.label }}</strong> <span class="tag">{{ bank.count }}</span>
-        {% if bank.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="bank:{{ bank.label }}" data-confirm="Invalider les {{ bank.imported }} import(s) de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ bank.imported }})</button>{% endif %}</summary>
+        {% if bank.imported %}<button class="btn small danger" data-clicks="3" form="invalidate-form" name="scope" value="bank:{{ bank.label }}" data-confirm="Invalider les {{ bank.imported }} import(s) de {{ bank.label }} ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ bank.imported }})</button>{% endif %}</summary>
       {% for account in bank.accounts %}
       <details class="doc-account" {% if bank.accounts|length == 1 %}open{% endif %}>
         <summary><strong class="sensitive">{{ account.label }}</strong>{% if account.subtitle %} <span class="muted small">{{ account.subtitle }}</span>{% endif %}{% if account.holder %} <span class="muted small sensitive">· {{ account.holder }}</span>{% endif %} <span class="tag">{{ account.count }}</span>
-          {% if account.id and account.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="account:{{ account.id }}" data-confirm="Invalider les {{ account.imported }} import(s) du compte « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ account.imported }})</button>{% endif %}</summary>
+          {% if account.id and account.imported %}<button class="btn small danger" data-clicks="3" form="invalidate-form" name="scope" value="account:{{ account.id }}" data-confirm="Invalider les {{ account.imported }} import(s) du compte « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ account.imported }})</button>{% endif %}</summary>
         {% for kind in account.kinds %}
         <details class="doc-kind" {% if account.kinds|length == 1 %}open{% endif %}>
           <summary>{{ kind.label }} <span class="tag">{{ kind.count }}</span>
-            {% if kind.imported %}<button class="btn ghost small" form="invalidate-form" name="scope" value="akind:{{ account.id or 0 }}::{{ kind.label }}" data-confirm="Invalider les {{ kind.imported }} import(s) « {{ kind.label }} » de « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ kind.imported }})</button>{% endif %}
+            {% if kind.imported %}<button class="btn small danger" data-clicks="3" form="invalidate-form" name="scope" value="akind:{{ account.id or 0 }}::{{ kind.label }}" data-confirm="Invalider les {{ kind.imported }} import(s) « {{ kind.label }} » de « {{ account.label }} » ? Les fichiers sont conservés et reviennent dans « À valider ».">Invalider ({{ kind.imported }})</button>{% endif %}
             <label class="check doc-all" title="Cocher tout ce groupe"><input type="checkbox" data-check-group aria-label="Tout cocher : {{ bank.label }}, {{ account.label }}, {{ kind.label }}"> tout</label></summary>
           <div class="table-wrap"><table class="doc-table">
             <tbody>
@@ -108,7 +108,7 @@
   <p class="small muted">Après une mise à jour de l'application (nouvelles lectures, corrections), cette action <strong>annule tous les imports</strong> puis <strong>relit chaque fichier</strong> déjà importé avec les lectures actuelles. Tes fichiers ne sont jamais supprimés ; les comptes gardent leur nom, leurs titulaires et leurs partages, mais perdent les opérations, relevés, récapitulatifs et positions apportés par les documents. Tout ce qui est évident est revalidé ; ce qui ne passe plus les contrôles reste <strong>à valider</strong>, avec la raison, pour que tu décides.</p>
   <form method="post" action="/documents/rebuild" data-confirm="Annuler les {{ imported_count }} import(s) puis relire tous les fichiers ? Tes fichiers sont conservés. Les opérations saisies à la main restent en place.">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn danger">Annuler tous les imports et tout relire ({{ imported_count }})</button>
+    <button class="btn danger" data-clicks="3">Annuler tous les imports et tout relire ({{ imported_count }})</button>
   </form>
 </details>
 {% endif %}

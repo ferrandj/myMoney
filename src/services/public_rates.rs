@@ -15,13 +15,21 @@ use std::str::FromStr;
 
 use crate::services::prices::now;
 
-/// (account type, page, pattern with the rate as its first group). The official file of each product states its rate
-/// in one sentence.
-pub const PAGES: &[(&str, &str, &str)] = &[
-    ("livret_a", "https://www.service-public.gouv.fr/particuliers/vosdroits/F2365", r"(?i)taux d.int.r.t annuel du livret A est de (\d{1,2}(?:[,.]\d{1,3})?) ?%"),
-    ("ldds", "https://www.service-public.gouv.fr/particuliers/vosdroits/F2368", r"(?i)taux de r.mun.ration du LDDS.{0,80}?est de (\d{1,2}(?:[,.]\d{1,3})?) ?%"),
-    ("lep", "https://www.service-public.gouv.fr/particuliers/vosdroits/F2367", r"(?i)taux d.int.r.t du LEP est de (\d{1,2}(?:[,.]\d{1,3})?) ?%"),
-    ("cel", "https://www.service-public.gouv.fr/particuliers/vosdroits/F16136", r"(?i)taux d.int.r.t du CEL(?:, hors prime d.[ée]tat,)? est de (\d{1,2}(?:[,.]\d{1,3})?) ?%"),
+/// (key, page, pattern with the rate as its first group, highest plausible value). The official file of each regulated
+/// product states its rate in one sentence; the tax office's page states the flat tax (12,8 % of income tax, and the
+/// social levies, which rose to 18,6 % in 2026).
+pub const PAGES: &[(&str, &str, &str, u32)] = &[
+    ("livret_a", "https://www.service-public.gouv.fr/particuliers/vosdroits/F2365", r"(?i)taux d.int.r.t annuel du livret A est de (\d{1,2}(?:[,.]\d{1,3})?) ?%", 10),
+    ("ldds", "https://www.service-public.gouv.fr/particuliers/vosdroits/F2368", r"(?i)taux de r.mun.ration du LDDS.{0,80}?est de (\d{1,2}(?:[,.]\d{1,3})?) ?%", 10),
+    ("lep", "https://www.service-public.gouv.fr/particuliers/vosdroits/F2367", r"(?i)taux d.int.r.t du LEP est de (\d{1,2}(?:[,.]\d{1,3})?) ?%", 10),
+    ("cel", "https://www.service-public.gouv.fr/particuliers/vosdroits/F16136", r"(?i)taux d.int.r.t du CEL(?:, hors prime d.[ée]tat,)? est de (\d{1,2}(?:[,.]\d{1,3})?) ?%", 10),
+    ("pfu_ir", "https://www.impots.gouv.fr/particulier/les-revenus-mobiliers", r"(?i)pr.l.vement forfai\w* unique \(PFU\) de (\d{1,2}(?:[,.]\d{1,2})?) ?%", 40),
+    (
+        "pfu_ps",
+        "https://www.impots.gouv.fr/particulier/les-revenus-mobiliers",
+        r"(?i)(?:taux des pr.l.vements sociaux pass\w* . |pr.l.vements sociaux (?:est|sont) (?:de |fix\w+ . ))(\d{1,2}(?:[,.]\d{1,2})?) ?%",
+        40,
+    ),
 ];
 
 pub const SOURCE: &str = "service-public.gouv.fr";
@@ -82,22 +90,26 @@ pub fn plain_text(html: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The rate (in %) a product's page states, if it is a plausible one.
-pub fn parse_rate(html: &str, pattern: &str) -> Option<Decimal> {
+/// The rate (in %) a page states with `pattern` (the first group that matched), if it is a plausible one.
+pub fn parse_rate(html: &str, pattern: &str, ceiling: u32) -> Option<Decimal> {
     let text = plain_text(html);
     let caps = Regex::new(pattern).ok()?.captures(&text)?;
-    let rate = Decimal::from_str(&caps[1].replace(',', ".")).ok()?;
-    (rate > Decimal::ZERO && rate <= Decimal::from(10)).then_some(rate)
+    let found = caps.iter().skip(1).flatten().next()?;
+    let rate = Decimal::from_str(&found.as_str().replace(',', ".")).ok()?;
+    (rate > Decimal::ZERO && rate <= Decimal::from(ceiling)).then_some(rate)
 }
 
-/// Read every page; what could not be read keeps its previous value. Err when nothing at all could be read.
+/// Read every page (each address once); what could not be read keeps its previous value. Err when nothing at all could
+/// be read.
 pub fn fetch_all(get: &dyn Fn(&str) -> Result<String, String>, previous: &BTreeMap<String, Decimal>) -> Result<BTreeMap<String, Decimal>, String> {
     let mut rates = previous.clone();
     let mut read = 0;
     let mut problems = vec![];
-    for (kind, url, pattern) in PAGES {
-        match get(url) {
-            Ok(html) => match parse_rate(&html, pattern) {
+    let mut pages: BTreeMap<&str, Result<String, String>> = BTreeMap::new();
+    for (kind, url, pattern, ceiling) in PAGES {
+        let html = pages.entry(url).or_insert_with(|| get(url));
+        match html {
+            Ok(html) => match parse_rate(html, pattern, *ceiling) {
                 Some(rate) => {
                     rates.insert(kind.to_string(), rate);
                     read += 1;
