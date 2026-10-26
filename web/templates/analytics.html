@@ -203,7 +203,7 @@
         <div class="tile"><span class="muted small">Frais d'après les récapitulatifs</span><span class="kpi">{{ fees.summaries_total|money }}</span>
           {% if fees.refunded %}<span class="muted small">dont {{ fees.refunded|money }} remboursés</span>{% endif %}</div>
         <div class="tile"><span class="muted small">Frais dans les opérations{% if mois %} en {{ month_label }}{% endif %}</span><span class="kpi">{{ fees.operations_total|money }}</span>
-          <span class="muted small">{{ fees.operations_count }} opération(s)</span></div>
+          <span class="muted small">{{ fees.operations_count }} opération(s){% if fees.operations_refunded %} · {{ fees.operations_refunded|money }} remboursés déjà déduits{% endif %}</span></div>
         {% if fees.interest_paid %}<div class="tile"><span class="muted small">Intérêts débiteurs payés</span><span class="kpi">{{ fees.interest_paid|money }}</span></div>{% endif %}
       </section>
       {% if fees.summaries %}
@@ -217,7 +217,7 @@
             <td class="num">{{ f.charged|money }}</td>
             <td class="num">{{ f.refunded|money }}</td>
             <td class="num"><strong>{{ f.net|money }}</strong></td>
-            <td class="num">{{ f.operations|money }} <small class="muted">{{ f.operations_count }} op.</small></td>
+            <td class="num">{{ f.operations|money }} <small class="muted">{{ f.operations_count }} op.{% if f.operations_refunded %} · {{ f.operations_refunded|money }} remb.{% endif %}</small></td>
           </tr>
           {% if f.services %}<tr><td colspan="6" class="small">
             <details><summary>Détail des services ({{ f.services|length }})</summary>

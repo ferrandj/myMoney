@@ -83,10 +83,14 @@
     {% if st.institution %}<dt>Établissement</dt><dd>{{ st.institution }}</dd>{% endif %}
     {% if st.holder_name %}<dt>Destinataire</dt><dd class="sensitive">{{ st.holder_name }}</dd>{% endif %}
     {% if st.holder_address %}<dt>Adresse</dt><dd class="sensitive">{{ st.holder_address|e|replace('\n', '<br>'|safe) }}</dd>{% endif %}
-    {% if st.extra.get('issued_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
+    {% if st.extra.get('issued_on') and not st.extra.get('established_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
     {% if st.extra.get('contract') %}<dt>Contrat</dt><dd><span class="sensitive">{{ st.extra.contract }}{% if st.extra.get('contract_number') %} · n° {{ st.extra.contract_number }}{% endif %}</span></dd>{% endif %}
     {% if st.extra.get('arbitrage_date') %}<dt>Arbitrage du</dt><dd>{{ st.extra.arbitrage_date|frdate }}</dd>{% endif %}
     {% if st.extra.get('net') %}<dt>Montant arbitré</dt><dd>{{ st.extra.net|money }}{% if st.extra.get('fees') and st.extra.fees != '0.00' %} (frais : {{ st.extra.fees|money }}){% else %} (aucun frais){% endif %}</dd>{% endif %}
+    {% if st.extra.get('investor_profile') %}<dt>Profil investisseur</dt><dd><strong>{{ st.extra.investor_profile }}</strong>{% if st.extra.get('established_on') %} <span class="muted small">établi le {{ st.extra.established_on|frdate }}</span>{% endif %}</dd>{% endif %}
+    {% if st.extra.get('extra_financial_profile') %}<dt>Profil extra-financier</dt><dd>{{ st.extra.extra_financial_profile }}</dd>{% endif %}
+    {% if st.extra.get('project') %}<dt>Projet</dt><dd>{{ st.extra.project }}</dd>{% endif %}
+    {% if st.extra.get('horizon') %}<dt>Horizon de placement</dt><dd>{{ st.extra.horizon }}</dd>{% endif %}
     {% if st.extra.get('ceiling') %}<dt>Plafond de la garantie</dt><dd>{{ st.extra.ceiling }} par déposant et par établissement</dd>{% endif %}
   </dl>
   {% if st.warnings %}<ul class="checks">{% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}</ul>{% endif %}
@@ -246,14 +250,19 @@
       {% if st.period_start or st.period_end %}<dt>Période</dt><dd>{{ st.period_start|frdate }} → {{ st.period_end|frdate }}</dd>{% endif %}
       {% if st.opening_balance is not none %}<dt>Solde initial</dt><dd>{{ st.opening_balance|money(st.currency) }}{% if st.opening_date %} <span class="muted small">au {{ st.opening_date|frdate }}</span>{% endif %}</dd>{% endif %}
       {% if st.balance is not none %}<dt>Solde final</dt><dd><strong>{{ st.balance|money(st.currency) }}</strong> <span class="muted small">au {{ st.balance_date|frdate }}</span></dd>{% endif %}
-      <dt>Opérations lues</dt><dd>{{ st.transactions|length }}</dd>
+      {% if st.extra.get('balance_only') %}{% if st.extra.get('contract_number') %}<dt>N° du contrat</dt><dd><span class="sensitive">{{ st.extra.contract_number }}</span></dd>{% endif %}
+      {% if st.extra.get('payments') %}<dt>Versements de l'année</dt><dd>{{ st.extra.payments|money }}</dd>{% endif %}
+      {% if st.extra.get('fees_total') %}<dt>Frais de l'année</dt><dd>{{ st.extra.fees_total|money }}</dd>{% endif %}
+      {% if st.extra.get('premiums_unrefunded') %}<dt>Primes non remboursées</dt><dd>{{ st.extra.premiums_unrefunded|money }} <span class="muted small">(pour la déclaration de revenus)</span></dd>{% endif %}
+      {% else %}<dt>Opérations lues</dt><dd>{{ st.transactions|length }}</dd>{% endif %}
     </dl>
   </div>
 
   {% set done = doc.status == 'imported' %}
   <h3>Contrôles</h3>
   <ul class="checks small">
-    {% if st.opening_balance is not none and st.balance is not none and st.confidence == 'high' %}<li class="ok">✓ Solde initial + opérations = solde final : les {{ st.transactions|length }} opérations lues sont complètes.</li>{% endif %}
+    {% if st.extra.get('balance_only') and st.extra.get('supports') and not st.warnings %}<li class="ok">✓ Les {{ st.extra.supports|length }} supports totalisent bien la valeur du contrat.</li>
+    {% elif st.opening_balance is not none and st.balance is not none and st.confidence == 'high' and st.transactions %}<li class="ok">✓ Solde initial + opérations = solde final : les {{ st.transactions|length }} opérations lues sont complètes.</li>{% endif %}
     {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
     {% for i in plan.issues %}<li class="bad">⚠ {{ i }}</li>{% endfor %}
     {% if done %}
@@ -353,6 +362,29 @@
   </form>
   {% endif %}
 
+  {% if st.extra.get('balance_only') %}
+  {% if st.extra.get('supports') %}
+  <h3>Supports détenus au {{ st.balance_date|frdate }}</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Support</th><th class="num">Parts</th><th class="num">Valeur de la part</th><th class="num">Valeur</th></tr></thead>
+    {% for f in st.extra.supports %}<tr><td><span class="sensitive">{{ f.fund }}</span>{% if f.isin %} <span class="muted small">{{ f.isin }}</span>{% endif %}{% if f.get('capital_guaranteed') %} <span class="tag conf-high">capital garanti</span>{% endif %}</td><td class="num">{{ f.get('units') or '' }}</td><td class="num">{{ f.unit_value|money if f.get('unit_value') else '' }}</td><td class="num">{{ f.amount|money }}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  {% if st.extra.get('movements') %}
+  <h3>Mouvements de l'année</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Opération</th><th class="num">Débit</th><th class="num">Crédit</th><th class="num">Frais</th></tr></thead>
+    {% for m in st.extra.movements %}<tr><td>{{ m.label }}</td><td class="num">{{ m.debit|money if m.get('debit') else '' }}</td><td class="num">{{ m.credit|money if m.get('credit') else '' }}</td><td class="num">{{ m.fees|money if m.get('fees') else '' }}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  {% if st.extra.get('euro_rates') %}
+  <h3>Rendement des fonds en euros</h3>
+  <div class="table-wrap"><table>
+    {% for r in st.extra.euro_rates %}<tr><td>{{ r.fund }}</td><td class="num">{{ r.rate }} %{% if r.get('bonus') %} <span class="muted small">dont {{ r.bonus }} % de bonification</span>{% endif %}</td></tr>{% endfor %}
+  </table></div>
+  {% endif %}
+  <p class="small muted">Les supports sont gardés avec le document, pas comme positions : la valeur du contrat les contient déjà.</p>
+  {% endif %}
   {% if st.holdings %}
   <h3>Positions</h3>
   <div class="table-wrap"><table>

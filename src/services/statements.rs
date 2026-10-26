@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::adapters::base::ParsedStatement;
 use crate::error::{value_err, AppError, AppResult};
-use crate::models::{account_type, Account, Document, FeeSummary, Holding, Statement, Transaction};
+use crate::models::{account_type, Account, Document, FeeSummary, Holding, Snapshot, Statement, Transaction};
 use crate::py;
 use crate::services::{access, coverage, holders, ledger, loans, naming, people};
 
@@ -600,7 +600,11 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
             .insert(c)?;
         }
     }
-    if (on(form, "import_transactions") || !holdings.is_empty()) && plan.already_imported.is_none() {
+    let balance_only = st.extra_truthy("balance_only"); // a statement that is a balance (annual statement of a contract): no operation, but a period
+    if balance_only {
+        record_balances(c, &account, st, plan.already_imported.is_none())?;
+    }
+    if (on(form, "import_transactions") || !holdings.is_empty() || balance_only) && plan.already_imported.is_none() {
         Statement {
             account_id: account.id,
             document_id: Some(doc.id),
@@ -628,6 +632,41 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
     Ok(m)
 }
 
+/// The value of a contract on the closing day (and on the opening day, when the statement gives it) goes into the
+/// history of the account, which has no operation to draw it from. A day already known is not overwritten.
+fn record_balances(c: &Connection, account: &Account, st: &ParsedStatement, first_time: bool) -> AppResult<()> {
+    if !first_time {
+        return Ok(());
+    }
+    let known = |day: NaiveDate| -> AppResult<bool> { Ok(Snapshot::query_one(c, "WHERE account_id = ? AND day = ?", rusqlite::params![account.id, day.format("%Y-%m-%d").to_string()])?.is_some()) };
+    for (day, value) in [(st.opening_date, st.opening_balance), (st.balance_date, st.balance)] {
+        if let (Some(day), Some(value)) = (day, value) {
+            if !known(day)? {
+                ledger::record_snapshot(c, account.id, value, Some(day))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The days of a balance-only statement that were recorded in the history and that no other statement of the account
+/// still gives.
+fn forget_balances(c: &Connection, gone: &[Statement]) -> AppResult<()> {
+    for g in gone {
+        let (closing, opening) = (g.period_end, g.period_start.map(|d| d - Duration::days(1)));
+        let others = Statement::query(c, "WHERE account_id = ?", [g.account_id])?;
+        for day in [opening, closing].into_iter().flatten() {
+            let kept = others.iter().any(|o| o.id != g.id && (o.period_end == Some(day) || o.period_start.map(|d| d - Duration::days(1)) == Some(day)));
+            if !kept {
+                if let Some(snap) = Snapshot::query_one(c, "WHERE account_id = ? AND day = ?", rusqlite::params![g.account_id, day.format("%Y-%m-%d").to_string()])? {
+                    c.execute("DELETE FROM snapshots WHERE id = ?", [snap.id])?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Remove what a document brought in (its operations and statement records). The document itself stays.
 pub fn undo_import(c: &Connection, doc: &mut Document) -> AppResult<i64> {
     let mut st = c.prepare_cached("SELECT id FROM transactions WHERE document_id = ?")?;
@@ -643,7 +682,12 @@ pub fn undo_import(c: &Connection, doc: &mut Document) -> AppResult<i64> {
         }
     }
     let removed = c.execute("DELETE FROM transactions WHERE document_id = ?", [doc.id])? as i64;
+    let mine = Statement::query(c, "WHERE document_id = ?", [doc.id])?;
     c.execute("DELETE FROM statements WHERE document_id = ?", [doc.id])?;
+    let balance_only = doc.parse_result.as_ref().and_then(|r| r.get("statements")).and_then(|s| s.as_array()).and_then(|a| a.first()).map(|st| ParsedStatement::from_json(st).extra_truthy("balance_only")).unwrap_or(false);
+    if balance_only {
+        forget_balances(c, &mine)?;
+    }
     c.execute("DELETE FROM fee_summaries WHERE document_id = ?", [doc.id])?;
     loans::detach(c, doc)?;
     let before = doc.clone();

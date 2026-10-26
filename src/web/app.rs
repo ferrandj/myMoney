@@ -1787,6 +1787,7 @@ impl Web {
                     ("services", Value::list(f.services.iter().map(Value::from).collect())),
                     ("operations", f.operations.into()),
                     ("operations_count", f.operations_count.into()),
+                    ("operations_refunded", f.operations_refunded.into()),
                     ("gap", f.gap().into()),
                 ],
             )
@@ -1812,6 +1813,7 @@ impl Web {
                         vec![
                             ("operations_total", fees.operations_total.into()),
                             ("operations_count", fees.operations_count.into()),
+                            ("operations_refunded", fees.operations_refunded.into()),
                             ("summaries", Value::list(fees.summaries.iter().map(fee_year).collect())),
                             ("summaries_total", fees.summaries_total().into()),
                             ("interest_paid", fees.interest_paid().into()),

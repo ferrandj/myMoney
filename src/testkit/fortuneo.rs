@@ -403,3 +403,150 @@ pub fn fortuneo_arbitrage_pdf(net: &str, bought_total: &str, title: &str) -> Vec
     pdf.text(40.0, 416.0, &format!("FONDSDIVERSEXEMPLEC IE0000000003 17/09/2026 120,00 0,5000 {}", bought_total.replace("100,00", "60,00")));
     pdf.bytes()
 }
+
+/// One fund of the annual statement of a life-insurance contract: name, ISIN, units, unit value (amounts as printed).
+pub struct LifeFund {
+    pub name: &'static str,
+    pub isin: &'static str,
+    pub units: &'static str,
+    pub price: &'static str,
+    pub amount: &'static str,
+}
+
+pub struct LifeAnnualSpec {
+    pub year: i32,
+    /// the euro fund (guaranteed capital), printed without units
+    pub euro: &'static str,
+    pub funds: Vec<LifeFund>,
+    /// the value of the contract the year before ("Pour rappel..."); the first statement has none
+    pub previous: Option<&'static str>,
+    /// the value printed for the contract: the sum of the funds unless set
+    pub declared: Option<&'static str>,
+    pub payments: &'static str,
+}
+
+impl LifeAnnualSpec {
+    pub fn new(year: i32) -> Self {
+        LifeAnnualSpec {
+            year,
+            euro: "400,00",
+            funds: vec![
+                LifeFund { name: "FONDS ACTIONS EXEMPLE A", isin: "FR0000000001", units: "0,1500", price: "400,00", amount: "60,00" },
+                LifeFund { name: "FONDS OBLIGATIONS EXEMPLE B", isin: "LU0000000002", units: "1,2500", price: "100,00", amount: "125,00" },
+                LifeFund { name: "FONDS DIVERS EXEMPLE C", isin: "IE0000000003", units: "0,0100", price: "1 500,00", amount: "15,00" },
+            ],
+            previous: Some("440,00"),
+            declared: None,
+            payments: "100,00",
+        }
+    }
+
+    pub fn total(&self) -> Decimal {
+        std::iter::once(self.euro).chain(self.funds.iter().map(|f| f.amount)).map(|a| dec(&a.replace(' ', "").replace(',', "."))).sum()
+    }
+}
+
+/// The yearly "Relevé d'information annuel" of a Fortuneo Vie contract: a letter, then the situation of the contract
+/// (funds in a table whose last column is only found by its position) and the movements of the year.
+pub fn fortuneo_life_annual_pdf(spec: &LifeAnnualSpec) -> Vec<u8> {
+    let mut pdf = Pdf::new("");
+    let y = spec.year;
+    let value = spec.declared.map(str::to_string).unwrap_or_else(|| fr_space(spec.total()));
+    pdf.text(324.0, 60.0, &format!("Brest, le 19 février {}", y + 1));
+    pdf.text(36.0, 84.0, "N° Contrat : 000123 45678901 23 45");
+    pdf.text(31.0, 110.0, "Votre conseiller :");
+    pdf.text(31.0, 122.0, "FORTUNEO");
+    pdf.text(31.0, 134.0, "TSA 41707");
+    pdf.text(323.0, 146.0, "M. MARTIN PAUL");
+    pdf.text(323.0, 158.0, "8 RUE DES TILLEULS");
+    pdf.text(323.0, 170.0, "69003 LYON");
+    pdf.text(36.0, 200.0, "N/Réf : Contrat FORTUNEO VIE N° : 000123 45678901 23 45");
+    pdf.text(36.0, 212.0, "Objet : Relevé d’information Annuelle");
+    pdf.text(37.0, 240.0, &format!("J’ai le plaisir de vous adresser, au nom de Suravenir, le relevé d’information annuelle de votre contrat arrêté au 31 décembre {y}."));
+
+    pdf.add_page();
+    pdf.text(152.0, 60.0, "VOTRE RELEVE D'INFORMATION ANNUELLE");
+    pdf.text(37.0, 90.0, &format!("Les taux de revalorisation des supports en euros, nets de frais de gestion pour l’année {y} ont été de :"));
+    pdf.text(37.0, 108.0, "n");
+    pdf.text(54.0, 108.0, "2,50% pour le FDS EUROS EXEMPLE RENDEMENT (dont 0,40% de bonification sur encours). Votre montant d'intérêts net");
+    pdf.text(37.0, 120.0, "est de 5,96 € .");
+    pdf.text(37.0, 136.0, "n");
+    pdf.text(54.0, 136.0, "3,00% pour le FDS EUROS EXEMPLE OPPORTUNITES.");
+    pdf.text(180.0, 160.0, &format!("Valeur (*) de votre contrat au 31 décembre {y} : {value} €"));
+    pdf.text(171.0, 190.0, &format!("LA SITUATION DE VOTRE CONTRAT AU 31 DÉCEMBRE {y}"));
+    pdf.text(92.0, 210.0, "Support d'investissement");
+    pdf.text(280.0, 210.0, "Code ISIN");
+    pdf.text(354.0, 210.0, "Nombre de");
+    pdf.text(441.0, 210.0, "Valeur");
+    pdf.text(510.0, 210.0, "Valeur en €");
+    pdf.text(346.0, 222.0, "parts détenues");
+    pdf.text(421.0, 222.0, "liquidative en €");
+    let row = |pdf: &mut Pdf, top: f64, f: &LifeFund| {
+        pdf.text(39.0, top, f.name);
+        pdf.text(270.0, top, f.isin);
+        pdf.right(411.0, top, f.units);
+        pdf.right(492.0, top, f.price);
+        pdf.right(570.0, top, f.amount);
+    };
+    pdf.text(39.0, 250.0, "FDS EUROS EXEMPLE RENDEMENT (1)");
+    pdf.right(570.0, 250.0, spec.euro);
+    for (i, f) in spec.funds.iter().take(2).enumerate() {
+        row(&mut pdf, 270.0 + 20.0 * i as f64, f);
+    }
+
+    pdf.add_page();
+    pdf.text(156.0, 60.0, &format!("LA SITUATION DE VOTRE CONTRAT AU 31 DÉCEMBRE {y} (suite)"));
+    pdf.text(92.0, 90.0, "Support d'investissement");
+    pdf.text(281.0, 90.0, "Code ISIN");
+    for (i, f) in spec.funds.iter().skip(2).enumerate() {
+        row(&mut pdf, 120.0 + 20.0 * i as f64, f);
+    }
+    pdf.text(37.0, 180.0, "(1) Fonds en euros présentant une garantie en capital");
+    if let Some(p) = spec.previous {
+        pdf.text(34.0, 200.0, &format!("Pour rappel, la valeur de votre contrat au 31 décembre {} était de {p} € .", y - 1));
+    }
+    pdf.text(133.0, 230.0, &format!("SYNTHÈSE DES MOUVEMENTS INTERVENUS SUR VOTRE CONTRAT EN {y}"));
+    pdf.text(101.0, 250.0, "Libellé opération");
+    pdf.text(269.0, 250.0, "Débit (en € )");
+    pdf.text(376.0, 250.0, "Crédit (en € )");
+    pdf.text(485.0, 250.0, "Frais(en € ) (4)");
+    pdf.text(38.0, 270.0, "Versements");
+    pdf.right(455.0, 270.0, spec.payments);
+    pdf.text(38.0, 284.0, "Arbitrages");
+    pdf.right(345.0, 284.0, "50,00");
+    pdf.right(455.0, 284.0, "50,00");
+    pdf.text(38.0, 298.0, "Revalorisation annuelle des fonds en euros");
+    pdf.right(455.0, 298.0, "5,96");
+    pdf.text(38.0, 312.0, "Prélèvements sociaux sur la revalorisation");
+    pdf.right(345.0, 326.0, "1,03");
+    pdf.text(38.0, 340.0, "annuelle des fonds en euros");
+    pdf.text(38.0, 360.0, "(4) Montant des frais sur opération");
+    pdf.text(37.0, 400.0, &format!("Le montant total des frais imputés sur votre contrat pour l’année {y} est de 4,48 €."));
+    pdf.bytes()
+}
+
+/// The "Profil investisseur et profil extra-financier" form: personal answers first, then the result.
+pub fn fortuneo_investor_profile_pdf(established: &str, profile: &str) -> Vec<u8> {
+    let mut pdf = Pdf::new("");
+    pdf.text(60.0, 60.0, "FORMULAIRE VOS BESOINS, NOS CONSEILS");
+    pdf.text(60.0, 72.0, "Profil investisseur et profil extra-financier");
+    pdf.text(28.0, 100.0, "VOS DONNEES PERSONNELLES");
+    pdf.text(28.0, 120.0, "Nom de naissance : MARTIN");
+    pdf.text(28.0, 132.0, "Prénom(s) : PAUL");
+    pdf.text(28.0, 144.0, "Situation familiale : Union libre");
+    pdf.text(28.0, 156.0, "Situation professionnelle : Profession exemple");
+    pdf.text(28.0, 190.0, "QUESTIONNAIRE INVESTISSEUR");
+    pdf.text(28.0, 202.0, "Vous épargnez principalement pour ? faire fructifier votre argent");
+    pdf.text(60.0, 740.0, "FORTUNEO VIE est un contrat collectif d'assurance-vie multisupport géré par Suravenir.");
+    pdf.add_page();
+    pdf.text(28.0, 60.0, "2. RESULTAT PROFIL INVESTISSEUR ET RESULTAT PROFIL EXTRA-FINANCIER");
+    pdf.text(28.0, 76.0, "2.1 RESULTAT PROFIL INVESTISSEUR");
+    pdf.text(28.0, 96.0, "VOTRE PROJET : faire fructifier votre argent");
+    pdf.text(28.0, 110.0, "VOTRE HORIZON DE PLACEMENT : plus de 8 ans");
+    pdf.text(28.0, 124.0, &format!("VOUS AVEZ UN PROFIL INVESTISSEUR : {profile}"));
+    pdf.text(28.0, 140.0, &format!("Ce profil a été établi par vos soins le {established}"));
+    pdf.text(28.0, 170.0, "2.2 RESULTAT PROFIL EXTRA-FINANCIER");
+    pdf.text(28.0, 190.0, "VOUS AVEZ UN PROFIL EXTRA-FINANCIER : SANS PREFERENCE");
+    pdf.text(28.0, 204.0, &format!("Ce profil a été établi par vos soins le {established}"));
+    pdf.bytes()
+}

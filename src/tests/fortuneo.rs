@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::adapters::base::{ParsedStatement, SourceDocument};
 use crate::adapters::registry::{identify, Identification};
 use crate::error::AppError;
-use crate::models::{Account, Document, FeeSummary, Transaction};
+use crate::models::{Account, Document, FeeSummary, Holding, Transaction};
 use crate::testkit::env::{client, core, Client, Core, Upload};
 use crate::testkit::fixtures::*;
 use crate::testkit::fortuneo::*;
@@ -861,4 +861,229 @@ fn test_web_the_bank_fees_are_shown_next_to_the_spending() {
     assert!(page.contains("Détail des services (2)") && page.contains("INACTIVITE CARTE EXEMPLE"));
     // No fees to show inside one category.
     assert!(!client.get("/analytics?vue=depenses&periode=tout&cat=courses").text().contains("id=\"frais\""));
+}
+
+#[test]
+fn test_web_a_fee_refund_is_taken_off_the_fees_not_added_to_them() {
+    let mut client = client();
+    let csrf = client.login();
+    let mut entries = fortuneo_entries();
+    entries.push(fentry(ymd(2026, 9, 10), &["FRAIS TENUE DE COMPTE"], "-9.00"));
+    entries.push(fentry(ymd(2026, 9, 20), &["FRAIS TENUE DE COMPTE"], "-9.00"));
+    entries.push(fentry(ymd(2026, 9, 25), &["REMBOURSEMENT EXCEPTIONNEL FRAIS"], "9.00"));
+    let spec = FSpec::new(entries);
+    import_by_hand(&mut client, &csrf, "septembre.pdf", &fortuneo_statement_pdf(&spec), "new", Some(spec.closing()));
+    let recap = FeesSpec { year: 2026, total: d("9.00"), ..FeesSpec::new() };
+    import_by_hand(&mut client, &csrf, "frais.pdf", &fortuneo_fees_pdf(&recap), "1", None);
+    let page = client.get("/analytics?vue=depenses&periode=tout").text();
+    let tile = Regex::new(r"Frais dans les opérations.*?</div>").unwrap().find(&page.replace('\n', " ")).map(|m| m.as_str().to_string()).unwrap();
+    assert!(tile.contains("9,00") && !tile.contains("18,00"), "{tile}");
+    assert!(tile.contains("2 opération(s)") && tile.contains("remboursés déjà déduits"), "{tile}");
+}
+
+fn annual_spec_pdf(spec: &LifeAnnualSpec) -> (Identification, ParsedStatement) {
+    let (found, mut parsed) = parse(fortuneo_life_annual_pdf(spec));
+    assert_eq!(parsed.len(), 1);
+    (found, parsed.remove(0))
+}
+
+#[test]
+fn test_life_insurance_annual_statement_is_read() {
+    let spec = LifeAnnualSpec::new(2025);
+    let (found, st) = annual_spec_pdf(&spec);
+    assert_eq!(found.decision, "auto");
+    assert_eq!(found.chosen.as_ref().unwrap().adapter.id(), "fortuneo.life_annual_pdf");
+    assert_eq!((st.document_kind.clone(), st.account_type.clone(), st.confidence.clone()), (s("statement"), s("life_insurance"), "high".to_string()));
+    assert!(st.warnings.is_empty(), "{:?}", st.warnings);
+    assert_eq!(st.account_number, s("000123456789012345"));
+    assert_eq!(st.account_label, s("Fortuneo Vie …2345"));
+    assert_eq!(st.balance, Some(d("600.00")));
+    assert_eq!((st.balance_date, st.period_start, st.period_end), (Some(ymd(2025, 12, 31)), Some(ymd(2025, 1, 1)), Some(ymd(2025, 12, 31))));
+    assert_eq!((st.opening_balance, st.opening_date), (Some(d("440.00")), Some(ymd(2024, 12, 31))));
+    assert!(st.transactions.is_empty() && st.holdings.is_none());
+    assert_eq!(st.holder_name, s("M. MARTIN PAUL"));
+    assert_eq!(st.holder_address, s("8 RUE DES TILLEULS\n69003 LYON"));
+    assert_eq!(extra(&st, "category"), &json!("Relevé d'information annuel"));
+    assert_eq!(extra(&st, "issued_on"), &json!("2026-02-19"));
+    assert_eq!(extra(&st, "contract"), &json!("Fortuneo Vie"));
+    assert_eq!(extra(&st, "payments"), &json!("100.00"));
+    assert_eq!(extra(&st, "fees_total"), &json!("4.48"));
+}
+
+#[test]
+fn test_life_insurance_annual_statement_funds_and_movements() {
+    let (_, st) = annual_spec_pdf(&LifeAnnualSpec::new(2025));
+    let supports = extra(&st, "supports").as_array().unwrap();
+    assert_eq!(supports.len(), 4); // the euro fund, then three funds over two pages
+    assert_eq!(supports[0]["fund"], json!("FDS EUROS EXEMPLE RENDEMENT"));
+    assert_eq!((supports[0]["isin"].clone(), supports[0]["capital_guaranteed"].clone(), supports[0]["amount"].clone()), (Value::Null, json!(true), json!("400.00")));
+    assert_eq!((supports[1]["isin"].clone(), supports[1]["units"].clone(), supports[1]["unit_value"].clone(), supports[1]["amount"].clone()), (json!("FR0000000001"), json!("0.1500"), json!("400.00"), json!("60.00")));
+    assert_eq!((supports[3]["fund"].clone(), supports[3]["unit_value"].clone(), supports[3]["amount"].clone()), (json!("FONDS DIVERS EXEMPLE C"), json!("1500.00"), json!("15.00")));
+    let total: Decimal = supports.iter().map(|f| d(f["amount"].as_str().unwrap())).sum();
+    assert_eq!(Some(total), st.balance);
+    let movements = extra(&st, "movements").as_array().unwrap();
+    assert_eq!(movements.len(), 4);
+    assert_eq!((movements[0]["label"].clone(), movements[0]["credit"].clone(), movements[0]["debit"].clone()), (json!("Versements"), json!("100.00"), Value::Null));
+    assert_eq!((movements[1]["debit"].clone(), movements[1]["credit"].clone()), (json!("50.00"), json!("50.00")));
+    assert_eq!((movements[3]["label"].clone(), movements[3]["debit"].clone()), (json!("Prélèvements sociaux sur la revalorisation annuelle des fonds en euros"), json!("1.03")));
+    let rates = extra(&st, "euro_rates").as_array().unwrap();
+    assert_eq!((rates[0]["fund"].clone(), rates[0]["rate"].clone(), rates[0]["bonus"].clone()), (json!("FDS EUROS EXEMPLE RENDEMENT"), json!("2.50"), json!("0.40")));
+    assert_eq!(rates.len(), 2);
+}
+
+#[test]
+fn test_life_insurance_annual_first_year_has_no_opening_balance() {
+    let spec = LifeAnnualSpec { previous: None, ..LifeAnnualSpec::new(2023) };
+    let (_, st) = annual_spec_pdf(&spec);
+    assert_eq!((st.opening_balance, st.opening_date), (None, None));
+    assert_eq!(st.confidence, "high");
+}
+
+#[test]
+fn test_life_insurance_annual_funds_that_do_not_add_up_are_flagged() {
+    let spec = LifeAnnualSpec { declared: Some("700,00"), ..LifeAnnualSpec::new(2025) };
+    let (_, st) = annual_spec_pdf(&spec);
+    assert_eq!(st.balance, Some(d("700.00")));
+    assert_eq!(st.confidence, "medium");
+    assert!(st.warnings.iter().any(|w| w.contains("supports")));
+}
+
+#[test]
+fn test_investor_profile_is_read_and_filed() {
+    let (found, parsed) = parse(fortuneo_investor_profile_pdf("13 janvier 2026", "DYNAMIQUE"));
+    assert_eq!(found.decision, "auto");
+    assert_eq!(found.chosen.as_ref().unwrap().adapter.id(), "fortuneo.investor_profile_pdf");
+    let st = &parsed[0];
+    assert_eq!((st.document_kind.clone(), st.institution.clone(), st.confidence.clone()), (s("info"), s("Fortuneo"), "high".to_string()));
+    assert!(st.warnings.is_empty());
+    assert_eq!(st.balance_date, Some(ymd(2026, 1, 13)));
+    assert_eq!(st.holder_name, s("MARTIN PAUL"));
+    assert_eq!(extra(st, "investor_profile"), &json!("Dynamique"));
+    assert_eq!(extra(st, "extra_financial_profile"), &json!("Sans préférence"));
+    assert_eq!(extra(st, "horizon"), &json!("plus de 8 ans"));
+    assert_eq!(extra(st, "category"), &json!("Profil investisseur"));
+    // the answers of the questionnaire are not copied
+    let dump = serde_json::to_string(&st.to_json()).unwrap();
+    assert!(!dump.contains("Union libre") && !dump.contains("Profession exemple"));
+}
+
+#[test]
+fn test_the_two_new_documents_do_not_get_mixed_up() {
+    let (found, _) = parse(fortuneo_investor_profile_pdf("10 avril 2026", "PRUDENT"));
+    assert_eq!(found.chosen.as_ref().unwrap().adapter.id(), "fortuneo.investor_profile_pdf");
+    let (found, _) = parse(fortuneo_life_annual_pdf(&LifeAnnualSpec::new(2024)));
+    assert_eq!(found.chosen.as_ref().unwrap().adapter.id(), "fortuneo.life_annual_pdf");
+    let (found, _) = parse(fortuneo_arbitrage_pdf("100,00", "100,00", ""));
+    assert_eq!(found.chosen.as_ref().unwrap().adapter.id(), "fortuneo.life_arbitrage_pdf");
+}
+
+fn life_account(core: &Core) -> i64 {
+    let doc = drop(core, &fortuneo_life_annual_pdf(&LifeAnnualSpec { euro: "440,00", ..LifeAnnualSpec::new(2025) }));
+    num(&core.import_statement(doc, 0, &form(&[("account_id", "new"), ("name", "Fortuneo Vie"), ("update_balance", "on"), ("balance", "640.00")])).unwrap(), "account_id")
+}
+
+#[test]
+fn test_life_insurance_annual_statement_is_imported_as_a_balance() {
+    let core = core();
+    let spec = LifeAnnualSpec::new(2025);
+    let doc = drop(&core, &fortuneo_life_annual_pdf(&spec));
+    let id = num(&core.import_statement(doc, 0, &form(&[("account_id", "new"), ("name", "Fortuneo Vie"), ("update_balance", "on"), ("balance", "600.00")])).unwrap(), "account_id");
+    db(&core, |c| {
+        let account = Account::get(c, id)?.unwrap();
+        assert_eq!((account.account_type.as_str(), account.account_number.clone(), account.institution.clone()), ("life_insurance", s("000123456789012345"), s("Fortuneo")));
+        assert_eq!(account.balance, d("600.00"));
+        assert!(Holding::query(c, "WHERE account_id = ?", [id])?.is_empty()); // the funds are not counted twice
+        assert!(Transaction::query(c, "WHERE account_id = ?", [id])?.is_empty());
+        let statements = crate::models::Statement::query(c, "WHERE account_id = ?", [id])?;
+        assert_eq!(statements.len(), 1);
+        let st = &statements[0];
+        assert_eq!((st.period_start, st.period_end, st.opening_balance, st.closing_balance, st.tx_count), (Some(ymd(2025, 1, 1)), Some(ymd(2025, 12, 31)), Some(d("440.00")), Some(d("600.00")), 0));
+        let snapshots = crate::models::Snapshot::query(c, "WHERE account_id = ? ORDER BY day", [id])?;
+        assert_eq!(snapshots.iter().map(|x| (x.day, x.value)).collect::<Vec<_>>(), vec![(ymd(2024, 12, 31), d("440.00")), (ymd(2025, 12, 31), d("600.00"))]);
+        Ok(())
+    });
+}
+
+#[test]
+fn test_life_insurance_annual_statements_chain_year_after_year() {
+    let core = core();
+    let id = life_account(&core);
+    let older = drop(&core, &fortuneo_life_annual_pdf(&LifeAnnualSpec { euro: "240,00", previous: Some("311,00"), ..LifeAnnualSpec::new(2024) }));
+    let result = core.auto_import(older).unwrap().expect("same contract, contiguous years: imported without asking");
+    assert_eq!(num(&result, "account_id"), id);
+    db(&core, |c| {
+        assert_eq!(Account::query(c, "", [])?.len(), 1);
+        assert_eq!(Account::get(c, id)?.unwrap().balance, d("640.00")); // the older statement does not replace the newer balance
+        let statements = crate::models::Statement::query(c, "WHERE account_id = ? ORDER BY period_start", [id])?;
+        assert_eq!(statements.len(), 2);
+        assert_eq!(crate::services::statements::coverage(c, id)?.1, Vec::<String>::new());
+        assert!(crate::services::coverage::covers(c, id, ymd(2024, 1, 1), ymd(2025, 12, 31))?);
+        Ok(())
+    });
+    // undoing the older one forgets the day only it knew, and keeps the one the newer statement also gives
+    core.undo_import(older).unwrap();
+    db(&core, |c| {
+        let days: Vec<_> = crate::models::Snapshot::query(c, "WHERE account_id = ? ORDER BY day", [id])?.iter().map(|x| x.day).collect();
+        assert_eq!(days, vec![ymd(2024, 12, 31), ymd(2025, 12, 31)]);
+        assert_eq!(crate::models::Statement::query(c, "WHERE account_id = ?", [id])?.len(), 1);
+        Ok(())
+    });
+}
+
+#[test]
+fn test_life_insurance_annual_statement_hole_between_years_is_reported() {
+    let core = core();
+    let id = life_account(&core);
+    let doc = drop(&core, &fortuneo_life_annual_pdf(&LifeAnnualSpec { euro: "240,00", previous: Some("311,00"), ..LifeAnnualSpec::new(2023) }));
+    assert!(core.auto_import(doc).unwrap().is_none()); // 2024 is missing: it asks instead of importing blindly
+    db(&core, |c| {
+        assert_eq!(crate::models::Statement::query(c, "WHERE account_id = ?", [id])?.len(), 1);
+        Ok(())
+    });
+}
+
+#[test]
+fn test_investor_profile_is_filed_without_an_account() {
+    let core = core();
+    let doc = drop(&core, &fortuneo_investor_profile_pdf("13 janvier 2026", "DYNAMIQUE"));
+    let result = core.auto_import(doc).unwrap().expect("filed");
+    assert_eq!(result["kind"], json!("info"));
+    db(&core, |c| {
+        let document = Document::get(c, doc)?.unwrap();
+        assert_eq!(document.status, "imported");
+        assert_eq!(crate::services::naming::document_group(&document), ("Fortuneo".to_string(), "Profil investisseur".to_string()));
+        assert!(document.filename.starts_with("FORTUNEO_PROFIL-INVESTISSEUR_MARTIN_PAUL_2026-01-13"), "{}", document.filename);
+        Ok(())
+    });
+}
+
+#[test]
+fn test_web_the_annual_statement_shows_funds_and_movements() {
+    let mut client = client();
+    let csrf = client.login();
+    let page = upload(&mut client, &csrf, "releve-annuel.pdf", &fortuneo_life_annual_pdf(&LifeAnnualSpec::new(2025)));
+    let text = page.text();
+    for expected in ["Supports détenus au", "FONDS ACTIONS EXEMPLE A", "FR0000000001", "capital garanti", "Mouvements de l'année", "Versements", "Rendement des fonds en euros", "Les 4 supports totalisent bien la valeur du contrat"] {
+        assert!(text.contains(expected), "{expected}");
+    }
+    assert!(!text.contains("opérations lues sont complètes"));
+    // once imported, the library files it under its own type
+    let id = doc_of(&page.url).unwrap();
+    let done = client.post(&format!("/documents/{id}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Fortuneo Vie"), ("update_balance", "on"), ("balance", "600.00")]);
+    assert!(done.text().contains("ce compte"), "{}", done.text());
+    let library = client.get("/documents").text();
+    assert!(library.contains("information annuel"), "{library}");
+}
+
+#[test]
+fn test_web_the_investor_profile_is_shown_and_filed() {
+    let mut client = client();
+    let csrf = client.login();
+    let page = upload(&mut client, &csrf, "profil.pdf", &fortuneo_investor_profile_pdf("10 avril 2026", "PRUDENT"));
+    let text = page.text();
+    for expected in ["Profil investisseur", "Prudent", "Sans préférence", "plus de 8 ans", "10/04/2026"] {
+        assert!(text.contains(expected), "{expected}");
+    }
+    assert!(!text.contains("Union libre"));
+    assert!(client.get("/documents").text().contains("Profil investisseur"));
 }
