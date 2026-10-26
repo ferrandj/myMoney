@@ -156,8 +156,19 @@ pub fn find_accounts(c: &Connection, st: &ParsedStatement) -> AppResult<Vec<Acco
             scored.push((score, a));
         }
     }
+    if scored.is_empty() && st.extra_truthy("match_by_type") {
+        return same_kind_accounts(c, st);
+    }
     let best = scored.iter().map(|(s, _)| *s).max().unwrap_or(0);
     Ok(scored.into_iter().filter(|(s, _)| *s == best).map(|(_, a)| a).collect())
+}
+
+/// Accounts of the same bank and type as the document, for the exports that name no account (the operations of a
+/// life-insurance contract): the only such account is the obvious target, several are asked about.
+fn same_kind_accounts(c: &Connection, st: &ParsedStatement) -> AppResult<Vec<Account>> {
+    let (Some(institution), Some(account_type)) = (nonempty(&st.institution), nonempty(&st.account_type)) else { return Ok(vec![]) };
+    let accounts = access::only_editable(c, Account::query(c, "WHERE archived = 0", [])?)?;
+    Ok(accounts.into_iter().filter(|a| a.account_type == account_type && a.institution.as_deref() == Some(institution)).collect())
 }
 
 pub fn plan_import(c: &Connection, st: &ParsedStatement, account: Option<&Account>) -> AppResult<ImportPlan> {
@@ -413,12 +424,37 @@ fn on(form: &Form, key: &str) -> bool {
 }
 
 /// An information document (no account, no operation): recognised, dated and kept with the others.
-pub fn file_document(c: &Connection, doc: &mut Document) -> AppResult<Map<String, Value>> {
+/// A letter that names a contract (an arbitrage confirmation) goes with the account of that contract when there is
+/// exactly one; otherwise it waits among the loose papers until an account with that number appears.
+pub fn file_document(c: &Connection, doc: &mut Document, st: &ParsedStatement) -> AppResult<Map<String, Value>> {
     let before = doc.clone();
     doc.status = "imported".into();
-    doc.account_id = None;
+    let account = if nonempty(&st.account_number).is_some() { find_accounts(c, st)?.into_iter().find(|a| nonempty(&a.account_number) == nonempty(&st.account_number)) } else { None };
+    doc.account_id = account.as_ref().map(|a| a.id);
     doc.save(c, &before)?;
-    Ok(loans::import_result(None, Some("info")))
+    let mut result = loans::import_result(None, Some("info"));
+    if let Some(a) = account {
+        result.insert("account_id".into(), a.id.into());
+    }
+    Ok(result)
+}
+
+/// Papers filed before their account existed (letters of a contract) join it when it appears.
+fn adopt_documents(c: &Connection, account: &Account) -> AppResult<()> {
+    let Some(number) = nonempty(&account.account_number) else { return Ok(()) };
+    for mut doc in access::visible_documents(c)? {
+        if doc.status != "imported" || doc.account_id.is_some() {
+            continue;
+        }
+        let Some(st) = doc.parse_result.as_ref().and_then(|r| r.get("statements")).and_then(|s| s.as_array()).and_then(|a| a.first()).map(ParsedStatement::from_json) else { continue };
+        if st.document_kind.as_deref() == Some("info") && nonempty(&st.account_number) == Some(number) && st.institution == account.institution {
+            let before = doc.clone();
+            doc.account_id = Some(account.id);
+            doc.save(c, &before)?;
+            naming::rename_document(c, &mut doc)?;
+        }
+    }
+    Ok(())
 }
 
 fn attach_fee_summary(c: &Connection, doc: &mut Document, st: &ParsedStatement, account: &mut Account, form: &Form) -> AppResult<Map<String, Value>> {
@@ -515,7 +551,7 @@ fn apply_holders(c: &Connection, account: &mut Account, st: &ParsedStatement, fo
 
 fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: &Form) -> AppResult<Map<String, Value>> {
     if st.document_kind.as_deref() == Some("info") {
-        return file_document(c, doc);
+        return file_document(c, doc, st);
     }
     let target = form.get("account_id").filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| "new".into());
     let mut account = if target == "new" {
@@ -622,6 +658,7 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
     doc.status = "imported".into();
     doc.account_id = Some(account.id);
     doc.save(c, &before_doc)?;
+    adopt_documents(c, &account)?;
     ledger::mark_internal(c)?; // a new account (or new names) can turn earlier transfers into "between my own accounts"
     ledger::pair_transfers(c)?;
     let mut m = Map::new();

@@ -423,9 +423,20 @@ pub struct LifeAnnualSpec {
     /// the value printed for the contract: the sum of the funds unless set
     pub declared: Option<&'static str>,
     pub payments: &'static str,
+    /// the contract number as printed (digits only; grouped by the fixture)
+    pub contract: &'static str,
 }
 
 impl LifeAnnualSpec {
+    pub fn with_contract(self, contract: &'static str) -> Self {
+        LifeAnnualSpec { contract, ..self }
+    }
+
+    fn contract_printed(&self) -> String {
+        let c = self.contract;
+        format!("{} {} {} {}", &c[..6], &c[6..14], &c[14..16], &c[16..])
+    }
+
     pub fn new(year: i32) -> Self {
         LifeAnnualSpec {
             year,
@@ -438,6 +449,7 @@ impl LifeAnnualSpec {
             previous: Some("440,00"),
             declared: None,
             payments: "100,00",
+            contract: "000123456789012345",
         }
     }
 
@@ -453,14 +465,14 @@ pub fn fortuneo_life_annual_pdf(spec: &LifeAnnualSpec) -> Vec<u8> {
     let y = spec.year;
     let value = spec.declared.map(str::to_string).unwrap_or_else(|| fr_space(spec.total()));
     pdf.text(324.0, 60.0, &format!("Brest, le 19 février {}", y + 1));
-    pdf.text(36.0, 84.0, "N° Contrat : 000123 45678901 23 45");
+    pdf.text(36.0, 84.0, &format!("N° Contrat : {}", spec.contract_printed()));
     pdf.text(31.0, 110.0, "Votre conseiller :");
     pdf.text(31.0, 122.0, "FORTUNEO");
     pdf.text(31.0, 134.0, "TSA 41707");
     pdf.text(323.0, 146.0, "M. MARTIN PAUL");
     pdf.text(323.0, 158.0, "8 RUE DES TILLEULS");
     pdf.text(323.0, 170.0, "69003 LYON");
-    pdf.text(36.0, 200.0, "N/Réf : Contrat FORTUNEO VIE N° : 000123 45678901 23 45");
+    pdf.text(36.0, 200.0, &format!("N/Réf : Contrat FORTUNEO VIE N° : {}", spec.contract_printed()));
     pdf.text(36.0, 212.0, "Objet : Relevé d’information Annuelle");
     pdf.text(37.0, 240.0, &format!("J’ai le plaisir de vous adresser, au nom de Suravenir, le relevé d’information annuelle de votre contrat arrêté au 31 décembre {y}."));
 
@@ -549,4 +561,56 @@ pub fn fortuneo_investor_profile_pdf(established: &str, profile: &str) -> Vec<u8
     pdf.text(28.0, 190.0, "VOUS AVEZ UN PROFIL EXTRA-FINANCIER : SANS PREFERENCE");
     pdf.text(28.0, 204.0, &format!("Ce profil a été établi par vos soins le {established}"));
     pdf.bytes()
+}
+
+/// The other wording of the arbitrage confirmation ("Unités de comptes initiales / cibles", a management fee, then the
+/// whole portfolio after the arbitrage), with the spaces kept inside the names of the funds.
+pub fn fortuneo_arbitrage_v2_pdf(net: &str, initial_total: &str) -> Vec<u8> {
+    let mut pdf = Pdf::new("");
+    pdf.text(40.0, 60.0, "Références :");
+    pdf.text(40.0, 72.0, "Contrat : FORTUNEO VIE");
+    pdf.text(40.0, 84.0, "N°: 000123 45678901 23 45");
+    pdf.text(40.0, 110.0, "Objet : Confirmation d'arbitrage");
+    pdf.text(40.0, 130.0, "M. MARTIN PAUL");
+    pdf.text(40.0, 190.0, "Monsieur,");
+    pdf.text(40.0, 205.0, "Le 17 avril 2026");
+    pdf.text(40.0, 232.0, "FORTUNEO VIE dans le cadre du mandat d'arbitrage.");
+    pdf.text(40.0, 250.0, "l Date de l'arbitrage 14 avril 2026");
+    pdf.text(40.0, 262.0, "Montant brut de l'arbitrage : 100,02 €");
+    pdf.text(40.0, 274.0, "Frais d’arbitrage : 0,00 €");
+    pdf.text(40.0, 286.0, "Frais de gestion (*) : 0,02 €");
+    pdf.text(40.0, 298.0, &format!("Montant net : {net} €"));
+    pdf.text(40.0, 320.0, "l Unités de comptes initiales :");
+    pdf.text(40.0, 332.0, "Valeurs");
+    pdf.text(40.0, 344.0, "SURAVENIR");
+    pdf.text(40.0, 356.0, &format!("FDS EUROS EXEMPLE RENDEMENT 15/04/2026 1,00 {initial_total} {initial_total}"));
+    pdf.text(40.0, 368.0, "CARMIGNAC");
+    pdf.text(40.0, 380.0, "FONDS ACTIONS EXEMPLE A FR0000000001 15/04/2026 400,00 0,2500 100,00");
+    pdf.text(40.0, 410.0, "l Unités de comptes cibles :");
+    pdf.text(40.0, 422.0, "FDS EUROS EXEMPLE RENDEMENT 15/04/2026 1,00 40,0000 40,00");
+    pdf.text(40.0, 434.0, "FONDS DIVERS EXEMPLE C IE0000000003 15/04/2026 120,00 0,5000 60,00");
+    pdf.text(40.0, 464.0, "l Répartition des unités de comptes après arbitrage : (*)");
+    pdf.text(40.0, 476.0, "FDS EUROS EXEMPLE RENDEMENT 16/04/2026 1,00 340,0000 340,00");
+    pdf.text(40.0, 488.0, "FONDS DIVERS EXEMPLE C IE0000000003 16/04/2026 120,00 0,5000 60,00");
+    pdf.bytes()
+}
+
+/// The "Opérations" export of a Fortuneo Vie contract: two years of payments, the revaluation of the euro fund with the
+/// social contributions taken on it, a distribution, arbitrages (not operations), set-up lines without an amount and the
+/// fees of the running year (still without a state).
+pub fn fortuneo_life_operations_csv() -> Vec<u8> {
+    "Date;Libellé;Type;État;Montant (€)\n\
+2026-10-26;Frais année 2026;Frais;;-5.38\n\
+2026-09-15;Versement programmé;Versement;Traité;80.00\n\
+2026-08-14;Arbitrage mandat d'arbitrage;Arbitrage;Traité;50.00\n\
+2026-07-15;Versement programmé;Versement;Traité;80.00\n\
+2026-05-14;Distribution Fonds Exemple;Distribution;Traité;0.05\n\
+2026-01-24;Revalorisation fonds euros Exemple Rendement;Revalorisation;Traité;5.96\n\
+2026-01-24;Prélèvement / revalo fonds euros Exemple Rendement;Prélèvement;Traité;-1.03\n\
+2025-12-31;Frais année 2025;Frais;;-3.01\n\
+2025-05-19;Mise en place de VP;Paramétrage;Traité;\n\
+2025-01-20;Versement;Versement;Traité;100.00\n\
+2024-09-20;Adhésion;Versement;Traité;300.00\n"
+        .as_bytes()
+        .to_vec()
 }

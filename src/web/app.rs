@@ -1602,8 +1602,12 @@ impl Web {
                 histories.get(&id).and_then(|h| h.range(..=end).next_back().map(|(_, v)| *v)).unwrap_or(Decimal::ZERO)
             }
         };
-        let assets = sel_values.iter().map(|v| value_at(v.account.id)).filter(|t| *t > Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
-        let debts = sel_values.iter().map(|v| value_at(v.account.id)).filter(|t| *t < Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
+        // A loan is not part of what one owns: the total, the assets and the variation leave the loans out, which are
+        // shown on their own ("Dettes").
+        let is_loan = |v: &crate::services::valuation::AccountValue| v.account.category() == "dettes";
+        let assets = sel_values.iter().filter(|v| !is_loan(v)).map(|v| value_at(v.account.id)).filter(|t| *t > Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
+        let overdrafts = sel_values.iter().filter(|v| !is_loan(v)).map(|v| value_at(v.account.id)).filter(|t| *t < Decimal::ZERO).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
+        let debts = sel_values.iter().filter(|v| is_loan(v)).map(|v| value_at(v.account.id)).fold(PyDec::int(0), |a, t| a.add(&PyDec::from(&t)));
         let hundred = PyDec::int(100);
         let mut rows: Vec<(Value, PyDec, Option<PyDec>)> = vec![];
         let mut row_values = vec![];
@@ -1632,7 +1636,7 @@ impl Web {
                 ("pct", pct.map(Value::pydec).unwrap_or(Value::None)),
             ]));
         }
-        let compared: Vec<&(Value, PyDec, Option<PyDec>)> = rows.iter().filter(|r| r.2.is_some()).collect();
+        let compared: Vec<&(Value, PyDec, Option<PyDec>)> = rows.iter().zip(&sel_values).filter(|(r, v)| r.2.is_some() && !is_loan(v)).map(|(r, _)| r).collect();
         let base = compared.iter().fold(PyDec::int(0), |a, r| a.add(&r.1.sub(r.2.as_ref().unwrap())));
         let variation = if compared.is_empty() {
             Value::None
@@ -1645,7 +1649,7 @@ impl Web {
         match vue.as_str() {
             "evolution" => {
                 // a loan of several tens of thousands flattens everything else: the debts can be left out of the lines
-                let drawn: Vec<i64> = selected.iter().copied().filter(|i| sans_dettes == 0 || accounts[i].category() != "dettes").collect();
+                let drawn: Vec<i64> = selected.iter().copied().filter(|i| sans_dettes == 0 && par != "total" || accounts[i].category() != "dettes").collect();
                 let series = analytics::build_series(&histories, &accounts, &drawn, &par, start, end);
                 let stats = Value::dict(
                     series
@@ -1736,7 +1740,7 @@ impl Web {
             ("rows", Value::list(row_values)),
             ("assets", Value::pydec(assets.clone())),
             ("debts", Value::pydec(debts.clone())),
-            ("total", Value::pydec(assets.add(&debts))),
+            ("total", Value::pydec(assets.add(&overdrafts))),
             ("variation", variation),
             ("start", start.into()),
             ("end", end.into()),

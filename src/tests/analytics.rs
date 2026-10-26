@@ -271,7 +271,7 @@ fn test_web_views_filters_and_totals() {
 
     let evolution = client.get("/analytics?periode=tout");
     let text = evolution.text();
-    assert!(evolution.status == 200 && text.contains("<svg") && text.contains("Patrimoine net"));
+    assert!(evolution.status == 200 && text.contains("<svg") && text.contains("prêts non compris"));
     assert!(text.contains("Total de la sélection") && text.contains("Compte courant") && text.contains("Livret A"));
     let per_account = client.get("/analytics?vue=evolution&par=compte&periode=tout").text();
     assert!(per_account.matches("class=\"line s").count() >= 1 && per_account.contains("legend-label"));
@@ -301,7 +301,7 @@ fn test_web_views_filters_and_totals() {
     assert!(ranged.status == 200 && ranged_text.contains("name=\"du\" value=\"2026-09-01\"") && ranged_text.contains("name=\"au\" value=\"2026-09-30\""));
     assert!(!ranged_text.contains("aria-current=\"true\">1 an")); // no preset is highlighted
     let past = client.get("/analytics?vue=evolution&du=2026-08-01&au=2026-08-31").text();
-    assert!(past.contains("Valeur au 31/08/2026") && past.contains("Patrimoine net au 31/08/2026"));
+    assert!(past.contains("Valeur au 31/08/2026") && past.contains("Patrimoine, prêts non compris au 31/08/2026"));
     assert_eq!(client.get("/analytics?vue=evolution&du=nonsense&au=2999-01-01").status, 200); // bad dates are ignored, a future end stops at today
 
     // The dashboard draws the same wealth line, with axes and a choice of period
@@ -350,4 +350,23 @@ fn test_web_the_analyses_are_drawn_narrow_for_a_phone_and_wide_otherwise() {
     let wide = client.get_with("/analytics?periode=tout", &[("user-agent", "Mozilla/5.0 (X11; Linux x86_64) Chrome/120 Safari/537.36")]).text();
     assert!(narrow.contains("viewBox=\"0 0 430 300\""), "phone");
     assert!(!wide.contains("viewBox=\"0 0 430 300\""), "desktop");
+}
+
+#[test]
+fn test_web_loans_are_not_counted_in_the_total() {
+    let mut client = client();
+    let token = client.core.setup_token.clone();
+    client.post("/setup", &[("setup_token", &token), ("email", crate::testkit::env::ADMIN_EMAIL), ("password", crate::testkit::env::PASSWORD), ("confirm", crate::testkit::env::PASSWORD)]);
+    let csrf = csrf_of(&client.get("/documents").text());
+    client.post("/accounts/new", &[("csrf", &csrf), ("name", "Livret A"), ("account_type", "livret_a"), ("balance", "5000")]);
+    client.post("/accounts/new", &[("csrf", &csrf), ("name", "Prêt exemple"), ("account_type", "loan"), ("balance", "-3000")]);
+    let flat = |s: String| s.replace('\u{202f}', " ").replace('\u{a0}', " ");
+    let page = flat(client.get("/analytics?periode=tout").text());
+    // the total is what is owned (5 000), the loan has its own tile
+    let total = regex::Regex::new(r#"Tous les comptes</span><span class="big small-big"><span class="sensitive">([^<]*)<"#).unwrap().captures(&page).map(|c| c[1].to_string()).unwrap_or_default();
+    assert_eq!(total, "5 000,00 €", "{total}");
+    let at = page.find("Prêts (à part").unwrap_or(0);
+    assert!(page.contains("Prêts (à part, hors total)") && page.contains("-3 000,00 €"), "{}", &page[at..at + 200]);
+    let foot = regex::Regex::new(r#"Total de la sélection</th><th class="num"><span class="sensitive">([^<]*)<"#).unwrap().captures(&page).map(|c| c[1].to_string()).unwrap_or_default();
+    assert_eq!(foot, "5 000,00 €");
 }

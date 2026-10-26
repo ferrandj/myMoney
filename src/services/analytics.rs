@@ -129,9 +129,12 @@ pub fn account_history(c: &Connection, account: &Account, holdings: &[Holding], 
             return Ok(history);
         }
     }
+    // A contract whose yearly values are known (snapshots): its value moves with the markets, not only with what was
+    // paid in and taken out, so the operations cannot redraw it. The known values do.
+    let known_values: i64 = if account.account_type == "life_insurance" { c.query_row("SELECT COUNT(*) FROM snapshots WHERE account_id = ?", [account.id], |r| r.get(0))? } else { 0 };
     let mut st = c.prepare_cached("SELECT date, amount FROM transactions WHERE account_id = ?")?;
     let rows: Vec<(NaiveDate, Decimal)> = st.query_map([account.id], |r| Ok((NaiveDate::from_sql(r.get_ref(0)?), Decimal::from_sql(r.get_ref(1)?))))?.collect::<Result<_, _>>()?;
-    if let (false, true, Some(bd)) = (rows.is_empty(), holdings.is_empty(), account.balance_date) {
+    if let (false, true, Some(bd), true) = (rows.is_empty(), holdings.is_empty(), account.balance_date, known_values < 2) {
         // Value in EUR of one unit of the account's balance: 1 for euro accounts, the rate for others, -1 for debts.
         let factor = if account.balance.is_zero() { py::PyDec::int(1) } else { py::PyDec::from(&current).div(&py::PyDec::from(&account.balance)).unwrap() };
         let mut moves: HashMap<NaiveDate, Decimal> = HashMap::new();
