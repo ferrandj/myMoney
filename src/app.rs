@@ -409,6 +409,12 @@ impl MyMoney {
         Ok(())
     }
 
+    /// The flat tax in force: the total typed in the settings, else the tax office's page, else the built-in figures.
+    pub fn flat_tax(&self) -> crate::services::rates::FlatTax {
+        let typed = self.get_setting("flat_tax_rate", "").ok().and_then(|v| crate::adapters::common::py_decimal(&v.replace(',', "."))).filter(|r| *r > Decimal::ZERO && *r < Decimal::from(100));
+        crate::services::rates::flat_tax(typed, crate::services::public_rates::current().as_ref(), crate::services::prices::now())
+    }
+
     // ----------------------------------------------------------- portfolio
 
     pub fn portfolio(&self, with_history: bool) -> AppResult<Portfolio> {
@@ -496,6 +502,9 @@ impl MyMoney {
             } else {
                 Some(crate::adapters::common::py_decimal(&rate).ok_or_else(|| AppError::Other("[<class 'decimal.ConversionSyntax'>]".into()))?)
             };
+            if let Some(b) = get("interest_basis") {
+                account.interest_basis = crate::services::rates::valid_basis(&b).map(str::to_string);
+            }
             account.iban = Some(py::upper(&get("iban").unwrap_or_default().replace(' ', ""))).filter(|s| !s.is_empty());
             for (key, field) in [("bic", &mut account.bic), ("bank_code", &mut account.bank_code), ("branch_code", &mut account.branch_code), ("account_number", &mut account.account_number), ("rib_key", &mut account.rib_key)] {
                 if let Some(v) = data.get(key) {
@@ -548,12 +557,13 @@ impl MyMoney {
         })
     }
 
-    pub fn set_rate(&self, account_id: i64, rate: Decimal) -> AppResult<()> {
+    pub fn set_rate(&self, account_id: i64, rate: Decimal, basis: Option<&str>) -> AppResult<()> {
         self.session(|c| {
             access::check_edit(c, account_id)?;
             let before = Account::get(c, account_id)?.ok_or_else(|| AppError::Value("Compte introuvable".into()))?;
             let mut account = before.clone();
             account.interest_rate = Some(rate);
+            account.interest_basis = basis.and_then(crate::services::rates::valid_basis).map(str::to_string);
             account.save(c, &before)?;
             Ok(())
         })

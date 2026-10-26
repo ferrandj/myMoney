@@ -1,5 +1,29 @@
 // No inline scripts (strict Content-Security-Policy): behaviours are attached here.
 document.addEventListener("submit", (event) => {
+  // Destructive buttons (data-clicks="3") need that many clicks in a row: each click only counts down, the last one
+  // sends the form; waiting 5 seconds starts over.
+  const guard = event.submitter ? Number(event.submitter.getAttribute("data-clicks")) : 0;
+  if (guard > 1) {
+    const button = event.submitter;
+    const done = (Number(button.dataset.count) || 0) + 1;
+    clearTimeout(button.guardTimer);
+    if (done < guard) {
+      event.preventDefault();
+      if (!button.dataset.label) button.dataset.label = button.textContent.trim();
+      button.dataset.count = String(done);
+      const left = guard - done;
+      button.textContent = `${button.dataset.label} : encore ${left} clic${left > 1 ? "s" : ""}`;
+      button.classList.add("armed");
+      button.guardTimer = setTimeout(() => {
+        button.dataset.count = "0";
+        button.textContent = button.dataset.label;
+        button.classList.remove("armed");
+      }, 5000);
+      return;
+    }
+    button.dataset.count = "0";
+    return; // the clicks are the confirmation
+  }
   // A button can carry its own question (several buttons submit the same form for different scopes).
   const message = (event.submitter && event.submitter.getAttribute("data-confirm")) || event.target.getAttribute("data-confirm");
   if (message && !window.confirm(message)) event.preventDefault();

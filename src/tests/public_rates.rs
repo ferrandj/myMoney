@@ -21,12 +21,15 @@ const LDDS: &str = "<main><h2>Quel est le taux de rémunération du LDDS ?</h2><
 const LEP: &str = "<p>Quel est la rémunération du LEP ?</p><p>Le taux d'intérêt du LEP est de <span>2,50 %</span>. Anciens taux : 2,7 %</p>";
 const CEL: &str = "<p>Le taux d'intérêt du CEL, hors prime d'État, est de 1,25 %.</p><p>le taux du prêt est de 2,75 %</p>";
 
+const PFU: &str = "<p>Les revenus financiers perçus depuis le 1.1.2018 sont soumis, sauf exceptions, au prélèvement forfaire unique (PFU) de 12,8&nbsp;% (7,5 % pour certains produits d'assurance-vie).</p><p>A compter du 1<sup>er</sup> janvier 2026, le taux des prélèvements sociaux passent à 18,6 % sauf pour les produits suivants qui restent soumis au taux de 17,2 %.</p>";
+
 fn page(url: &str) -> Result<String, String> {
     Ok(match url {
         u if u.ends_with("F2365") => LIVRET_A,
         u if u.ends_with("F2368") => LDDS,
         u if u.ends_with("F2367") => LEP,
         u if u.ends_with("F16136") => CEL,
+        u if u.ends_with("les-revenus-mobiliers") => PFU,
         _ => return Err("page inconnue".into()),
     }
     .to_string())
@@ -34,19 +37,20 @@ fn page(url: &str) -> Result<String, String> {
 
 #[test]
 fn each_official_page_gives_its_rate_whatever_the_markup() {
-    let by_kind: BTreeMap<&str, &str> = pr::PAGES.iter().map(|(k, _, pattern)| (*k, *pattern)).collect();
-    assert_eq!(pr::parse_rate(LIVRET_A, by_kind["livret_a"]), Some(d("1.7")), "scripts are ignored, entities and non-breaking spaces are read");
-    assert_eq!(pr::parse_rate(LDDS, by_kind["ldds"]), Some(d("1.7")));
-    assert_eq!(pr::parse_rate(LEP, by_kind["lep"]), Some(d("2.50")), "the first sentence wins over the old rates");
-    assert_eq!(pr::parse_rate(CEL, by_kind["cel"]), Some(d("1.25")), "the loan rate of the same page is not the rate");
-    assert_eq!(pr::parse_rate("<p>rien ici</p>", by_kind["livret_a"]), None);
-    assert_eq!(pr::parse_rate("<p>Le taux d'intérêt annuel du livret A est de 45 %</p>", by_kind["livret_a"]), None, "an implausible rate is refused");
+    let by_kind: BTreeMap<&str, (&str, u32)> = pr::PAGES.iter().map(|(k, _, pattern, max)| (*k, (*pattern, *max))).collect();
+    let rate = |html: &str, kind: &str| pr::parse_rate(html, by_kind[kind].0, by_kind[kind].1);
+    assert_eq!(rate(LIVRET_A, "livret_a"), Some(d("1.7")), "scripts are ignored, entities and non-breaking spaces are read");
+    assert_eq!(rate(LDDS, "ldds"), Some(d("1.7")));
+    assert_eq!(rate(LEP, "lep"), Some(d("2.50")), "the first sentence wins over the old rates");
+    assert_eq!(rate(CEL, "cel"), Some(d("1.25")), "the loan rate of the same page is not the rate");
+    assert_eq!(rate("<p>rien ici</p>", "livret_a"), None);
+    assert_eq!(rate("<p>Le taux d'intérêt annuel du livret A est de 45 %</p>", "livret_a"), None, "an implausible rate is refused");
 }
 
 #[test]
 fn a_page_that_fails_keeps_the_previous_rate_and_nothing_readable_is_an_error() {
     let all = pr::fetch_all(&page, &BTreeMap::new()).unwrap();
-    assert_eq!(all.len(), 4);
+    assert_eq!(all.len(), 6);
     let previous: BTreeMap<String, Decimal> = all.clone();
     let only_a = |url: &str| if url.ends_with("F2365") { Ok(LIVRET_A.to_string()) } else { Err("hors ligne".to_string()) };
     assert_eq!(pr::fetch_all(&only_a, &previous).unwrap(), previous);
@@ -65,19 +69,19 @@ fn the_rates_are_asked_once_a_day_and_an_hour_after_a_failure() {
     };
     let t0 = 1_800_000_000.0;
     let first = pr::refresh_state(&dir.0, false, t0, &counting);
-    assert_eq!((*calls.borrow(), first.rates.len(), first.error.clone()), (4, 4, None));
+    assert_eq!((*calls.borrow(), first.rates.len(), first.error.clone()), (5, 6, None), "five addresses: the flat tax parts share one page");
     pr::refresh_state(&dir.0, false, t0 + 3600.0 * 23.0, &counting);
-    assert_eq!(*calls.borrow(), 4, "not again within 24 hours");
+    assert_eq!(*calls.borrow(), 5, "not again within 24 hours");
     pr::refresh_state(&dir.0, false, t0 + 3600.0 * 25.0, &counting);
-    assert_eq!(*calls.borrow(), 8, "again after 24 hours");
+    assert_eq!(*calls.borrow(), 10, "again after 24 hours");
     pr::refresh_state(&dir.0, true, t0 + 3600.0 * 25.0 + 1.0, &counting);
-    assert_eq!(*calls.borrow(), 12, "and when asked (start-up, the button)");
+    assert_eq!(*calls.borrow(), 15, "and when asked (start-up, the button)");
 
     // what was read survives a restart, and a failure keeps it
-    assert_eq!(pr::load(&dir.0).rates.len(), 4);
+    assert_eq!(pr::load(&dir.0).rates.len(), 6);
     let offline = |_: &str| -> Result<String, String> { Err("hors ligne".into()) };
     let failed = pr::refresh_state(&dir.0, true, t0 + 90_000.0, &offline);
-    assert!(failed.error.is_some() && failed.rates.len() == 4 && failed.read_at == t0 + 3600.0 * 25.0 + 1.0, "the old reading stays");
+    assert!(failed.error.is_some() && failed.rates.len() == 6 && failed.read_at == t0 + 3600.0 * 25.0 + 1.0, "the old reading stays");
     let retried = RefCell::new(0);
     let again = |u: &str| {
         *retried.borrow_mut() += 1;
@@ -86,7 +90,7 @@ fn the_rates_are_asked_once_a_day_and_an_hour_after_a_failure() {
     pr::refresh_state(&dir.0, false, t0 + 90_000.0 + 1800.0, &again);
     assert_eq!(*retried.borrow(), 0, "after a failure it waits an hour");
     pr::refresh_state(&dir.0, false, t0 + 90_000.0 + 3700.0, &again);
-    assert_eq!(*retried.borrow(), 4);
+    assert_eq!(*retried.borrow(), 5);
     assert!(pr::load(&dir.0).error.is_none());
 }
 
@@ -156,4 +160,69 @@ fn test_web_the_rate_of_a_savings_account_is_asked_typed_and_changed() {
     assert_eq!(client.post(&format!("/accounts/{id}/rate"), &[("rate", "9")]).status, 403); // CSRF
     let settings = client.get("/settings").text();
     assert!(settings.contains("Actualiser maintenant") && settings.contains("service-public.gouv.fr"));
+}
+
+#[test]
+fn the_flat_tax_is_typed_or_read_or_built_in_and_turns_gross_into_net() {
+    use crate::services::rates::{flat_tax, gross_and_net, tax_share};
+    let at = 1_800_000_000.0;
+    let built_in = flat_tax(None, None, at);
+    assert_eq!((built_in.total(), built_in.ir, built_in.social), (d("31.4"), d("12.8"), d("18.6")));
+    assert!(built_in.source.contains("intégrée"));
+    let read = State { rates: BTreeMap::from([("pfu_ir".to_string(), d("12.8")), ("pfu_ps".to_string(), d("17.2"))]), read_at: at - 100.0, checked_at: at - 100.0, error: None };
+    let online = flat_tax(None, Some(&read), at);
+    assert_eq!(online.total(), d("30.0"));
+    assert!(online.source.contains("impots.gouv.fr"));
+    let half = State { rates: BTreeMap::from([("pfu_ir".to_string(), d("12.8"))]), ..read.clone() };
+    assert_eq!(flat_tax(None, Some(&half), at).total(), d("31.4"), "both parts or nothing");
+    let typed = flat_tax(Some(d("35")), Some(&read), at);
+    assert_eq!((typed.total(), typed.social), (d("35"), d("22.2")));
+    assert!(typed.source.contains("paramètres"));
+    assert_eq!(flat_tax(None, Some(&State { read_at: at - 46.0 * 86400.0, ..read }), at).total(), d("31.4"), "an old reading is not trusted");
+
+    // regulated livrets are not taxed, the CEL only pays the social levies, the rest pays the whole flat tax
+    assert_eq!(tax_share("livret_a", &built_in), Decimal::ZERO);
+    assert_eq!(tax_share("lep", &built_in), Decimal::ZERO);
+    assert_eq!(tax_share("cel", &built_in), d("0.186"));
+    assert_eq!(tax_share("savings", &built_in), d("0.314"));
+    assert_eq!(gross_and_net(d("3"), None, d("0.314")), (d("3"), d("2.058")), "a rate is gross unless said otherwise");
+    assert_eq!(gross_and_net(d("3"), Some("gross"), d("0.30")), (d("3"), d("2.1")));
+    assert_eq!(gross_and_net(d("2.1"), Some("net"), d("0.30")), (d("3"), d("2.1")));
+    assert_eq!(gross_and_net(d("1.7"), Some("net"), Decimal::ZERO), (d("1.7"), d("1.7")));
+}
+
+#[test]
+fn test_web_gross_and_net_on_the_account_and_the_flat_tax_in_the_settings() {
+    let mut client = client();
+    let csrf = client.login();
+    let id = client.core.save_account(None, &form(&[("name", "Livret banque"), ("account_type", "savings"), ("balance", "100")])).unwrap();
+    let home = client.get("/").text();
+    assert!(home.contains("name=\"basis\"") && home.contains(">Brut<") && home.contains(">Net<"), "the case sits next to the rate");
+
+    client.post(&format!("/accounts/{id}/rate"), &[("csrf", &csrf), ("rate", "3"), ("basis", "gross")]);
+    let page = client.get(&format!("/accounts/{id}")).text();
+    assert!(page.contains("3,00 % brut") && page.contains("2,06 % net") && page.contains("flat tax 31,4 %"), "{page}");
+    client.post(&format!("/accounts/{id}/rate"), &[("csrf", &csrf), ("rate", "2,5"), ("basis", "net")]);
+    let net = client.get(&format!("/accounts/{id}")).text();
+    assert!(net.contains("3,64 % brut") && net.contains("2,50 % net"), "{net}");
+    db(&client.core, |c| {
+        assert_eq!(Account::get(c, id)?.unwrap().interest_basis.as_deref(), Some("net"));
+        Ok(())
+    });
+    // the account form carries the case too
+    assert!(client.get(&format!("/accounts/{id}/edit")).text().contains("name=\"interest_basis\""));
+
+    let settings = client.get("/settings").text();
+    assert!(settings.contains("31,4 %") && settings.contains("valeur intégrée") && settings.contains("name=\"flat_tax\""));
+    let saved = client.post("/settings/flat-tax", &[("csrf", &csrf), ("flat_tax", "30")]);
+    assert!(saved.text().contains("Flat tax enregistrée : 30 %") && saved.text().contains("saisi dans les paramètres"));
+    assert!(client.get(&format!("/accounts/{id}")).text().contains("3,57 % brut"), "the typed flat tax is applied");
+    assert!(client.post("/settings/flat-tax", &[("csrf", &csrf), ("flat_tax", "abc")]).text().contains("Taux invalide"));
+    assert!(client.post("/settings/flat-tax", &[("csrf", &csrf), ("auto", "1")]).text().contains("lecture automatique rétablie"));
+    assert_eq!(client.post("/settings/flat-tax", &[("flat_tax", "30")]).status, 403); // CSRF
+
+    // a regulated livret is not taxed: no brut / net
+    let a = client.core.save_account(None, &form(&[("name", "Mon livret A"), ("account_type", "livret_a"), ("balance", "100")])).unwrap();
+    let livret = client.get(&format!("/accounts/{a}")).text();
+    assert!(!livret.contains("% brut") && livret.contains("non imposé : brut = net"), "{livret}");
 }

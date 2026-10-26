@@ -201,3 +201,28 @@ fn one_account_can_be_invalidated_on_its_own() {
 fn d(s: &str) -> rust_decimal::Decimal {
     dec(s)
 }
+
+#[test]
+fn every_invalidate_button_is_red_and_needs_three_clicks() {
+    let mut client = client();
+    let csrf = client.login();
+    let data = boursobank_statement_pdf(&Spec::new(sample_entries()[..3].to_vec()));
+    let page = upload(&mut client, &csrf, "releve.pdf", &data);
+    let doc = Regex::new(r"/documents/(\d+)").unwrap().captures(&page.url).unwrap()[1].to_string();
+    client.post(&format!("/documents/{doc}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Compte"), ("import_transactions", "on")]);
+
+    let library = client.get("/documents").text();
+    let buttons: Vec<&str> = Regex::new(r"<button[^>]*>(?:Invalider|Tout invalider|Annuler tous les imports)[^<]*</button>").unwrap().find_iter(&library).map(|m| m.as_str()).collect();
+    assert!(buttons.len() >= 5, "selection, all, bank, account, type, rebuild: {buttons:?}");
+    for b in &buttons {
+        assert!(b.contains("danger") && b.contains("data-clicks=\"3\""), "{b}");
+    }
+    let one = client.get(&format!("/documents/{doc}")).text();
+    let undo = Regex::new(r"<button[^>]*>Invalider l'import</button>").unwrap().find(&one).unwrap().as_str().to_string();
+    assert!(undo.contains("danger") && undo.contains("data-clicks=\"3\""), "{undo}");
+
+    let js = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/static/app.js")).unwrap();
+    assert!(js.contains("data-clicks") && js.contains("encore"));
+    let css = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/static/style.css")).unwrap();
+    assert!(css.contains(".btn.danger { background: var(--neg)"));
+}

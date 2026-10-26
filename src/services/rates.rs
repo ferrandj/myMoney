@@ -143,3 +143,79 @@ pub const ASK_RATE_TYPES: &[&str] = &["savings", "pel", "term_deposit", "life_in
 pub fn needs_rate(account_type: &str, typed: Option<Decimal>) -> bool {
     typed.is_none() && ASK_RATE_TYPES.contains(&account_type)
 }
+
+// ------------------------------------------------------------------------------------------------ gross and net
+
+/// Built-in flat tax of 2026: 12,8 % of income tax and 18,6 % of social levies. Used until the tax office's page has
+/// been read, unless a value was typed in the settings.
+pub const DEFAULT_IR: &str = "12.8";
+pub const DEFAULT_PS: &str = "18.6";
+
+/// The flat tax (PFU) in force: income tax, social levies, and where the figures come from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlatTax {
+    pub ir: Decimal,
+    pub social: Decimal,
+    pub source: String,
+}
+
+impl FlatTax {
+    pub fn total(&self) -> Decimal {
+        self.ir + self.social
+    }
+}
+
+/// A total typed in the settings wins; else what the tax office's page says (both parts, read recently); else the
+/// built-in figures.
+pub fn flat_tax(typed_total: Option<Decimal>, online: Option<&public_rates::State>, at: f64) -> FlatTax {
+    let read = |key: &str| online.and_then(|s| public_rates::online_rate(s, key, at));
+    let (ir, ps) = (read("pfu_ir"), read("pfu_ps"));
+    let ir_value = ir.map(|(r, _)| r).unwrap_or_else(|| d(DEFAULT_IR));
+    if let Some(total) = typed_total {
+        return FlatTax { ir: ir_value.min(total), social: (total - ir_value).max(Decimal::ZERO), source: "saisi dans les paramètres".into() };
+    }
+    match (ir, ps) {
+        (Some((ir, read_at)), Some((ps, _))) => {
+            let day = chrono::DateTime::from_timestamp(read_at as i64, 0).map(|d| d.with_timezone(&chrono::Local).format("%d/%m/%Y").to_string()).unwrap_or_default();
+            FlatTax { ir, social: ps, source: format!("lu le {day} sur impots.gouv.fr") }
+        }
+        _ => FlatTax { ir: d(DEFAULT_IR), social: d(DEFAULT_PS), source: "valeur intégrée (2026), à confirmer dans les paramètres".into() },
+    }
+}
+
+/// Products whose interest is not taxed at all: the rate is the same gross and net.
+pub const TAX_FREE_TYPES: &[&str] = &["livret_a", "ldds", "lep", "livret_jeune"];
+
+/// The part of the interest the taxes take: nothing for the regulated livrets, the social levies only for the CEL
+/// (exempt of income tax), the whole flat tax for the rest.
+pub fn tax_share(account_type: &str, flat: &FlatTax) -> Decimal {
+    let pct = if TAX_FREE_TYPES.contains(&account_type) {
+        Decimal::ZERO
+    } else if account_type == "cel" {
+        flat.social
+    } else {
+        flat.total()
+    };
+    pct / Decimal::from(100)
+}
+
+/// (gross, net) of a rate given on `basis` ("gross" unless "net"), after `share` of the interest goes to taxes.
+pub fn gross_and_net(rate: Decimal, basis: Option<&str>, share: Decimal) -> (Decimal, Decimal) {
+    let keep = Decimal::ONE - share;
+    if keep <= Decimal::ZERO {
+        return (rate, rate);
+    }
+    if basis == Some("net") {
+        ((rate / keep).round_dp(3), rate)
+    } else {
+        (rate, (rate * keep).round_dp(3))
+    }
+}
+
+pub fn valid_basis(value: &str) -> Option<&'static str> {
+    match value {
+        "gross" | "brut" => Some("gross"),
+        "net" => Some("net"),
+        _ => None,
+    }
+}
