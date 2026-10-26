@@ -13,6 +13,8 @@ use super::boursobank::statement_pdf::BoursoBankStatementPdf;
 use super::common::{find_iban, find_institution};
 use super::fortuneo::deposit_guarantee_pdf::FortuneoDepositGuaranteePdf;
 use super::fortuneo::fees_pdf::FortuneoFeesPdf;
+use super::fortuneo::investor_profile_pdf::FortuneoInvestorProfilePdf;
+use super::fortuneo::life_annual_pdf::FortuneoLifeAnnualPdf;
 use super::fortuneo::life_arbitrage_pdf::FortuneoLifeArbitragePdf;
 use super::fortuneo::loan_offer_pdf::FortuneoLoanOfferPdf;
 use super::fortuneo::loan_prepayment_pdf::FortuneoLoanPrepaymentPdf;
@@ -35,6 +37,8 @@ pub static ADAPTERS: &[&dyn Adapter] = &[
     &FortuneoFeesPdf,
     &FortuneoDepositGuaranteePdf,
     &FortuneoLifeArbitragePdf,
+    &FortuneoLifeAnnualPdf,
+    &FortuneoInvestorProfilePdf,
     &FortuneoLoanOfferPdf,
     &FortuneoLoanSchedulePdf,
     &FortuneoLoanPrepaymentPdf,

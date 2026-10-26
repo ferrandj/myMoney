@@ -1,6 +1,8 @@
 pub mod deposit_guarantee_pdf;
 pub mod fees_pdf;
 pub mod identity;
+pub mod investor_profile_pdf;
+pub mod life_annual_pdf;
 pub mod life_arbitrage_pdf;
 pub mod loan;
 pub mod loan_offer_pdf;

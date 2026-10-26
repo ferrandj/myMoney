@@ -443,6 +443,19 @@ pub struct MerchantTotal {
 }
 
 /// The bank's own recap of fees for one account and period, next to what the statements' operations say.
+/// A credit that gives fees back ("REMBOURSEMENT EXCEPTIONNEL", a waived card fee...): it is taken off the fees, never
+/// counted as one.
+fn is_fee_refund(t: &Transaction, category: &str) -> bool {
+    if t.amount <= Decimal::ZERO {
+        return false;
+    }
+    if category == "frais" {
+        return true;
+    }
+    let label = crate::adapters::common::norm(&t.label);
+    category == "remboursements" && ["frais", "exceptionnel", "cotisation", "commission", "agio", "inactivite"].iter().any(|w| label.contains(w))
+}
+
 #[derive(Clone, Debug)]
 pub struct FeeYear {
     pub account_id: i64,
@@ -462,6 +475,8 @@ pub struct FeeYear {
     /// fee operations found in the imported statements over the same period
     pub operations: Decimal,
     pub operations_count: i64,
+    /// fees given back found in the same operations (already taken off `operations`)
+    pub operations_refunded: Decimal,
 }
 
 impl FeeYear {
@@ -475,6 +490,8 @@ pub struct FeesReport {
     /// net fees found in the operations of the period shown
     pub operations_total: Decimal,
     pub operations_count: i64,
+    /// fees given back found in the operations of the period (already taken off `operations_total`)
+    pub operations_refunded: Decimal,
     pub summaries: Vec<FeeYear>,
 }
 
@@ -562,6 +579,9 @@ pub fn spending_report(
         if amount < Decimal::ZERO && cat == "frais" {
             report.fees.operations_total += py::neg(amount);
             report.fees.operations_count += 1;
+        } else if is_fee_refund(&t, cat) {
+            report.fees.operations_total -= amount; // given back: it cancels a fee, it is not one
+            report.fees.operations_refunded += amount;
         }
         if (amount < Decimal::ZERO) != (direction == "out") {
             continue;
@@ -687,12 +707,17 @@ pub fn fee_summaries(
             services,
             operations: Decimal::ZERO,
             operations_count: 0,
+            operations_refunded: Decimal::ZERO,
         };
         for t in transactions(c, &[r.account_id], r.period_start, r.period_end, true)? {
             let contact = t.counterparty_id.and_then(|i| contacts.get(&i)).map(|s| s.as_str());
-            if t.amount < Decimal::ZERO && categories::categorize(&t, contact, rules) == "frais" {
+            let cat = categories::categorize(&t, contact, rules);
+            if t.amount < Decimal::ZERO && cat == "frais" {
                 year.operations += py::neg(t.amount);
                 year.operations_count += 1;
+            } else if is_fee_refund(&t, cat) {
+                year.operations -= t.amount;
+                year.operations_refunded += t.amount;
             }
         }
         result.push(year);
