@@ -353,3 +353,42 @@ dialog.reminder { border: 1px solid var(--border); border-radius: 18px; backgrou
 dialog.reminder::backdrop { background: rgba(0, 0, 0, .45); }
 dialog.reminder h2 { margin-top: 0; }
 .tax-table input { width: 6.5rem; text-align: right; }
+
+/* Téléphone : les tableaux de saisie passent en cartes, une ligne par rubrique */
+@media (max-width: 640px) {
+  .tax-table thead { display: none; }
+  .tax-table, .tax-table tbody, .tax-table tr, .tax-table td { display: block; width: 100%; }
+  .tax-table tr { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .tax-table tr:last-child { border-bottom: 0; }
+  .tax-table td { border: 0; padding: 3px 0; text-align: left; }
+  .tax-table td.num { display: flex; justify-content: space-between; align-items: center; gap: 12px; white-space: normal; }
+  .tax-table td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: .85rem; flex: 1 1 auto; text-align: left; }
+  .tax-table input { width: 7.5rem; }
+  .table-wrap { margin: 0 -4px; }
+}
+
+/* Téléphone : rien ne dépasse de l'écran, les tuiles se rangent par deux, les filtres défilent */
+@media (max-width: 640px) {
+  .tabs, .seg { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar, .seg::-webkit-scrollbar { display: none; }
+  .seg a, .tabs a { flex: 0 0 auto; }
+  .toolbar { gap: 8px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+  .kpis .tile:first-child { grid-column: 1 / -1; }
+  .kpis .tile { padding: 10px 12px; }
+  .kpis .kpi { font-size: 1.1rem; }
+  .kpis .small-big { font-size: 1.5rem; }
+  .bars li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .bars .bar { grid-column: 1; grid-row: auto; }
+  .bar-value { white-space: normal; text-align: left; }
+  .split { flex-direction: column; align-items: stretch; gap: 12px; }
+  .split .donut-box, .duo-side .donut-box { align-self: center; width: min(220px, 70%); }
+  .legend.vertical { margin: 0; }
+  .card { padding: 14px; }
+  h1 { font-size: 1.45rem; }
+  .dates { width: 100%; }
+  .dates label { flex: 1 1 140px; }
+  .dates input[type="date"] { flex: 1 1 auto; min-width: 0; }
+}
+
+@media (max-width: 640px) { .kpis .tile:nth-child(4) { grid-column: 1 / -1; } }

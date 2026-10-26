@@ -320,3 +320,34 @@ fn test_web_analytics_needs_login() {
     let mut client = client();
     assert_eq!(client.get_raw("/analytics").status, 303);
 }
+
+#[test]
+fn a_phone_gets_charts_drawn_on_a_narrower_canvas() {
+    use crate::web::charts;
+    let points: Vec<(NaiveDate, Decimal)> = (0..10).map(|i| (ymd(2026, 1, 1) + chrono::Duration::days(i), d("100") + Decimal::from(i * 10))).collect();
+    let series = vec![Series { key: "total".into(), label: "Total".into(), points }];
+    let wide = charts::line_chart(&series, "Évolution");
+    charts::set_compact(true);
+    let narrow = charts::line_chart(&series, "Évolution");
+    charts::set_compact(false);
+    assert!(wide.contains("viewBox=\"0 0 820 320\"") && narrow.contains("viewBox=\"0 0 430 300\""), "{narrow}");
+    assert_eq!(charts::line_chart(&series, "Évolution"), wide, "and back to the usual canvas");
+}
+
+#[test]
+fn test_web_the_analyses_are_drawn_narrow_for_a_phone_and_wide_otherwise() {
+    let mut client = client();
+    let token = client.core.setup_token.clone();
+    client.post("/setup", &[("setup_token", &token), ("email", crate::testkit::env::ADMIN_EMAIL), ("password", crate::testkit::env::PASSWORD), ("confirm", crate::testkit::env::PASSWORD)]);
+    let csrf = csrf_of(&client.get("/documents").text());
+    let spec = Spec::new(sample_entries());
+    let data = boursobank_statement_pdf(&spec);
+    let page = client.post_files("/documents", &[("csrf", &csrf)], &[Upload { field: "files", filename: "r.pdf", data: &data, content_type: "application/pdf" }]);
+    let doc_id = page.find(r"/documents/(\d+)/import/0").unwrap();
+    client.post(&format!("/documents/{doc_id}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Compte courant"), ("update_balance", "on"), ("balance", &spec.closing().to_string()), ("import_transactions", "on")]);
+    let phone = "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36";
+    let narrow = client.get_with("/analytics?periode=tout", &[("user-agent", phone)]).text();
+    let wide = client.get_with("/analytics?periode=tout", &[("user-agent", "Mozilla/5.0 (X11; Linux x86_64) Chrome/120 Safari/537.36")]).text();
+    assert!(narrow.contains("viewBox=\"0 0 430 300\""), "phone");
+    assert!(!wide.contains("viewBox=\"0 0 430 300\""), "desktop");
+}

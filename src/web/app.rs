@@ -713,6 +713,8 @@ impl Web {
     /// The middleware: origin check, session, Cloudflare Access, the redirects to setup / login / first user.
     pub fn handle(&self, req: Request) -> Response {
         let path = req.path.clone();
+        // charts are drawn on a narrower canvas for a phone, so their text stays readable
+        charts::set_compact(req.header("user-agent").map(|u| u.contains("Mobi")).unwrap_or(false));
         if req.method == "POST" && !self.trusted_origin(&req) {
             return Response::new(403, "", "Origine refusée");
         }

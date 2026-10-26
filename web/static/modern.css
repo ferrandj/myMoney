@@ -27,7 +27,7 @@ html[data-look="modern"] h2 { letter-spacing: -.02em; }
 
 /* Barre du haut : en barre latérale flottante */
 html[data-look="modern"] .topbar {
-  background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--hair); border-radius: 22px;
+  background: var(--surface); border: 1px solid var(--hair); border-radius: 22px;
   box-shadow: var(--lift); margin: 10px 12px 0; top: 10px; padding: 8px 12px;
 }
 html[data-look="modern"] .brand { display: inline-flex; align-items: center; gap: 8px; }
@@ -126,4 +126,12 @@ html[data-look="modern"] .doc-link { font-weight: 600; }
   html[data-look="modern"] .hero .big { font-size: 1.8rem; }
   html[data-look="modern"] .hero h1 { font-size: 1.25rem; }
   html[data-look="modern"] .hero .actions .btn { padding: 6px 12px; font-size: .88rem; }
+}
+
+/* Téléphone : cartes et tuiles plus serrées */
+@media (max-width: 959px) {
+  html[data-look="modern"] .card { padding: 14px; border-radius: 18px; }
+  html[data-look="modern"] .seg, html[data-look="modern"] .tabs { overflow-x: auto; }
+  html[data-look="modern"] .tile { border-radius: 14px; }
+  html[data-look="modern"] .account-grid { grid-template-columns: minmax(0, 1fr); }
 }
