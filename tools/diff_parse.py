@@ -36,6 +36,17 @@ def python_side(path: str) -> str:
 # Adapters that only exist in the Rust version (the Python reference is frozen): they are taken out of the Rust side
 # before comparing, so that everything else is still compared to the byte. Their own tests are in src/tests.
 RUST_ONLY = {"fortuneo.life_annual_pdf", "fortuneo.investor_profile_pdf", "fortuneo.life_operations_csv"}
+# Adapters whose reading was deliberately improved in Rust (the arbitrage letter: both wordings, unit value before
+# units, contract number as account number): detection and scores are still compared, not what they read.
+READ_DIVERGED = {"fortuneo.life_arbitrage_pdf"}
+
+
+def without_diverged_readings(text: str) -> str:
+    data = json.loads(text)
+    if not isinstance(data, dict) or not any(k in READ_DIVERGED for k in data.get("parsed", {})):
+        return text
+    data["parsed"] = {k: v for k, v in data["parsed"].items() if k not in READ_DIVERGED}
+    return json.dumps(data)
 
 
 def without_rust_only(text: str) -> str:
@@ -80,12 +91,12 @@ def main() -> int:
     binary, files = sys.argv[1], sys.argv[2:]
     bad = 0
     for f in files:
-        py = python_side(f)
+        py = without_diverged_readings(python_side(f))
         out = subprocess.run([binary, "parse", f], capture_output=True)
         rs = out.stdout.decode("utf-8", "surrogateescape").rstrip("\n")
         if out.returncode == 0:
             try:
-                rs = without_rust_only(rs)
+                rs = without_diverged_readings(without_rust_only(rs))
             except ValueError:
                 pass
         name = os.path.basename(f)[:60]

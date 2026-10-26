@@ -86,7 +86,7 @@
     {% if st.extra.get('issued_on') and not st.extra.get('established_on') %}<dt>Émis le</dt><dd>{{ st.balance_date|frdate }}</dd>{% endif %}
     {% if st.extra.get('contract') %}<dt>Contrat</dt><dd><span class="sensitive">{{ st.extra.contract }}{% if st.extra.get('contract_number') %} · n° {{ st.extra.contract_number }}{% endif %}</span></dd>{% endif %}
     {% if st.extra.get('arbitrage_date') %}<dt>Arbitrage du</dt><dd>{{ st.extra.arbitrage_date|frdate }}</dd>{% endif %}
-    {% if st.extra.get('net') %}<dt>Montant arbitré</dt><dd>{{ st.extra.net|money }}{% if st.extra.get('fees') and st.extra.fees != '0.00' %} (frais : {{ st.extra.fees|money }}){% else %} (aucun frais){% endif %}</dd>{% endif %}
+    {% if st.extra.get('net') %}<dt>Montant arbitré</dt><dd>{{ st.extra.net|money }}{% if st.extra.get('fees') and st.extra.fees != '0.00' %} (frais : {{ st.extra.fees|money }}){% elif st.extra.get('management_fees') and st.extra.management_fees != '0.00' %} (frais de gestion : {{ st.extra.management_fees|money }}){% else %} (aucun frais){% endif %}</dd>{% endif %}
     {% if st.extra.get('investor_profile') %}<dt>Profil investisseur</dt><dd><strong>{{ st.extra.investor_profile }}</strong>{% if st.extra.get('established_on') %} <span class="muted small">établi le {{ st.extra.established_on|frdate }}</span>{% endif %}</dd>{% endif %}
     {% if st.extra.get('extra_financial_profile') %}<dt>Profil extra-financier</dt><dd>{{ st.extra.extra_financial_profile }}</dd>{% endif %}
     {% if st.extra.get('project') %}<dt>Projet</dt><dd>{{ st.extra.project }}</dd>{% endif %}
@@ -100,8 +100,16 @@
     {% for f in funds %}<tr><td><span class="sensitive">{{ f.fund }}</span>{% if f.isin %} <span class="muted small">{{ f.isin }}</span>{% endif %}</td><td class="nowrap small">{{ f.date|frdate }}</td><td class="num">{{ f.amount|money }}</td></tr>{% endfor %}
   </table></div>
   {% endfor %}
-  <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable).</p>
-  {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec tes papiers.</p>
+  {% if st.extra.get('portfolio_after') %}
+  <details>
+    <summary>Contrat après l'arbitrage ({{ st.extra.portfolio_after|length }} supports)</summary>
+    <div class="table-wrap"><table>
+      {% for f in st.extra.portfolio_after %}<tr><td><span class="sensitive">{{ f.fund }}</span>{% if f.isin %} <span class="muted small">{{ f.isin }}</span>{% endif %}</td><td class="nowrap small">{{ f.date|frdate }}</td><td class="num">{{ f.amount|money }}</td></tr>{% endfor %}
+    </table></div>
+  </details>
+  {% endif %}
+  <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable){% if st.account_number %}, avec le contrat n° <span class="sensitive">{{ st.account_number }}</span> quand son compte existe{% endif %}.</p>
+  {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec {% if doc.account_id %}<a href="/accounts/{{ doc.account_id }}">le compte du contrat</a>{% else %}tes papiers (aucun compte n'a encore ce numéro de contrat){% endif %}.</p>
   {% else %}
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}<input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>
   {% endif %}
@@ -264,6 +272,7 @@
     {% if st.extra.get('balance_only') and st.extra.get('supports') and not st.warnings %}<li class="ok">✓ Les {{ st.extra.supports|length }} supports totalisent bien la valeur du contrat.</li>
     {% elif st.opening_balance is not none and st.balance is not none and st.confidence == 'high' and st.transactions %}<li class="ok">✓ Solde initial + opérations = solde final : les {{ st.transactions|length }} opérations lues sont complètes.</li>{% endif %}
     {% for w in st.warnings %}<li class="bad">⚠ {{ w }}</li>{% endfor %}
+    {% for n in st.extra.get('notes', []) %}<li class="ok">ℹ {{ n }}</li>{% endfor %}
     {% for i in plan.issues %}<li class="bad">⚠ {{ i }}</li>{% endfor %}
     {% if done %}
     <li class="ok">✓ Importé{% if plan.already_imported %} le {{ plan.already_imported.imported_at|frdate }}{% endif %}{% if doc.account_id %} dans <a href="/accounts/{{ doc.account_id }}">ce compte</a>{% endif %}. Pour le relire ou le réimporter, invalide-le d'abord (bouton plus bas).</li>

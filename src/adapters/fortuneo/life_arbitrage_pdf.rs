@@ -6,7 +6,9 @@
 //! reliability reflects.
 //!
 //! Some of these PDFs lose their spaces ("Montantbrutdel'arbitrage"), so the markers are looked for in the text with
-//! its spaces and punctuation removed.
+//! its spaces and punctuation removed, and the lines of funds are rebuilt from the words and their position (the
+//! names of the funds keep their spaces). The letter exists in two wordings: "Désinvestissement / Réinvestissement"
+//! and "Unités de comptes initiales / cibles". In the lines the unit value comes first, then the number of units.
 
 use std::str::FromStr;
 
@@ -16,6 +18,7 @@ use serde_json::{Map, Value};
 
 use super::fees_pdf::amount_str;
 use crate::adapters::base::{round2, score, Adapter, Detection, ParseResult, ParsedStatement, SourceDocument};
+use crate::adapters::pdftools;
 use crate::adapters::common::{french_date, norm, parse_amount};
 use crate::adapters::re::{py_match, search, sub};
 use crate::py;
@@ -24,9 +27,9 @@ const MONTH: &str = r"(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembr
 const ISIN: &str = r"[A-Z]{2}[A-Z0-9]{9}\d";
 
 fn line_re() -> String {
-    // fund (no spaces guaranteed), ISIN (the euro fund has none), valuation date, units, unit value, amount
+    // fund, ISIN (the euro fund has none), valuation date, unit value, units, amount
     format!(
-        r"^(?P<name>\S.*?)\s+(?:(?P<isin>{ISIN})\s+)?(?P<day>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<units>\d[\d ]*,\d+)\s+(?P<price>\d[\d ]*,\d+)\s+(?P<amount>\d[\d ]*,\d{{2}})$"
+        r"^(?P<name>\S.*?)\s+(?:(?P<isin>{ISIN})\s+)?(?P<day>\d{{2}}/\d{{2}}/\d{{4}})\s+(?P<price>\d[\d ]*,\d+)\s+(?P<units>\d[\d ]*,\d+)\s+(?P<amount>\d[\d ]*,\d{{2}})$"
     )
 }
 
@@ -108,11 +111,23 @@ impl Adapter for FortuneoLifeArbitragePdf {
         if let Some(m) = search(r"Contrat\s*:\s*([^\n]+)", &text) {
             st.set_extra("contract", py::strip(&m[1]).to_string());
         }
-        if let Some(m) = search(r"N\s*°\s*:?\s*(\d{8,})", &text) {
-            st.set_extra("contract_number", m[1].to_string());
+        let mut rows: Vec<String> = vec![];
+        for words in doc.words(1.0)?.iter() {
+            for row in pdftools::lines(words, 3.0, false) {
+                let kept: Vec<_> = row.into_iter().filter(|w| w.x0 >= 25.0).collect(); // the margin carries a rotated reference
+                rows.push(py::strip(&pdftools::row_text(&kept)).to_string());
+            }
         }
+        let number = rows.iter().find(|r| r.starts_with("N°")).map(|r| r.split_once(':').map(|(_, n)| n).unwrap_or("").chars().filter(|c| c.is_ascii_digit()).collect::<String>());
+        let number = number.filter(|n| n.len() >= 8).or_else(|| search(r"N\s*°\s*:?\s*(\d{8,})", &text).map(|m| m[1].to_string()));
+        if let Some(n) = number {
+            st.account_number = Some(n.clone()); // the contract: what ties the letter to its account
+            st.set_extra("contract_number", n);
+        }
+        st.account_type = Some("life_insurance".into());
         let (gross, fees, net) = (amount("montantbrutdelarbitrage"), amount("fraisdarbitrage"), amount("montantnet"));
-        for (key, value) in [("gross", gross), ("fees", fees), ("net", net)] {
+        let management = amount("fraisdegestion");
+        for (key, value) in [("gross", gross), ("fees", fees), ("management_fees", management), ("net", net)] {
             if let Some(v) = value {
                 st.set_extra(key, py::dec_str(&v));
             }
@@ -120,28 +135,31 @@ impl Adapter for FortuneoLifeArbitragePdf {
 
         let mut sold: Vec<Map<String, Value>> = vec![];
         let mut bought: Vec<Map<String, Value>> = vec![];
-        let mut target: Option<bool> = None; // Some(true): sold
+        let mut after: Vec<Map<String, Value>> = vec![]; // the whole portfolio once the arbitrage is done (some letters list it)
+        let mut target: Option<u8> = None; // 0: sold, 1: bought, 2: portfolio after
         let lre = line_re();
-        for raw in py::splitlines(&text) {
+        for raw in &rows {
             let line = py::strip(raw);
             let key = squash(line);
-            if py::char_len(&key) < 30 && key.contains("desinvestissement") {
+            if py::char_len(&key) < 40 && (key.contains("desinvestissement") || key.contains("unitesdecomptesinitiales") || key.contains("unitesdecompteinitiales")) {
                 // a bullet may precede the heading
-                target = Some(true);
-            } else if py::char_len(&key) < 30 && key.contains("reinvestissement") {
-                target = Some(false);
+                target = Some(0);
+            } else if py::char_len(&key) < 60 && key.contains("repartitiondesunitesdecomptes") {
+                target = Some(2);
+            } else if py::char_len(&key) < 40 && (key.contains("reinvestissement") || key.contains("unitesdecomptescibles") || key.contains("unitesdecomptecibles")) {
+                target = Some(1);
             } else if let (Some(t), Some(m)) = (target, py_match(&lre, line)) {
                 let mut e = Map::new();
                 e.insert("fund".into(), py::strip(&m["name"]).to_string().into());
                 e.insert("isin".into(), m.name("isin").map(|x| Value::String(x.as_str().to_string())).unwrap_or(Value::Null));
                 e.insert("date".into(), iso(&m["day"]).into());
-                e.insert("units".into(), amount_str(&m["units"]).into());
                 e.insert("unit_value".into(), amount_str(&m["price"]).into());
+                e.insert("units".into(), amount_str(&m["units"]).into());
                 e.insert("amount".into(), amount_str(&m["amount"]).into());
-                if t {
-                    sold.push(e);
-                } else {
-                    bought.push(e);
+                match t {
+                    0 => sold.push(e),
+                    1 => bought.push(e),
+                    _ => after.push(e),
                 }
             }
         }
@@ -151,6 +169,9 @@ impl Adapter for FortuneoLifeArbitragePdf {
         let (bought_total, sold_total) = (total(&bought), total(&sold));
         st.set_extra("sold", Value::Array(sold.iter().cloned().map(Value::Object).collect()));
         st.set_extra("bought", Value::Array(bought.iter().cloned().map(Value::Object).collect()));
+        if !after.is_empty() {
+            st.set_extra("portfolio_after", Value::Array(after.into_iter().map(Value::Object).collect()));
+        }
 
         let what = match st.extra.get("contract") {
             Some(c) if crate::models::truthy(c) => format!("Confirmation d'arbitrage · {}", c.as_str().unwrap_or("")),
@@ -159,7 +180,7 @@ impl Adapter for FortuneoLifeArbitragePdf {
         st.set_extra("title", what);
         st.set_extra("category", "Assurance-vie");
         let mut problems: Vec<String> = vec![];
-        let tolerance = Decimal::from_str("0.05").unwrap();
+        let tolerance = Decimal::from_str("0.10").unwrap(); // up to a cent of rounding on each line
         if sold.is_empty() || bought.is_empty() {
             problems.push("Les fonds vendus ou achetés n'ont pas pu être lus en entier".into());
         }

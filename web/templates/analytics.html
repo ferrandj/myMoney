@@ -31,9 +31,9 @@
 <h1>Analyses</h1>
 
 <section class="tiles kpis">
-  <div class="tile"><span class="muted small">{{ 'Tous les comptes' if everything else (selected|length ~ ' compte(s) sélectionné(s)') }}</span><span class="big small-big">{{ total|money }}</span><span class="muted small">Patrimoine net{% if end != today %} au {{ end|frdate }}{% endif %}</span></div>
+  <div class="tile"><span class="muted small">{{ 'Tous les comptes' if everything else (selected|length ~ ' compte(s) sélectionné(s)') }}</span><span class="big small-big">{{ total|money }}</span><span class="muted small">Patrimoine, prêts non compris{% if end != today %} au {{ end|frdate }}{% endif %}</span></div>
   <div class="tile"><span class="muted small">Actifs</span><span class="kpi">{{ assets|money }}</span></div>
-  <div class="tile"><span class="muted small">Dettes</span><span class="kpi">{{ debts|money }}</span></div>
+  <div class="tile"><span class="muted small">Prêts (à part, hors total)</span><span class="kpi">{{ debts|money }}</span></div>
   {% if variation %}
   <div class="tile"><span class="muted small">Variation depuis le {{ start|frdate }}</span>
     <span class="kpi {{ 'pos' if variation.delta > 0 else ('neg' if variation.delta < 0 else '') }}">{{ variation.delta|money }}</span>
