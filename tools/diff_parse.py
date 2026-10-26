@@ -33,6 +33,20 @@ def python_side(path: str) -> str:
     return json.dumps(out)
 
 
+# Adapters that only exist in the Rust version (the Python reference is frozen): they are taken out of the Rust side
+# before comparing, so that everything else is still compared to the byte. Their own tests are in src/tests.
+RUST_ONLY = {"fortuneo.life_annual_pdf", "fortuneo.investor_profile_pdf", "fortuneo.life_operations_csv"}
+
+
+def without_rust_only(text: str) -> str:
+    data = json.loads(text)
+    if not isinstance(data, dict) or not any(c.get("adapter") in RUST_ONLY for c in data.get("candidates", [])):
+        return text
+    data["candidates"] = [c for c in data["candidates"] if c.get("adapter") not in RUST_ONLY]
+    data["parsed"] = {k: v for k, v in data.get("parsed", {}).items() if k not in RUST_ONLY}
+    return json.dumps(data)
+
+
 def first_difference(a, b, path="$"):
     if type(a) is not type(b):
         return f"{path}: {a!r} != {b!r}"
@@ -69,6 +83,11 @@ def main() -> int:
         py = python_side(f)
         out = subprocess.run([binary, "parse", f], capture_output=True)
         rs = out.stdout.decode("utf-8", "surrogateescape").rstrip("\n")
+        if out.returncode == 0:
+            try:
+                rs = without_rust_only(rs)
+            except ValueError:
+                pass
         name = os.path.basename(f)[:60]
         if out.returncode != 0:
             bad += 1
