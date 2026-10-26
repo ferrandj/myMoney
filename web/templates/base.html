@@ -55,6 +55,19 @@
     </form>
   </header>
   {% endif %}
+  {% if tax_reminder %}
+  <dialog id="tax-reminder" class="reminder" open aria-labelledby="tax-reminder-title">
+    <h2 id="tax-reminder-title">📋 Vérifier les taux fiscaux</h2>
+    <p>{% if tax_reminder.days is none %}Les taux fiscaux n'ont jamais été vérifiés.{% else %}Les taux fiscaux n'ont pas été vérifiés depuis {{ tax_reminder.days }} jours.{% endif %} Ils servent à passer les taux bruts en net (flat tax, assurance-vie…) et changent avec les lois de finances.</p>
+    {% if tax_reminder.differences %}<ul class="checks small">{% for dd in tax_reminder.differences %}<li class="bad">⚠ {{ dd }}</li>{% endfor %}</ul>{% endif %}
+    <p class="small muted">Les valeurs préremplies sont celles de {{ tax_reminder.year }} ; vérifie-les sur la source (LégiFiscal) et mets-les à jour si besoin.</p>
+    <div class="actions">
+      <a class="btn primary" href="/settings/tax">Vérifier et mettre à jour</a>
+      <form method="post" action="/settings/tax/reviewed"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ request.url.path }}"><button class="btn">✓ Ils sont à jour</button></form>
+      <form method="post" action="/settings/tax/snooze"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ request.url.path }}"><button class="btn ghost">Me le redire demain</button></form>
+    </div>
+  </dialog>
+  {% endif %}
   <main class="{% block main_class %}container{% endblock %}">
     {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
     {% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}

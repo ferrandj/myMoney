@@ -3,6 +3,7 @@ pub mod analytics;
 pub mod categories;
 pub mod counterparties;
 pub mod coverage;
+pub mod fiscal;
 pub mod holders;
 pub mod ledger;
 pub mod loans;

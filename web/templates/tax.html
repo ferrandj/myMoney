@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Fiscalité{% endblock %}
+{% block content %}
+<p><a href="/settings">← Paramètres</a></p>
+<section class="hero">
+  <div>
+    <p class="muted">Fiscalité</p>
+    <h1>Taux fiscaux {{ year }}</h1>
+    <p class="muted small">Préremplis avec les chiffres de {{ year }}. Ils changent avec les lois de finances : vérifie-les ici, l'application te le rappelle une fois par mois.
+      {% if reviewed_at %}Dernière vérification le {{ reviewed_at }}{% if days is not none %} (il y a {{ days }} jour{{ 's' if days > 1 }}){% endif %}.{% else %}<strong class="warn">Jamais vérifiés.</strong>{% endif %}</p>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="{{ source_url }}" target="_blank" rel="noopener noreferrer">📖 Voir la source : LégiFiscal</a>
+  </div>
+</section>
+
+{% if differences %}
+<section class="card rates-needed">
+  <h2>À vérifier</h2>
+  <ul class="checks small">{% for dd in differences %}<li class="bad">⚠ {{ dd }}</li>{% endfor %}</ul>
+  <p class="small muted">L'application lit aussi la flat tax sur impots.gouv.fr (avec les taux des livrets) et la compare à ce tableau.</p>
+</section>
+{% endif %}
+
+<form method="post" action="/settings/tax" class="card stack">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <h2>Taux par catégorie</h2>
+  <p class="small muted">Source : <a href="{{ source_url }}" target="_blank" rel="noopener noreferrer">{{ source_name }}</a>. L'impôt sur le revenu et les prélèvements sociaux s'additionnent. La première ligne sert à passer un taux brut en taux net pour les livrets bancaires, comptes à terme, PEL et crowdlending ; l'assurance-vie utilise sa ligne « avant 8 ans » ; le CEL ne paie que les prélèvements sociaux ; Livret A, LDDS, LEP et Livret Jeune ne sont pas imposés.</p>
+  <div class="table-wrap"><table class="tax-table">
+    <thead><tr><th>Catégorie</th><th class="num">Impôt sur le revenu (%)</th><th class="num">Prélèvements sociaux (%)</th><th class="num">Global</th><th class="num">Défaut {{ year }}</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><strong>{{ r.label }}</strong>{% if r.edited %} <span class="tag" title="Différent du défaut">modifié</span>{% endif %}{% if r.note %}<div class="muted small">{{ r.note }}</div>{% endif %}</td>
+      <td class="num">{% if r.flat %}<input name="ir_{{ r.key }}" inputmode="decimal" value="{{ ('%.2f'|format(r.ir))|replace('.', ',') }}" aria-label="Impôt sur le revenu, {{ r.label }}">{% else %}<span class="muted small">barème</span><input type="hidden" name="ir_{{ r.key }}" value="">{% endif %}</td>
+      <td class="num"><input name="social_{{ r.key }}" inputmode="decimal" value="{{ ('%.2f'|format(r.social))|replace('.', ',') }}" aria-label="Prélèvements sociaux, {{ r.label }}"></td>
+      <td class="num">{% if r.total is not none %}<strong>{{ ('%.2f'|format(r.total))|replace('.', ',') }} %</strong>{% else %}<span class="muted small">barème + {{ ('%.1f'|format(r.social))|replace('.', ',') }} %</span>{% endif %}</td>
+      <td class="num small muted">{% if r.default_ir is not none %}{{ ('%.1f'|format(r.default_ir))|replace('.', ',') }} + {{ ('%.1f'|format(r.default_social))|replace('.', ',') }}{% else %}barème + {{ ('%.1f'|format(r.default_social))|replace('.', ',') }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="actions"><button class="btn primary">Enregistrer et marquer comme vérifié</button></div>
+</form>
+
+<section class="card">
+  <div class="actions">
+    <form method="post" action="/settings/tax/reviewed"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn">✓ Les taux sont à jour (rien à changer)</button></form>
+    <form method="post" action="/settings/tax/reset" data-confirm="Rétablir les valeurs de {{ year }} ? Tes modifications sont perdues."><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn ghost">Rétablir les valeurs de {{ year }}</button></form>
+  </div>
+  <p class="small muted">Ces taux serviront aussi plus tard à d'autres calculs (impôt, simulations) : d'autres lignes pourront s'ajouter ici d'elles-mêmes.</p>
+</section>
+{% endblock %}

@@ -409,10 +409,13 @@ impl MyMoney {
         Ok(())
     }
 
-    /// The flat tax in force: the total typed in the settings, else the tax office's page, else the built-in figures.
-    pub fn flat_tax(&self) -> crate::services::rates::FlatTax {
-        let typed = self.get_setting("flat_tax_rate", "").ok().and_then(|v| crate::adapters::common::py_decimal(&v.replace(',', "."))).filter(|r| *r > Decimal::ZERO && *r < Decimal::from(100));
-        crate::services::rates::flat_tax(typed, crate::services::public_rates::current().as_ref(), crate::services::prices::now())
+    /// The tax table (2026 figures unless the administrator changed them).
+    pub fn tax_table(&self) -> crate::services::fiscal::TaxTable {
+        self.session(|c| crate::services::fiscal::load(c)).unwrap_or_default()
+    }
+
+    pub fn save_tax_table(&self, table: &crate::services::fiscal::TaxTable) -> AppResult<()> {
+        self.session(|c| crate::services::fiscal::save(c, table))
     }
 
     // ----------------------------------------------------------- portfolio

@@ -347,3 +347,9 @@ dl.kv dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
 .rate-line { display: flex; gap: 8px; }
 .rate-line input { flex: 1 1 auto; }
 .rate-line select { flex: 0 0 90px; width: auto; }
+
+/* Rappel mensuel des taux fiscaux */
+dialog.reminder { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); color: var(--text); padding: 20px 22px; max-width: min(520px, calc(100vw - 28px)); box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .5); }
+dialog.reminder::backdrop { background: rgba(0, 0, 0, .45); }
+dialog.reminder h2 { margin-top: 0; }
+.tax-table input { width: 6.5rem; text-align: right; }

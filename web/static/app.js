@@ -341,3 +341,28 @@ document.addEventListener("input", (event) => {
   input.value = upper;
   if (at !== null) input.setSelectionRange(at, at);
 });
+
+// Monthly reminder for the administrator (tax rates to check): a modal; closing it with Escape only hides it for this
+// browser session, the buttons record the answer on the server.
+const taxReminder = document.getElementById("tax-reminder");
+if (taxReminder) {
+  let hidden = false;
+  try {
+    hidden = sessionStorage.getItem("mymoney-tax-later") === "1";
+  } catch (error) {
+    /* storage blocked: it simply shows */
+  }
+  if (hidden) {
+    taxReminder.remove();
+  } else if (taxReminder.showModal) {
+    taxReminder.removeAttribute("open");
+    taxReminder.showModal();
+    taxReminder.addEventListener("close", () => {
+      try {
+        sessionStorage.setItem("mymoney-tax-later", "1");
+      } catch (error) {
+        /* ignore */
+      }
+    });
+  }
+}

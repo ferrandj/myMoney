@@ -118,17 +118,11 @@
   {% elif online_rates.checked_at %}<p class="warn small">⚠ Lecture impossible le {{ online_rates.checked_at }} : {{ online_rates.error }}. La table intégrée s'applique.</p>
   {% else %}<p class="muted small">Pas encore de lecture : elle se fait au démarrage.</p>{% endif %}
   <form method="post" action="/settings/rates/refresh" class="actions"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn small">Actualiser maintenant</button></form>
-  <h3>Flat tax (prélèvement forfaitaire unique)</h3>
-  <p class="small muted">Sert à passer d'un taux brut à un taux net (livrets bancaires, comptes à terme, PEL…). Les Livret A, LDDS et LEP ne sont pas imposés ; le CEL ne paie que les prélèvements sociaux. Elle change avec les lois de finances : l'application la relit sur impots.gouv.fr en même temps que les taux, et tu peux la fixer toi-même.</p>
-  <p><strong>{{ ('%.1f'|format(flat_tax.total))|replace('.', ',') }} %</strong> <span class="muted small">= {{ ('%.1f'|format(flat_tax.ir))|replace('.', ',') }} % d'impôt sur le revenu + {{ ('%.1f'|format(flat_tax.social))|replace('.', ',') }} % de prélèvements sociaux · {{ flat_tax.source }}</span></p>
-  {% if me.is_admin %}
-  <form method="post" action="/settings/flat-tax" class="inline-identify">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input name="flat_tax" inputmode="decimal" placeholder="Taux total en %, ex. 31,4" value="{{ flat_tax.typed }}" aria-label="Flat tax en %">
-    <button class="btn small">Enregistrer</button>
-    {% if flat_tax.typed %}<button class="btn small ghost" name="auto" value="1" formnovalidate>Revenir à la lecture automatique</button>{% endif %}
-  </form>
-  {% endif %}
+  <h3>Fiscalité</h3>
+  <p class="small muted">Flat tax, assurance-vie, PEA… : les taux sont dans un tableau prérempli avec les chiffres de {{ flat_tax.year }}, à vérifier une fois par mois. Ils servent à passer un taux brut en net.</p>
+  <p>{% if flat_tax.total is not none %}Flat tax actuelle : <strong>{{ ('%.1f'|format(flat_tax.total))|replace('.', ',') }} %</strong>. {% endif %}{% if flat_tax.due %}<span class="warn small">⚠ À vérifier.</span>{% endif %}
+    {% if me.is_admin %}<a class="btn small" href="/settings/tax">Ouvrir le tableau fiscal</a>{% endif %}
+    <a class="small" href="https://www.legifiscal.fr/reperes-fiscaux/flat-tax-pfu-champ-application-taux-applicables.html" target="_blank" rel="noopener noreferrer">Source : LégiFiscal ↗</a></p>
   <h3>Table intégrée</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Depuis le</th><th class="num">Livret A</th><th class="num">LDDS</th><th class="num">LEP</th><th class="num">CEL</th></tr></thead>
