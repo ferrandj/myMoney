@@ -163,28 +163,8 @@ fn test_web_the_rate_of_a_savings_account_is_asked_typed_and_changed() {
 }
 
 #[test]
-fn the_flat_tax_is_typed_or_read_or_built_in_and_turns_gross_into_net() {
-    use crate::services::rates::{flat_tax, gross_and_net, tax_share};
-    let at = 1_800_000_000.0;
-    let built_in = flat_tax(None, None, at);
-    assert_eq!((built_in.total(), built_in.ir, built_in.social), (d("31.4"), d("12.8"), d("18.6")));
-    assert!(built_in.source.contains("intégrée"));
-    let read = State { rates: BTreeMap::from([("pfu_ir".to_string(), d("12.8")), ("pfu_ps".to_string(), d("17.2"))]), read_at: at - 100.0, checked_at: at - 100.0, error: None };
-    let online = flat_tax(None, Some(&read), at);
-    assert_eq!(online.total(), d("30.0"));
-    assert!(online.source.contains("impots.gouv.fr"));
-    let half = State { rates: BTreeMap::from([("pfu_ir".to_string(), d("12.8"))]), ..read.clone() };
-    assert_eq!(flat_tax(None, Some(&half), at).total(), d("31.4"), "both parts or nothing");
-    let typed = flat_tax(Some(d("35")), Some(&read), at);
-    assert_eq!((typed.total(), typed.social), (d("35"), d("22.2")));
-    assert!(typed.source.contains("paramètres"));
-    assert_eq!(flat_tax(None, Some(&State { read_at: at - 46.0 * 86400.0, ..read }), at).total(), d("31.4"), "an old reading is not trusted");
-
-    // regulated livrets are not taxed, the CEL only pays the social levies, the rest pays the whole flat tax
-    assert_eq!(tax_share("livret_a", &built_in), Decimal::ZERO);
-    assert_eq!(tax_share("lep", &built_in), Decimal::ZERO);
-    assert_eq!(tax_share("cel", &built_in), d("0.186"));
-    assert_eq!(tax_share("savings", &built_in), d("0.314"));
+fn gross_and_net_convert_both_ways() {
+    use crate::services::rates::gross_and_net;
     assert_eq!(gross_and_net(d("3"), None, d("0.314")), (d("3"), d("2.058")), "a rate is gross unless said otherwise");
     assert_eq!(gross_and_net(d("3"), Some("gross"), d("0.30")), (d("3"), d("2.1")));
     assert_eq!(gross_and_net(d("2.1"), Some("net"), d("0.30")), (d("3"), d("2.1")));
@@ -192,7 +172,7 @@ fn the_flat_tax_is_typed_or_read_or_built_in_and_turns_gross_into_net() {
 }
 
 #[test]
-fn test_web_gross_and_net_on_the_account_and_the_flat_tax_in_the_settings() {
+fn test_web_gross_and_net_on_the_account() {
     let mut client = client();
     let csrf = client.login();
     let id = client.core.save_account(None, &form(&[("name", "Livret banque"), ("account_type", "savings"), ("balance", "100")])).unwrap();
@@ -212,14 +192,11 @@ fn test_web_gross_and_net_on_the_account_and_the_flat_tax_in_the_settings() {
     // the account form carries the case too
     assert!(client.get(&format!("/accounts/{id}/edit")).text().contains("name=\"interest_basis\""));
 
-    let settings = client.get("/settings").text();
-    assert!(settings.contains("31,4 %") && settings.contains("valeur intégrée") && settings.contains("name=\"flat_tax\""));
-    let saved = client.post("/settings/flat-tax", &[("csrf", &csrf), ("flat_tax", "30")]);
-    assert!(saved.text().contains("Flat tax enregistrée : 30 %") && saved.text().contains("saisi dans les paramètres"));
-    assert!(client.get(&format!("/accounts/{id}")).text().contains("3,57 % brut"), "the typed flat tax is applied");
-    assert!(client.post("/settings/flat-tax", &[("csrf", &csrf), ("flat_tax", "abc")]).text().contains("Taux invalide"));
-    assert!(client.post("/settings/flat-tax", &[("csrf", &csrf), ("auto", "1")]).text().contains("lecture automatique rétablie"));
-    assert_eq!(client.post("/settings/flat-tax", &[("flat_tax", "30")]).status, 403); // CSRF
+    // the tax table sets the percentage: editing the line of the interest changes the net
+    let table = client.get("/settings/tax").text();
+    assert!(table.contains("name=\"ir_interets\"") && table.contains("legifiscal.fr"));
+    client.post("/settings/tax", &[("csrf", &csrf), ("ir_interets", "12,8"), ("social_interets", "17,2")]);
+    assert!(client.get(&format!("/accounts/{id}")).text().contains("3,57 % brut"), "30 % in total now");
 
     // a regulated livret is not taxed: no brut / net
     let a = client.core.save_account(None, &form(&[("name", "Mon livret A"), ("account_type", "livret_a"), ("balance", "100")])).unwrap();

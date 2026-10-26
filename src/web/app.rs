@@ -273,6 +273,7 @@ const TEMPLATES: &[(&str, &str)] = template_sources!(
     "account_form.html",
     "accounts.html",
     "people.html",
+    "tax.html",
     "person.html",
     "analytics.html",
     "base.html",
@@ -331,7 +332,11 @@ enum R {
     AccountQuick,
     AccountRate,
     RatesRefresh,
-    FlatTaxSave,
+    TaxPage,
+    TaxSave,
+    TaxReviewed,
+    TaxSnooze,
+    TaxReset,
     AccountCreate,
     AccountDetail,
     ShareAdd,
@@ -410,7 +415,11 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/accounts/{account_id}/quick", R::AccountQuick),
     ("POST", "/accounts/{account_id}/rate", R::AccountRate),
     ("POST", "/settings/rates/refresh", R::RatesRefresh),
-    ("POST", "/settings/flat-tax", R::FlatTaxSave),
+    ("GET", "/settings/tax", R::TaxPage),
+    ("POST", "/settings/tax", R::TaxSave),
+    ("POST", "/settings/tax/reviewed", R::TaxReviewed),
+    ("POST", "/settings/tax/snooze", R::TaxSnooze),
+    ("POST", "/settings/tax/reset", R::TaxReset),
     ("POST", "/accounts/new", R::AccountCreate),
     ("GET", "/accounts/{account_id}", R::AccountDetail),
     ("POST", "/accounts/{account_id}/shares", R::ShareAdd),
@@ -615,6 +624,22 @@ impl Web {
         context.insert("flash".into(), cx.q("msg").map(Value::str).unwrap_or(Value::None));
         context.insert("me".into(), cx.me().map(|i| views::identity(&i)).unwrap_or(Value::None));
         context.insert("cf_active".into(), Value::Bool(self.cf.enabled() && cx.cf_email.as_deref().map(|e| !e.is_empty()).unwrap_or(false)));
+        // the monthly reminder of the administrator: are the tax rates still current?
+        if self.core.vault.unlocked() && status == 200 && cx.req.path != "/settings/tax" && cx.me().map(|m| m.is_admin).unwrap_or(false) && cx.req.method == "GET" {
+            let table = self.core.tax_table();
+            let at = crate::services::prices::now();
+            if table.due(at) {
+                let differences = crate::services::fiscal::differences(&table, crate::services::public_rates::current().as_ref(), at);
+                context.insert(
+                    "tax_reminder".into(),
+                    Value::sdict(vec![
+                        ("days", table.days_since_review(at).map(Value::Int).unwrap_or(Value::None)),
+                        ("differences", Value::list(differences.into_iter().map(Value::from).collect())),
+                        ("year", (table.year as i64).into()),
+                    ]),
+                );
+            }
+        }
         if matches!(name, "account_form.html" | "document.html") && self.core.vault.unlocked() {
             // the people a holder can be picked from
             let cards = self.core.session(|c| people_service::visible(c))?;
@@ -851,7 +876,11 @@ impl Web {
             R::AccountQuick => self.account_quick(cx),
             R::AccountRate => self.account_rate(cx),
             R::RatesRefresh => self.rates_refresh(cx),
-            R::FlatTaxSave => self.flat_tax_save(cx),
+            R::TaxPage => self.tax_page(cx),
+            R::TaxSave => self.tax_save(cx),
+            R::TaxReviewed => self.tax_reviewed(cx),
+            R::TaxSnooze => self.tax_snooze(cx),
+            R::TaxReset => self.tax_reset(cx),
             R::AccountNew => self.page(cx, "account_form.html", vec![("account", Value::None)]),
             R::AccountCreate => self.account_create(cx),
             R::AccountDetail => self.account_detail(cx),
@@ -1978,11 +2007,11 @@ impl Web {
             ],
         );
         let account_type = data.account.account_type.as_str();
-        // the rate as given, and its other side once the flat tax is taken into account
-        let flat = self.core.flat_tax();
+        // the rate as given, and its other side once the taxes of its product are taken into account
+        let table = self.core.tax_table();
+        let (tax_name, share, tax_ir, tax_social) = rates::tax_for(account_type, &table);
         let (rate_gross, rate_net, taxed) = match rate {
             Some(r) if !data.has_loan => {
-                let share = rates::tax_share(account_type, &flat);
                 // a rate read from the official pages, or from the table, is a regulated one: tax free, same both ways
                 let basis = if data.account.interest_rate.is_some() { data.account.interest_basis.as_deref() } else { None };
                 let (g, n) = rates::gross_and_net(r, basis, share);
@@ -1994,7 +2023,7 @@ impl Web {
         // rates and a loan's rate come from elsewhere (typing one over them stays possible from the account's form)
         let rate_needed = rates::needs_rate(account_type, data.account.interest_rate) && !data.has_loan;
         let rate_editable = !data.has_loan && (data.account.interest_rate.is_some() || rates::ASK_RATE_TYPES.contains(&account_type));
-        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into()), ("rate_gross", rate_gross), ("rate_net", rate_net), ("rate_taxed", taxed.into()), ("flat_tax", Value::from(flat.total())), ("flat_source", flat.source.clone().into())];
+        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into()), ("rate_gross", rate_gross), ("rate_net", rate_net), ("rate_taxed", taxed.into()), ("tax_name", tax_name.into()), ("tax_pct", Value::from(tax_ir + tax_social))];
         vars.extend(data.vars);
         self.page(cx, "account.html", vars)
     }
@@ -2221,22 +2250,89 @@ impl Web {
         }
     }
 
-    /// The flat tax typed in the settings (a total in %), or removed to go back to the automatic reading.
-    fn flat_tax_save(&self, cx: &Cx) -> Out {
+    // ------------------------------------------------------------------------------------------ tax table
+
+    fn tax_page(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let table = self.core.tax_table();
+        let at = crate::services::prices::now();
+        let online = crate::services::public_rates::current();
+        let differences = crate::services::fiscal::differences(&table, online.as_ref(), at);
+        let defaults = crate::services::fiscal::defaults();
+        let rows: Vec<Value> = table
+            .rows
+            .iter()
+            .map(|r| {
+                let default = defaults.iter().find(|d| d.key == r.key);
+                Value::sdict(vec![
+                    ("key", r.key.into()),
+                    ("label", r.label.into()),
+                    ("note", r.note.into()),
+                    ("ir", r.ir.map(Value::from).unwrap_or(Value::None)),
+                    ("social", Value::from(r.social)),
+                    ("total", r.total().map(Value::from).unwrap_or(Value::None)),
+                    ("flat", r.ir.is_some().into()),
+                    ("edited", table.edited.contains(&r.key).into()),
+                    ("default_ir", default.and_then(|d| d.ir).map(Value::from).unwrap_or(Value::None)),
+                    ("default_social", default.map(|d| Value::from(d.social)).unwrap_or(Value::None)),
+                ])
+            })
+            .collect();
+        let when = |t: Option<f64>| t.and_then(|t| chrono::DateTime::from_timestamp(t as i64, 0)).map(|d| d.with_timezone(&chrono::Local).format("%d/%m/%Y").to_string()).unwrap_or_default();
+        self.page(
+            cx,
+            "tax.html",
+            vec![
+                ("rows", Value::list(rows)),
+                ("year", (table.year as i64).into()),
+                ("reviewed_at", when(table.reviewed_at).into()),
+                ("days", table.days_since_review(at).map(Value::Int).unwrap_or(Value::None)),
+                ("due", table.due(at).into()),
+                ("differences", Value::list(differences.into_iter().map(Value::from).collect())),
+                ("source_url", crate::services::fiscal::SOURCE_URL.into()),
+                ("source_name", crate::services::fiscal::SOURCE_NAME.into()),
+            ],
+        )
+    }
+
+    fn tax_save(&self, cx: &Cx) -> Out {
         let form = self.verified_form(cx)?;
         self.admin_only(cx)?;
-        if get(&form, "auto").is_some() {
-            self.core.set_setting("flat_tax_rate", "")?;
-            return msg("/settings#taux", "Flat tax : lecture automatique rétablie");
-        }
-        let text = py::strip(&get_or(&form, "flat_tax", "").replace(',', ".").replace('%', "")).to_string();
-        match crate::adapters::common::py_decimal(&text).filter(|r| *r > Decimal::ZERO && *r < Decimal::from(100)) {
-            Some(r) => {
-                self.core.set_setting("flat_tax_rate", &py::dec_str(&r))?;
-                msg("/settings#taux", format!("Flat tax enregistrée : {} %", py::dec_str(&r).replace('.', ",")))
-            }
-            None => msg("/settings#taux", "Taux invalide : écris par exemple 31,4"),
-        }
+        let current = self.core.tax_table();
+        let mut table = crate::services::fiscal::from_form(&current, &form.into_iter().collect());
+        // saving the figures after looking at them is a check
+        table.reviewed_at = Some(crate::services::prices::now());
+        table.snoozed_until = None;
+        self.core.save_tax_table(&table)?;
+        msg("/settings/tax", "Taux fiscaux enregistrés et marqués comme vérifiés")
+    }
+
+    fn tax_reviewed(&self, cx: &Cx) -> Out {
+        let form = self.verified_form(cx)?;
+        self.admin_only(cx)?;
+        let mut table = self.core.tax_table();
+        table.reviewed_at = Some(crate::services::prices::now());
+        table.snoozed_until = None;
+        self.core.save_tax_table(&table)?;
+        msg(&safe_next(get(&form, "next"), "/settings/tax"), "Taux fiscaux confirmés : prochain rappel dans un mois")
+    }
+
+    fn tax_snooze(&self, cx: &Cx) -> Out {
+        let form = self.verified_form(cx)?;
+        self.admin_only(cx)?;
+        let mut table = self.core.tax_table();
+        table.snoozed_until = Some(crate::services::prices::now() + crate::services::fiscal::SNOOZE_SECONDS);
+        self.core.save_tax_table(&table)?;
+        Ok(redirect(&safe_next(get(&form, "next"), "/"), None))
+    }
+
+    fn tax_reset(&self, cx: &Cx) -> Out {
+        self.verified_form(cx)?;
+        self.admin_only(cx)?;
+        let mut table = crate::services::fiscal::TaxTable::default();
+        table.reviewed_at = self.core.tax_table().reviewed_at;
+        self.core.save_tax_table(&table)?;
+        msg("/settings/tax", "Valeurs de 2026 rétablies")
     }
 
     fn rates_refresh(&self, cx: &Cx) -> Out {
@@ -3095,13 +3191,13 @@ impl Web {
             ("error", online.error.clone().map(Value::from).unwrap_or(Value::None)),
             ("source", crate::services::public_rates::SOURCE.into()),
         ]);
-        let flat = self.core.flat_tax();
+        let table = self.core.tax_table();
+        let at = crate::services::prices::now();
+        let interets = table.get("interets").cloned();
         let flat_value = Value::sdict(vec![
-            ("total", Value::from(flat.total())),
-            ("ir", Value::from(flat.ir)),
-            ("social", Value::from(flat.social)),
-            ("source", flat.source.clone().into()),
-            ("typed", self.core.get_setting("flat_tax_rate", "")?.into()),
+            ("total", interets.as_ref().and_then(|r| r.total()).map(Value::from).unwrap_or(Value::None)),
+            ("due", table.due(at).into()),
+            ("year", (table.year as i64).into()),
         ]);
         let coingecko = !self.core.get_setting("coingecko_api_key", "")?.is_empty();
         self.page(
