@@ -32,10 +32,10 @@
     {% for r in rows %}
     <tr>
       <td><strong>{{ r.label }}</strong>{% if r.edited %} <span class="tag" title="Différent du défaut">modifié</span>{% endif %}{% if r.note %}<div class="muted small">{{ r.note }}</div>{% endif %}</td>
-      <td class="num">{% if r.flat %}<input name="ir_{{ r.key }}" inputmode="decimal" value="{{ ('%.2f'|format(r.ir))|replace('.', ',') }}" aria-label="Impôt sur le revenu, {{ r.label }}">{% else %}<span class="muted small">barème</span><input type="hidden" name="ir_{{ r.key }}" value="">{% endif %}</td>
-      <td class="num"><input name="social_{{ r.key }}" inputmode="decimal" value="{{ ('%.2f'|format(r.social))|replace('.', ',') }}" aria-label="Prélèvements sociaux, {{ r.label }}"></td>
-      <td class="num">{% if r.total is not none %}<strong>{{ ('%.2f'|format(r.total))|replace('.', ',') }} %</strong>{% else %}<span class="muted small">barème + {{ ('%.1f'|format(r.social))|replace('.', ',') }} %</span>{% endif %}</td>
-      <td class="num small muted">{% if r.default_ir is not none %}{{ ('%.1f'|format(r.default_ir))|replace('.', ',') }} + {{ ('%.1f'|format(r.default_social))|replace('.', ',') }}{% else %}barème + {{ ('%.1f'|format(r.default_social))|replace('.', ',') }}{% endif %}</td>
+      <td class="num" data-label="Impôt sur le revenu (%)">{% if r.flat %}<input name="ir_{{ r.key }}" inputmode="decimal" value="{{ ('%.2f'|format(r.ir))|replace('.', ',') }}" aria-label="Impôt sur le revenu, {{ r.label }}">{% else %}<span class="muted small">barème</span><input type="hidden" name="ir_{{ r.key }}" value="">{% endif %}</td>
+      <td class="num" data-label="Prélèvements sociaux (%)"><input name="social_{{ r.key }}" inputmode="decimal" value="{{ ('%.2f'|format(r.social))|replace('.', ',') }}" aria-label="Prélèvements sociaux, {{ r.label }}"></td>
+      <td class="num" data-label="Global">{% if r.total is not none %}<strong>{{ ('%.2f'|format(r.total))|replace('.', ',') }} %</strong>{% else %}<span class="muted small">barème + {{ ('%.1f'|format(r.social))|replace('.', ',') }} %</span>{% endif %}</td>
+      <td class="num small muted" data-label="Défaut {{ year }}">{% if r.default_ir is not none %}{{ ('%.1f'|format(r.default_ir))|replace('.', ',') }} + {{ ('%.1f'|format(r.default_social))|replace('.', ',') }}{% else %}barème + {{ ('%.1f'|format(r.default_social))|replace('.', ',') }}{% endif %}</td>
     </tr>
     {% endfor %}
     </tbody>

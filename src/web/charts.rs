@@ -7,12 +7,26 @@ use rust_decimal::Decimal;
 use crate::py::{self, float_fixed, std_html_escape as escape, PyDec};
 use crate::services::analytics::{MonthFlow, Series};
 
-const W: f64 = 820.0;
-const H: f64 = 320.0;
-const LEFT: f64 = 62.0;
-const RIGHT: f64 = 14.0;
-const TOP: f64 = 14.0;
-const BOTTOM: f64 = 30.0;
+use std::cell::Cell;
+
+thread_local! {
+    static COMPACT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// A narrow screen (a phone) gets charts drawn on a narrower canvas, so the text keeps a readable size once the SVG is
+/// scaled to the screen. Set for each request from the User-Agent; the same layout applies until it is set again.
+pub fn set_compact(on: bool) {
+    COMPACT.with(|c| c.set(on));
+}
+
+/// (width, height, left, right, top, bottom) of the canvas.
+fn layout() -> (f64, f64, f64, f64, f64, f64) {
+    if COMPACT.with(|c| c.get()) {
+        (430.0, 300.0, 68.0, 10.0, 12.0, 28.0)
+    } else {
+        (820.0, 320.0, 62.0, 14.0, 14.0, 30.0)
+    }
+}
 pub const PALETTE_SIZE: usize = 8;
 const CHAR_W: f64 = 6.6;
 const LINE_H: f64 = 16.0;
@@ -61,11 +75,15 @@ fn fr(day: NaiveDate) -> String {
     day.format("%d/%m/%Y").to_string()
 }
 
+#[allow(non_snake_case, unused_variables)]
 fn frame(content: &str, label: &str) -> String {
+    let (W, H, LEFT, RIGHT, TOP, BOTTOM) = layout();
     format!(r#"<svg class="chart-svg" viewBox="0 0 {W} {H}" role="img" aria-label="{}">{content}</svg>"#, escape(label))
 }
 
+#[allow(non_snake_case, unused_variables)]
 fn grid(ticks: &[f64], y: &dyn Fn(f64) -> f64) -> String {
+    let (W, H, LEFT, RIGHT, TOP, BOTTOM) = layout();
     ticks
         .iter()
         .map(|t| {
@@ -83,7 +101,9 @@ fn grid(ticks: &[f64], y: &dyn Fn(f64) -> f64) -> String {
 }
 
 /// The tooltip box: the date, then one line per value (with the colour of its series when it has one).
+#[allow(non_snake_case, unused_variables)]
 fn tip(cx: f64, head: &str, rows: &[(String, Option<String>)]) -> String {
+    let (W, H, LEFT, RIGHT, TOP, BOTTOM) = layout();
     let chars = rows.iter().map(|(t, css)| t.chars().count() + if css.is_some() { 2 } else { 0 }).chain(std::iter::once(head.chars().count())).max().unwrap();
     let width = chars as f64 * CHAR_W + 2.0 * PAD;
     let height = (rows.len() as f64 + 1.0) * LINE_H + PAD;
@@ -108,7 +128,9 @@ fn ordinal(d: NaiveDate) -> i64 {
 }
 
 /// One line per series over a shared time axis, with a hover band per date.
+#[allow(non_snake_case, unused_variables)]
 pub fn line_chart(series: &[Series], label: &str) -> String {
+    let (W, H, LEFT, RIGHT, TOP, BOTTOM) = layout();
     let points: Vec<&(NaiveDate, Decimal)> = series.iter().flat_map(|s| s.points.iter()).collect();
     let mut days: Vec<NaiveDate> = points.iter().map(|(d, _)| *d).collect();
     days.sort();
@@ -183,7 +205,9 @@ pub fn line_chart(series: &[Series], label: &str) -> String {
 }
 
 /// Income and spending side by side for each month.
+#[allow(non_snake_case, unused_variables)]
 pub fn flow_chart(flows: &[MonthFlow], label: &str) -> String {
+    let (W, H, LEFT, RIGHT, TOP, BOTTOM) = layout();
     if flows.is_empty() {
         return String::new();
     }
@@ -230,7 +254,9 @@ pub fn flow_chart(flows: &[MonthFlow], label: &str) -> String {
 }
 
 /// One bar per month (spending, or income), with the month and the amount in a tooltip.
+#[allow(non_snake_case, unused_variables)]
 pub fn month_bars(points: &[(NaiveDate, Decimal)], label: &str, css: &str) -> String {
+    let (W, H, LEFT, RIGHT, TOP, BOTTOM) = layout();
     if points.is_empty() || !points.iter().any(|(_, v)| !v.is_zero()) {
         return String::new();
     }
