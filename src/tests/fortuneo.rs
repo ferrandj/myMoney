@@ -1203,3 +1203,67 @@ fn test_web_life_insurance_pages_show_the_letter_and_the_operations() {
         assert!(ops.contains(expected), "{expected}");
     }
 }
+
+#[test]
+fn test_arbitrage_letter_that_lost_its_spaces_names_its_contract_properly() {
+    let st = parse_one(fortuneo_arbitrage_v2_named_pdf("100,00", "0,00", "Contrat : FORTUNEOVIE"));
+    assert_eq!(extra(&st, "contract"), &json!("FORTUNEO VIE"));
+    assert!(extra(&st, "title").as_str().unwrap().ends_with("FORTUNEO VIE"));
+}
+
+#[test]
+fn test_letters_read_again_are_filed_and_join_their_account() {
+    let core = core();
+    let id = life_account(&core);
+    let letter = drop(&core, &fortuneo_arbitrage_v2_pdf("100,00", "0,00"));
+    core.auto_import(letter).unwrap().expect("filed");
+    // a letter filed without an account (before the contract existed) joins it when it is read again
+    db(&core, |c| {
+        let mut doc = Document::get(c, letter)?.unwrap();
+        let before = doc.clone();
+        doc.account_id = None;
+        doc.save(c, &before)?;
+        Ok(())
+    });
+    core.refresh_document(letter).unwrap();
+    db(&core, |c| {
+        assert_eq!(Document::get(c, letter)?.unwrap().account_id, Some(id));
+        Ok(())
+    });
+    // a letter still waiting (invalidated) is filed again, with its account, when it is read again
+    core.undo_import(letter).unwrap();
+    db(&core, |c| {
+        assert_eq!(Document::get(c, letter)?.unwrap().status, "parsed");
+        Ok(())
+    });
+    core.refresh_document(letter).unwrap();
+    db(&core, |c| {
+        let doc = Document::get(c, letter)?.unwrap();
+        assert_eq!((doc.status.as_str(), doc.account_id), ("imported", Some(id)));
+        Ok(())
+    });
+}
+
+#[test]
+fn test_web_a_waiting_letter_says_which_account_it_will_join() {
+    let mut client = client();
+    let csrf = client.login();
+    let annual = upload(&mut client, &csrf, "annuel.pdf", &fortuneo_life_annual_pdf(&LifeAnnualSpec::new(2025)));
+    let id = doc_of(&annual.url).unwrap();
+    client.post(&format!("/documents/{id}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Mon assurance-vie"), ("update_balance", "on"), ("balance", "600.00")]);
+    upload(&mut client, &csrf, "arbitrage.pdf", &fortuneo_arbitrage_v2_pdf("100,00", "0,00"));
+    let (letter_id, account) = {
+        let mut found = (0, None);
+        db(&client.core, |c| {
+            let doc = Document::query_one(c, "WHERE adapter_id = 'fortuneo.life_arbitrage_pdf'", [])?.unwrap();
+            found = (doc.id, doc.account_id);
+            Ok(())
+        });
+        found
+    };
+    assert!(account.is_some(), "filed on upload, with the account of the contract");
+    assert!(client.get(&format!("/documents/{letter_id}")).text().contains("le compte du contrat"));
+    client.post(&format!("/documents/{letter_id}/undo"), &[("csrf", &csrf)]);
+    let waiting = client.get(&format!("/documents/{letter_id}")).text();
+    assert!(waiting.contains("Il sera rattaché au compte") && waiting.contains("Mon assurance-vie"), "{waiting}");
+}
