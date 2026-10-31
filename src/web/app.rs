@@ -35,7 +35,7 @@ pub const KIND_LABELS: &[(&str, &str)] = &[
     ("cheque", "Chèque"),
     ("interest", "Intérêts"),
 ];
-const ANALYTICS_VIEWS: &[(&str, &str)] = &[("evolution", "Évolution"), ("depenses", "Dépenses et revenus")];
+const ANALYTICS_VIEWS: &[(&str, &str)] = &[("evolution", "Évolution"), ("depenses", "Dépenses et revenus"), ("dettes", "Dettes")];
 pub const DOCUMENT_STATUS: &[(&str, &str)] = &[
     ("uploaded", "stocké"),
     ("needs_choice", "à préciser"),
@@ -1347,13 +1347,16 @@ impl Web {
     }
 
     /// The wealth line of the dashboard: the same reconstruction as the analyses, for the period chosen.
-    fn wealth_chart(&self, accounts: &[crate::services::valuation::AccountValue], periode: &str) -> AppResult<String> {
+    fn wealth_chart(&self, accounts: &[crate::services::valuation::AccountValue], periode: &str, with_loans: bool) -> AppResult<String> {
         let today = rates::today();
         self.core.session(|c| {
             let mut histories: HashMap<i64, analytics::History> = HashMap::new();
             let mut by_id: HashMap<i64, Account> = HashMap::new();
             let mut ids: Vec<i64> = vec![];
             for v in accounts {
+                if !with_loans && v.account.category() == "dettes" {
+                    continue; // a loan is not part of what one owns
+                }
                 let holdings: Vec<Holding> = v.holdings.iter().map(|h| h.holding.clone()).collect();
                 histories.insert(v.account.id, analytics::account_history(c, &v.account, &holdings, v.total(), today)?);
                 by_id.insert(v.account.id, v.account.clone());
@@ -1367,6 +1370,7 @@ impl Web {
 
     fn dashboard(&self, cx: &Cx) -> Out {
         let periode = cx.q("periode").filter(|p| analytics::PERIODS.iter().any(|(k, _, _)| k == p)).unwrap_or("1a").to_string();
+        let with_loans = cx.q("dettes") == Some("1"); // the wealth line, loans included
         let portfolio = self.core.portfolio(true)?;
         let (to_identify, gaps) = self.core.session(|c| Ok((contact_service::unresolved(c, false, None, None)?.len(), coverage_service::all_gaps(c, false)?)))?;
         let values = self.account_values(&portfolio.accounts)?;
@@ -1399,6 +1403,8 @@ impl Web {
                 ("by_category", Value::list(portfolio.by_category.iter().map(|(c, l, v)| Value::tuple(vec![Value::str(c), Value::str(l), (*v).into()])).collect())),
                 ("assets", portfolio.assets.into()),
                 ("debts", portfolio.debts.into()),
+                ("loans", portfolio.loans.into()),
+                ("wealth", portfolio.wealth.into()),
                 ("history", Value::list(portfolio.history.iter().map(|(d, v)| Value::tuple(vec![(*d).into(), (*v).into()])).collect())),
             ],
         );
@@ -1409,9 +1415,10 @@ impl Web {
                 ("portfolio", p),
                 ("groups", Value::list(groups)),
                 ("need_rate", Value::list(need_rate)),
-                ("chart", self.wealth_chart(&portfolio.accounts, &periode)?.into()),
+                ("chart", self.wealth_chart(&portfolio.accounts, &periode, with_loans)?.into()),
                 ("periode", periode.clone().into()),
-                ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), Value::str(format!("/?periode={code}"))])).collect())),
+                ("with_loans", with_loans.into()),
+                ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), Value::str(format!("/?periode={code}{}", if with_loans { "&dettes=1" } else { "" }))])).collect())),
                 ("to_identify", to_identify.into()),
                 ("gaps", Value::list(gaps.iter().map(views::gap).collect())),
             ],
@@ -1475,6 +1482,7 @@ impl Web {
         let c_ids = p.query_int_list("c");
         let interne = p.query_int("interne", 0);
         let sans_dettes = p.query_int("sans_dettes", 0);
+        let avec_dettes = p.query_int("avec_dettes", 0); // the total line with the loans (net wealth)
         p.check()?;
         let mut vue = cx.q("vue").unwrap_or("evolution").to_string();
         if vue == "flux" {
@@ -1554,6 +1562,7 @@ impl Web {
                 ("par", par.clone()),
                 ("interne", interne_text.clone()),
                 ("sans_dettes", if sans_dettes != 0 { "1".to_string() } else { String::new() }),
+                ("avec_dettes", if avec_dettes != 0 { "1".to_string() } else { String::new() }),
                 ("sens", if sens == "sorties" { String::new() } else { sens.clone() }),
                 ("cat", cat.clone()),
                 ("mois", mois.clone()),
@@ -1649,7 +1658,19 @@ impl Web {
         match vue.as_str() {
             "evolution" => {
                 // a loan of several tens of thousands flattens everything else: the debts can be left out of the lines
-                let drawn: Vec<i64> = selected.iter().copied().filter(|i| sans_dettes == 0 && par != "total" || accounts[i].category() != "dettes").collect();
+                let drawn: Vec<i64> = selected
+                    .iter()
+                    .copied()
+                    .filter(|i| {
+                        if accounts[i].category() != "dettes" {
+                            true
+                        } else if par == "total" {
+                            avec_dettes != 0 // the total is what is owned; the loans only come in on request
+                        } else {
+                            sans_dettes == 0
+                        }
+                    })
+                    .collect();
                 let series = analytics::build_series(&histories, &accounts, &drawn, &par, start, end);
                 let stats = Value::dict(
                     series
@@ -1677,6 +1698,48 @@ impl Web {
                 vars.push(("chart", charts::line_chart(&series, "Évolution").into()));
                 vars.push(("series", Value::list(series.iter().map(series_value).collect())));
                 vars.push(("stats", stats));
+            }
+            "dettes" => {
+                let loan_ids: Vec<i64> = selected.iter().copied().filter(|i| accounts[i].category() == "dettes").collect();
+                // the debt as a positive amount: what is still owed
+                let owed = |mut series: Vec<analytics::Series>| -> Vec<analytics::Series> {
+                    for s in series.iter_mut() {
+                        for point in s.points.iter_mut() {
+                            point.1 = py::neg(point.1);
+                        }
+                    }
+                    series
+                };
+                let mut series = owed(analytics::build_series(&histories, &accounts, &loan_ids, "compte", start, end));
+                if loan_ids.len() > 1 {
+                    let mut all = owed(analytics::build_series(&histories, &accounts, &loan_ids, "total", start, end));
+                    all.append(&mut series);
+                    series = all;
+                }
+                let rows: Vec<Value> = self.core.session(|c| {
+                    let mut out = vec![];
+                    for id in &loan_ids {
+                        let account = &accounts[id];
+                        let loan = loan_service::loan_of(c, account.id)?;
+                        let next = match &loan {
+                            Some(l) => loan_service::build(c, l, Some(today))?.rows.into_iter().find(|r| r.kind == "installment" && r.status == "next"),
+                            None => None,
+                        };
+                        out.push(Value::sdict(vec![
+                            ("account", account_objs[id].clone()),
+                            ("remaining", Value::pydec(PyDec::from(&value_at(*id)).neg())),
+                            ("rate", loan.as_ref().and_then(|l| l.rate).map(Value::from).unwrap_or(Value::None)),
+                            ("principal", loan.as_ref().and_then(|l| l.principal).map(Value::from).unwrap_or(Value::None)),
+                            ("end_date", loan.as_ref().and_then(|l| l.end_date).map(Value::from).unwrap_or(Value::None)),
+                            ("next_date", next.as_ref().and_then(|r| r.date).map(Value::from).unwrap_or(Value::None)),
+                            ("next_total", next.as_ref().map(|r| Value::from(r.total)).unwrap_or(Value::None)),
+                        ]));
+                    }
+                    Ok(out)
+                })?;
+                vars.push(("chart", charts::line_chart(&series, "Capital restant dû").into()));
+                vars.push(("loan_rows", Value::list(rows)));
+                vars.push(("loan_count", Value::Int(loan_ids.len() as i64)));
             }
             _ => {
                 let palette = charts::PALETTE_SIZE;
@@ -1749,6 +1812,8 @@ impl Web {
             ("au", au_text.clone().into()),
             ("custom", custom.into()),
             ("sans_dettes", (sans_dettes != 0).into()),
+            ("avec_dettes", (avec_dettes != 0).into()),
+            ("net", Value::pydec(assets.add(&overdrafts).add(&debts))),
             ("has_debts", selected.iter().any(|i| accounts[i].category() == "dettes").into()),
             ("views", Value::list(ANALYTICS_VIEWS.iter().map(|(code, label)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("vue", code), ("par", ""), ("cat", ""), ("mois", ""), ("sens", "")]).into()])).collect())),
             ("periods", Value::list(analytics::PERIODS.iter().map(|(code, label, _)| Value::tuple(vec![Value::str(code), Value::str(label), url(&[("periode", code), ("du", ""), ("au", ""), ("mois", "")]).into()])).collect())),
@@ -2031,7 +2096,20 @@ impl Web {
         // rates and a loan's rate come from elsewhere (typing one over them stays possible from the account's form)
         let rate_needed = rates::needs_rate(account_type, data.account.interest_rate) && !data.has_loan;
         let rate_editable = !data.has_loan && (data.account.interest_rate.is_some() || rates::ASK_RATE_TYPES.contains(&account_type));
-        let mut vars: Vec<(&str, Value)> = vec![("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into()), ("rate_gross", rate_gross), ("rate_net", rate_net), ("rate_taxed", taxed.into()), ("tax_name", tax_name.into()), ("tax_pct", Value::from(tax_ir + tax_social))];
+        let life = self.core.session(|c| Ok(crate::services::life_insurance::summary(c, data.account.id)))?;
+        let life_value = match life {
+            Some(l) => Value::sdict(vec![
+                ("base_date", l.get("base_date").and_then(|d| d.as_str()).and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).map(Value::from).unwrap_or(Value::None)),
+                ("base_from", l.get("base_from").and_then(|d| d.as_str()).unwrap_or("").into()),
+                ("letters", l.get("letters").and_then(|d| d.as_i64()).unwrap_or(0).into()),
+                ("payments", l.get("payments").and_then(|d| d.as_str()).and_then(py::dec_parse).map(Value::from).unwrap_or(Value::None)),
+                ("lines", l.get("lines").and_then(|d| d.as_i64()).unwrap_or(0).into()),
+                ("warnings", Value::list(l.get("warnings").and_then(|w| w.as_array()).map(|w| w.iter().filter_map(|x| x.as_str()).map(|x| Value::from(x)).collect()).unwrap_or_default())),
+                ("notes", Value::list(l.get("notes").and_then(|w| w.as_array()).map(|w| w.iter().filter_map(|x| x.as_str()).map(|x| Value::from(x)).collect()).unwrap_or_default())),
+            ]),
+            None => Value::None,
+        };
+        let mut vars: Vec<(&str, Value)> = vec![("life", life_value), ("account", account_value), ("value", value_obj), ("rate", rate.into()), ("rate_source", rate_source.into()), ("rate_needed", rate_needed.into()), ("rate_editable", rate_editable.into()), ("rate_gross", rate_gross), ("rate_net", rate_net), ("rate_taxed", taxed.into()), ("tax_name", tax_name.into()), ("tax_pct", Value::from(tax_ir + tax_social))];
         vars.extend(data.vars);
         self.page(cx, "account.html", vars)
     }

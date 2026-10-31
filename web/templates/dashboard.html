@@ -4,9 +4,9 @@
 {% block content %}
 <section class="hero">
   <div>
-    <p class="muted">Patrimoine net</p>
-    <p class="big">{{ portfolio.total|money }}</p>
-    <p class="muted small">Actifs {{ portfolio.assets|money }}{% if portfolio.debts %} · Dettes {{ portfolio.debts|money }}{% endif %}</p>
+    <p class="muted">Patrimoine{% if portfolio.loans %} <span class="small">(prêts non compris)</span>{% endif %}</p>
+    <p class="big">{{ portfolio.wealth|money }}</p>
+    <p class="muted small">{% if portfolio.loans %}Prêts {{ portfolio.loans|money }} · Patrimoine net, prêts inclus : <strong>{{ portfolio.total|money }}</strong>{% else %}Actifs {{ portfolio.assets|money }}{% endif %}</p>
   </div>
   <div class="actions">
     <a class="btn" href="/analytics">📈 Analyses</a>
@@ -39,6 +39,7 @@
   <div class="toolbar">
     <h2><a href="/analytics?periode={{ periode }}">Évolution du patrimoine</a></h2>
     <div class="seg" aria-label="Période">{% for code, label, href in periods %}<a href="{{ href }}" {% if code == periode %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}</div>
+    {% if portfolio.loans %}<a class="btn small" href="/?periode={{ periode }}{% if not with_loans %}&dettes=1{% endif %}">{{ 'Sans les prêts' if with_loans else 'Avec les prêts' }}</a>{% endif %}
     <a class="btn small" href="/analytics?periode={{ periode }}&par=compte">Voir par compte</a>
   </div>
   {{ chart|safe }}

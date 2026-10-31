@@ -6,6 +6,7 @@ pub mod coverage;
 pub mod fiscal;
 pub mod holders;
 pub mod ledger;
+pub mod life_insurance;
 pub mod loans;
 pub mod naming;
 pub mod people;

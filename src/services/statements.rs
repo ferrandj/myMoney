@@ -15,7 +15,7 @@ use crate::adapters::base::ParsedStatement;
 use crate::error::{value_err, AppError, AppResult};
 use crate::models::{account_type, Account, Document, FeeSummary, Holding, Snapshot, Statement, Transaction};
 use crate::py;
-use crate::services::{access, coverage, holders, ledger, loans, naming, people};
+use crate::services::{access, coverage, holders, ledger, life_insurance, loans, naming, people};
 
 pub type Form = HashMap<String, String>;
 
@@ -434,6 +434,7 @@ pub fn file_document(c: &Connection, doc: &mut Document, st: &ParsedStatement) -
     doc.save(c, &before)?;
     let mut result = loans::import_result(None, Some("info"));
     if let Some(a) = account {
+        life_insurance::refresh(c, a.id); // a letter changes the lines of its contract
         result.insert("account_id".into(), a.id.into());
     }
     Ok(result)
@@ -538,6 +539,7 @@ pub fn refresh_identity(c: &Connection, doc: &mut Document) -> AppResult<()> {
                 let before = doc.clone();
                 doc.account_id = Some(account.id);
                 doc.save(c, &before)?;
+                life_insurance::refresh(c, account.id);
             }
         }
     }
@@ -677,6 +679,7 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
     doc.account_id = Some(account.id);
     doc.save(c, &before_doc)?;
     adopt_documents(c, &account)?;
+    life_insurance::refresh(c, account.id); // the lines of a contract follow its papers (no-op for other accounts)
     ledger::mark_internal(c)?; // a new account (or new names) can turn earlier transfers into "between my own accounts"
     ledger::pair_transfers(c)?;
     let mut m = Map::new();
@@ -746,10 +749,14 @@ pub fn undo_import(c: &Connection, doc: &mut Document) -> AppResult<i64> {
     c.execute("DELETE FROM fee_summaries WHERE document_id = ?", [doc.id])?;
     loans::detach(c, doc)?;
     let before = doc.clone();
+    let previous_account = doc.account_id;
     let has = doc.parse_result.as_ref().and_then(|r| r.get("statements")).map(crate::models::truthy).unwrap_or(false);
     doc.status = if has { "parsed".into() } else { "uploaded".into() };
     doc.account_id = None;
     doc.save(c, &before)?;
+    if let Some(id) = previous_account {
+        life_insurance::refresh(c, id); // the lines no longer rest on this paper
+    }
     naming::restore_name(c, doc)?; // waiting again: it shows the name it was dropped with
     ledger::mark_internal(c)?; // a line can still be internal by its name
     Ok(removed)

@@ -366,7 +366,30 @@ fn test_web_loans_are_not_counted_in_the_total() {
     let total = regex::Regex::new(r#"Tous les comptes</span><span class="big small-big"><span class="sensitive">([^<]*)<"#).unwrap().captures(&page).map(|c| c[1].to_string()).unwrap_or_default();
     assert_eq!(total, "5 000,00 €", "{total}");
     let at = page.find("Prêts (à part").unwrap_or(0);
-    assert!(page.contains("Prêts (à part, hors total)") && page.contains("-3 000,00 €"), "{}", &page[at..at + 200]);
+    assert!(page.contains("Prêts (à part)") && page.contains("-3 000,00 €"), "{}", &page[at..at + 200]);
     let foot = regex::Regex::new(r#"Total de la sélection</th><th class="num"><span class="sensitive">([^<]*)<"#).unwrap().captures(&page).map(|c| c[1].to_string()).unwrap_or_default();
     assert_eq!(foot, "5 000,00 €");
+}
+
+#[test]
+fn test_web_debts_have_their_own_tab_and_the_net_wealth_is_offered() {
+    let mut client = client();
+    let token = client.core.setup_token.clone();
+    client.post("/setup", &[("setup_token", &token), ("email", crate::testkit::env::ADMIN_EMAIL), ("password", crate::testkit::env::PASSWORD), ("confirm", crate::testkit::env::PASSWORD)]);
+    let csrf = csrf_of(&client.get("/documents").text());
+    client.post("/accounts/new", &[("csrf", &csrf), ("name", "Livret A"), ("account_type", "livret_a"), ("balance", "5000")]);
+    client.post("/accounts/new", &[("csrf", &csrf), ("name", "Prêt exemple"), ("account_type", "loan"), ("balance", "-3000")]);
+    let flat = |s: String| s.replace('\u{202f}', " ").replace('\u{a0}', " ");
+    // the tab lists the loan with what is still owed, and the tiles give the wealth with and without it
+    let tab = flat(client.get("/analytics?vue=dettes&periode=tout").text());
+    assert!(tab.contains("Capital restant dû") && tab.contains("Prêt exemple") && tab.contains("3 000,00 €"), "{tab}");
+    assert!(tab.contains("Patrimoine net (prêts inclus)") && tab.contains("2 000,00 €"), "{tab}");
+    // the evolution total leaves the loan out unless asked
+    let without = client.get("/analytics?vue=evolution&periode=tout").text();
+    let with = client.get("/analytics?vue=evolution&periode=tout&avec_dettes=1").text();
+    assert!(with.contains("name=\"avec_dettes\"") && with.contains("checked"));
+    // the home page gives both figures and a way to see the line with the loans
+    let home = flat(client.get("/").text());
+    assert!(home.contains("prêts non compris") && home.contains("Patrimoine net, prêts inclus") && home.contains("2 000,00 €"), "{home}");
+    assert_eq!(client.get("/?dettes=1").status, 200); // the line with the loans (its button shows once there is a history to draw)
 }
