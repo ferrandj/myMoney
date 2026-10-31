@@ -72,6 +72,38 @@
 </section>
 {% endif %}
 
+{% if doc.status not in ('duplicate', 'copy') and (identity.line or identity.linked or people_options) %}
+<section class="card" id="identite">
+  <h2>Identité</h2>
+  {% if identity.linked %}
+  <p class="small muted">Ce document concerne :</p>
+  <ul class="plain">
+    {% for k in identity.linked %}
+    <li><a href="/people/{{ k.id }}"><span class="sensitive">{{ k.label }}</span></a>
+      <form method="post" action="/documents/{{ doc.id }}/people" class="inline-identify"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="remove"><input type="hidden" name="person_id" value="{{ k.id }}"><button class="btn small ghost" title="Retirer le lien avec cette personne">Délier</button></form></li>
+    {% endfor %}
+  </ul>
+  {% elif not identity.proposed %}<p class="small muted">Ce document n'est lié à aucune personne.</p>{% endif %}
+  {% for pr in identity.proposed %}
+  <form method="post" action="/documents/{{ doc.id }}/people" class="inline-identify">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="accept">
+    <span>Ce document est au nom de <strong class="sensitive">{{ pr.label }}</strong>{% if identity.line %} <span class="muted small">(« {{ identity.line }} »)</span>{% endif %}.</span>
+    <button class="btn small primary">{{ 'Lier à sa fiche' if pr.known else 'Créer la fiche et lier' }}</button>
+  </form>
+  {% endfor %}
+  {% if people_options %}
+  <form method="post" action="/documents/{{ doc.id }}/people" class="inline-identify">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="add">
+    <select name="person_id" aria-label="Personne à lier" required>
+      <option value="">— lier à une personne… —</option>
+      {% for o in people_options %}{% if o.id not in identity.linked|map(attribute='id')|list %}<option value="{{ o.id }}">{{ o.label }}</option>{% endif %}{% endfor %}
+    </select>
+    <button class="btn small">Lier</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
 {% for plan in (plans if doc.status not in ('duplicate', 'copy') else []) %}
 {% set st = plan.statement %}
 {% set idx = loop.index0 %}
@@ -335,6 +367,10 @@
   </div>
   {% endif %}
 
+  {% if earlier and not done %}
+  <p class="card warn"><strong>À valider dans l'ordre.</strong> Des relevés plus anciens de ce compte attendent encore : valide-les d'abord, du plus ancien au plus récent, puis reviens à celui-ci.
+    {% for e in earlier %}<br>→ <a href="/documents/{{ e.id }}"><span class="sensitive">{{ e.filename }}</span></a>{% endfor %}</p>
+  {% endif %}
   {% if not done %}
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>{% if queue %}<input type="hidden" name="review" value="1">{% endif %}
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -368,7 +404,7 @@
     {% if plan.classified.probable %}<label class="check"><input type="checkbox" name="import_probable"> Importer aussi les {{ plan.classified.probable|length }} doublon(s) probable(s)</label>{% endif %}
     {% if st.holdings %}<label class="check"><input type="checkbox" name="import_holdings" checked> Importer les {{ st.holdings|length }} positions</label>{% endif %}
     {% if plan.already_imported %}<label class="check"><input type="checkbox" name="force"> Importer quand même (ce relevé existe déjà)</label>{% endif %}
-    <button class="btn primary">Valider l'import</button>
+    <button class="btn primary" {% if earlier %}disabled title="Valide d'abord les relevés plus anciens de ce compte"{% endif %}>Valider l'import</button>
   </form>
   {% endif %}
 

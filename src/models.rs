@@ -441,9 +441,16 @@ table!(Document, "documents", false, {
     adapter_id: Option<String> = None,
     parse_result: Json = None,
     uploaded_at: NaiveDateTime = utcnow(),
+    // the cards (people) this document is about, as a JSON list of ids; empty = nobody yet, null = not looked at (the
+    // app may then link the ones it recognises, see services::people)
+    person_ids: Json = None,
 });
 impl Document {
     fn touch(&mut self) {}
+    /// The ids of the people cards the document is linked to.
+    pub fn people(&self) -> Vec<i64> {
+        self.person_ids.as_ref().and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_i64()).collect()).unwrap_or_default()
+    }
 }
 
 table!(Transaction, "transactions", false, {
