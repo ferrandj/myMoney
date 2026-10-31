@@ -302,7 +302,8 @@ fn test_undoing_an_import_removes_what_it_brought() {
     db(&core, |c| {
         assert!(Statement::query(c, "", [])?.is_empty());
         assert_eq!(Document::get(c, doc_id)?.unwrap().status, "parsed");
-        assert!(Account::get(c, account_id)?.is_some());
+        // the import created the account and nothing else rests on it: it goes with the import
+        assert!(Account::get(c, account_id)?.is_none());
         Ok(())
     });
 }

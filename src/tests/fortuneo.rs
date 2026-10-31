@@ -567,15 +567,16 @@ fn test_web_invalidate_everything_one_institution_or_one_type() {
     assert_eq!(statuses(&client)["fgdr.pdf"], "parsed");
     assert_eq!(statuses(&client)["septembre.pdf"], "imported");
 
-    // Everything left: the operations leave the account, the files stay, the account stays.
+    // Everything left: the operations leave, the files stay, and the account an import made goes with its last document.
     let done = client.post("/documents/invalidate", &[("csrf", &csrf), ("scope", "all")]);
     assert!(done.text().contains("1 import(s) invalidé(s)"));
     assert_eq!(statuses(&client).values().cloned().collect::<std::collections::BTreeSet<_>>(), ["parsed".to_string()].into_iter().collect());
     db(&client.core, |c| {
         assert_eq!(Transaction::query(c, "", [])?.len(), 0);
-        assert_eq!(Account::query(c, "", [])?.len(), 1);
+        assert_eq!(Account::query(c, "", [])?.len(), 0);
         Ok(())
     });
+    assert!(done.text().contains("1 compte(s) devenu(s) vide(s) supprimé(s)"), "{}", done.text());
     assert!(!client.get("/documents").text().contains("Tout invalider"));
 }
 

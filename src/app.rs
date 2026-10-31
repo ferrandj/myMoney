@@ -580,10 +580,33 @@ impl MyMoney {
     pub fn delete_account(&self, account_id: i64) -> AppResult<()> {
         self.session(|c| {
             access::check_owner(c, account_id)?;
-            if Account::get(c, account_id)?.is_some() {
-                Account::delete(c, account_id)?;
+            // the documents filed in it go back to « à valider » (as if never imported), not left "imported" with nothing
+            for mut doc in Document::query(c, "WHERE account_id = ? AND status = 'imported'", [account_id])? {
+                statement_service::undo_import(c, &mut doc)?;
+            }
+            if let Some(account) = Account::get(c, account_id)? {
+                statement_service::remove_account(c, &account)?;
             }
             Ok(())
+        })
+    }
+
+    /// Accounts nothing rests on (see `statements::empty_accounts`).
+    pub fn empty_accounts(&self) -> AppResult<Vec<Account>> {
+        self.session(|c| statement_service::empty_accounts(c))
+    }
+
+    /// Delete the accounts nothing rests on. Returns how many went.
+    pub fn delete_empty_accounts(&self) -> AppResult<usize> {
+        self.session(|c| {
+            let mut n = 0;
+            for a in statement_service::empty_accounts(c)? {
+                if access::check_owner(c, a.id).is_ok() {
+                    statement_service::remove_account(c, &a)?;
+                    n += 1;
+                }
+            }
+            Ok(n)
         })
     }
 
@@ -856,7 +879,7 @@ impl MyMoney {
                 return value_err("L'ancien fichier n'existe plus : impossible de le remplacer (garde les deux)");
             };
             let (old_name, old_path) = (old.filename.clone(), self.settings.documents_dir().join(&old.blob_name));
-            let removed = statement_service::undo_import(c, &mut old)?;
+            let removed = statement_service::undo_import_keeping_accounts(c, &mut old)?;
             Document::delete(c, old.id)?;
             let fresh = Document::get(c, doc.id)?.unwrap_or(doc.clone());
             doc = fresh;
@@ -1182,7 +1205,7 @@ impl MyMoney {
             }
             for d in &ordered {
                 let mut fresh = Document::get(c, d.id)?.unwrap_or(d.clone());
-                statement_service::undo_import(c, &mut fresh)?;
+                statement_service::undo_import_keeping_accounts(c, &mut fresh)?;
             }
             // touched is a Python set: the order does not matter, every account is handled the same way
             for account_id in &touched {
@@ -1250,6 +1273,12 @@ impl MyMoney {
     /// Cancel the import of these documents (their operations leave the accounts, the files stay and wait for a new
     /// validation). Returns how many were cancelled; documents one may not change are left alone.
     pub fn invalidate_documents(&self, doc_ids: &[i64]) -> AppResult<usize> {
+        Ok(self.invalidate_documents_report(doc_ids)?.0)
+    }
+
+    /// (documents invalidated, accounts that went with them: created by an import and left with nothing).
+    pub fn invalidate_documents_report(&self, doc_ids: &[i64]) -> AppResult<(usize, usize)> {
+        let accounts_before: i64 = self.session(|c| Ok(c.query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))?))?;
         let mut done = 0;
         for id in doc_ids {
             let r = self.session(|c| {
@@ -1269,7 +1298,8 @@ impl MyMoney {
                 done += 1;
             }
         }
-        Ok(done)
+        let accounts_after: i64 = self.session(|c| Ok(c.query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))?))?;
+        Ok((done, (accounts_before - accounts_after).max(0) as usize))
     }
 
     pub fn undo_import(&self, doc_id: i64) -> AppResult<i64> {

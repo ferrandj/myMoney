@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 
 use crate::adapters::base::ParsedStatement;
 use crate::error::{value_err, AppError, AppResult};
-use crate::models::{account_type, Account, Document, FeeSummary, Holding, Snapshot, Statement, Transaction};
+use crate::models::{account_type, setting_delete, utcnow, Account, Document, FeeSummary, Holding, PersonCard, Snapshot, Statement, Transaction};
 use crate::py;
 use crate::services::{access, coverage, holders, ledger, life_insurance, loans, naming, people};
 
@@ -587,6 +587,7 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
             currency: st.currency.clone(),
             interest_rate: pick("interest_rate").and_then(|r| crate::adapters::common::py_decimal(&r.replace(',', ".").replace('%', "").replace(' ', ""))).filter(|r| *r >= Decimal::ZERO && *r <= Decimal::from(100)),
             interest_basis: pick("interest_basis").and_then(|b| crate::services::rates::valid_basis(&b)).map(str::to_string),
+            origin: Some(format!("import:{}", utcnow().format("%Y-%m-%dT%H:%M:%S"))), // goes away with its last document
             ..Default::default()
         };
         a.insert(c)?;
@@ -639,7 +640,11 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
     }
     let holdings = st.holdings.clone().unwrap_or_default();
     if !holdings.is_empty() && on(form, "import_holdings") {
-        c.execute("DELETE FROM holdings WHERE account_id = ? AND manual = 1", [account.id])?;
+        for old in Holding::query(c, "WHERE account_id = ?", [account.id])? {
+            if holding_source(&old) == Some("import") || (old.manual && old.extra.is_none()) {
+                Holding::delete(c, old.id)?; // an earlier import's positions (before they were marked, they were the manual ones without extra)
+            }
+        }
         for h in &holdings {
             Holding {
                 account_id: account.id,
@@ -651,6 +656,7 @@ fn import_inner(c: &Connection, doc: &mut Document, st: &ParsedStatement, form: 
                 value: h.value,
                 value_currency: h.value_currency.clone(),
                 manual: true,
+                extra: Some(serde_json::json!({"source": "import", "document_id": doc.id})), // leaves with its document
                 ..Default::default()
             }
             .insert(c)?;
@@ -725,8 +731,120 @@ fn forget_balances(c: &Connection, gone: &[Statement]) -> AppResult<()> {
     Ok(())
 }
 
-/// Remove what a document brought in (its operations and statement records). The document itself stays.
+/// Where a position comes from: "import" (a document brought it), "life_insurance" (rebuilt from a contract's papers),
+/// None (typed by hand).
+fn holding_source(h: &Holding) -> Option<&str> {
+    h.extra.as_ref().and_then(|e| e.get("source")).and_then(|s| s.as_str())
+}
+
+fn count(c: &Connection, sql: &str, account_id: i64) -> AppResult<i64> {
+    Ok(c.query_row(sql, [account_id], |r| r.get(0))?)
+}
+
+/// What still rests on an account: its documents, operations, statements, fee recaps, loan and the positions typed by
+/// hand (the ones a document brought, or the ones rebuilt from papers, do not count: they go with their papers).
+fn content_of(c: &Connection, account_id: i64) -> AppResult<i64> {
+    let mut n = count(c, "SELECT COUNT(*) FROM documents WHERE account_id = ?", account_id)?;
+    n += count(c, "SELECT COUNT(*) FROM transactions WHERE account_id = ?", account_id)?;
+    n += count(c, "SELECT COUNT(*) FROM statements WHERE account_id = ?", account_id)?;
+    n += count(c, "SELECT COUNT(*) FROM fee_summaries WHERE account_id = ?", account_id)?;
+    n += count(c, "SELECT COUNT(*) FROM loans WHERE account_id = ?", account_id)?;
+    n += Holding::query(c, "WHERE account_id = ?", [account_id])?.iter().filter(|h| holding_source(h).is_none() && h.manual).count() as i64;
+    Ok(n)
+}
+
+/// An account an import created, with nothing left of it.
+fn vanished(c: &Connection, account: &Account) -> AppResult<bool> {
+    Ok(account.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false) && content_of(c, account.id)? == 0)
+}
+
+/// Delete an account and everything that only existed for it: its lines, history, shares and loan (the database
+/// cascades), the numbers kept about its contract, and the cards of the people the import created with it.
+pub fn remove_account(c: &Connection, account: &Account) -> AppResult<()> {
+    let people: Vec<i64> = account.holders.as_ref().map(|h| holders::from_json(h).into_iter().filter_map(|p| p.id).collect()).unwrap_or_default();
+    let created = account.origin.as_deref().and_then(|o| o.strip_prefix("import:")).and_then(|t| chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S").ok());
+    setting_delete(c, &format!("life_estimate_{}", account.id))?;
+    Account::delete(c, account.id)?;
+    for id in people {
+        let Some(card) = PersonCard::get(c, id)? else { continue };
+        let plain = card.notes.as_deref().map(|n| n.trim().is_empty()).unwrap_or(true) && !card.birth_names.as_ref().map(crate::models::truthy).unwrap_or(false);
+        // a card made with this import (not an older one, nor one the user filled in) and linked to no other account
+        let made_with_it = created.map(|t| card.created_at >= t - chrono::Duration::minutes(1)).unwrap_or(false);
+        let used = Account::query(c, "", [])?.iter().any(|a| a.holders.as_ref().map(|h| holders::from_json(h).iter().any(|p| p.id == Some(id))).unwrap_or(false));
+        if plain && made_with_it && !used {
+            PersonCard::delete(c, id)?;
+        }
+    }
+    Ok(())
+}
+
+/// After a document went: the account takes back the balance of what is left (its newest statement), and when an
+/// import created it and nothing is left, it goes. Returns true when the account was removed.
+fn tidy_account(c: &Connection, account_id: i64, removed: &[Statement]) -> AppResult<bool> {
+    let Some(mut account) = Account::get(c, account_id)? else { return Ok(false) };
+    if vanished(c, &account)? {
+        remove_account(c, &account)?;
+        return Ok(true);
+    }
+    let came_from_it = removed.iter().any(|s| s.account_id == account_id && s.closing_balance == Some(account.balance));
+    let ours = account.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false);
+    if came_from_it || ours {
+        let newest = Statement::query(c, "WHERE account_id = ? AND closing_balance IS NOT NULL AND period_end IS NOT NULL ORDER BY period_end DESC LIMIT 1", [account_id])?.into_iter().next();
+        let before = account.clone();
+        match newest {
+            Some(s) => {
+                account.balance = s.closing_balance.unwrap_or_default();
+                account.balance_date = s.period_end.and_then(|d| d.and_hms_opt(0, 0, 0));
+            }
+            None if ours => {
+                account.balance = Decimal::ZERO;
+                account.balance_date = None;
+            }
+            None => {}
+        }
+        if account.balance != before.balance || account.balance_date != before.balance_date {
+            account.save(c, &before)?;
+        }
+    }
+    life_insurance::refresh(c, account_id); // the lines of a contract no longer rest on this paper
+    Ok(false)
+}
+
+/// The accounts a document touched: where it was filed, and where its operations, statements, recaps and loan data went.
+fn touched_accounts(c: &Connection, doc: &Document) -> AppResult<std::collections::BTreeSet<i64>> {
+    let mut ids: std::collections::BTreeSet<i64> = doc.account_id.into_iter().collect();
+    for sql in [
+        "SELECT DISTINCT account_id FROM transactions WHERE document_id = ?1",
+        "SELECT DISTINCT account_id FROM statements WHERE document_id = ?1",
+        "SELECT DISTINCT account_id FROM fee_summaries WHERE document_id = ?1",
+        "SELECT DISTINCT account_id FROM loans WHERE offer_document_id = ?1 OR schedule_document_id = ?1",
+        "SELECT DISTINCT l.account_id FROM loans l JOIN loan_installments i ON i.loan_id = l.id WHERE i.document_id = ?1",
+        "SELECT DISTINCT l.account_id FROM loans l JOIN loan_events e ON e.loan_id = l.id WHERE e.document_id = ?1",
+        "SELECT DISTINCT account_id FROM holdings WHERE json_extract(extra, '$.document_id') = ?1",
+    ] {
+        let mut st = c.prepare(sql)?;
+        for id in st.query_map([doc.id], |r| r.get::<_, i64>(0))? {
+            ids.insert(id?);
+        }
+    }
+    Ok(ids)
+}
+
+/// Remove what a document brought in (its operations, statements, positions and loan data, the balance it set, and the
+/// account itself when an import created it and nothing else is left of it). The document itself stays.
+/// Returns the number of operations removed.
 pub fn undo_import(c: &Connection, doc: &mut Document) -> AppResult<i64> {
+    undo(c, doc, true)
+}
+
+/// The same, but the accounts stay whatever is left in them: for a document about to be replaced by another version of
+/// itself (or read again), which is imported into the same account right after.
+pub fn undo_import_keeping_accounts(c: &Connection, doc: &mut Document) -> AppResult<i64> {
+    undo(c, doc, false)
+}
+
+fn undo(c: &Connection, doc: &mut Document, prune: bool) -> AppResult<i64> {
+    let touched = touched_accounts(c, doc)?;
     let mut st = c.prepare_cached("SELECT id FROM transactions WHERE document_id = ?")?;
     let gone: HashSet<i64> = st.query_map([doc.id], |r| r.get::<_, i64>(0))?.collect::<Result<_, _>>()?;
     for mut t in Transaction::query(c, "WHERE kind IN ('transfer', 'instant_transfer')", [])? {
@@ -747,19 +865,42 @@ pub fn undo_import(c: &Connection, doc: &mut Document) -> AppResult<i64> {
         forget_balances(c, &mine)?;
     }
     c.execute("DELETE FROM fee_summaries WHERE document_id = ?", [doc.id])?;
+    for h in Holding::query(c, "", [])? {
+        if h.extra.as_ref().and_then(|e| e.get("document_id")).and_then(|d| d.as_i64()) == Some(doc.id) {
+            Holding::delete(c, h.id)?; // the positions this document brought
+        }
+    }
     loans::detach(c, doc)?;
     let before = doc.clone();
-    let previous_account = doc.account_id;
     let has = doc.parse_result.as_ref().and_then(|r| r.get("statements")).map(crate::models::truthy).unwrap_or(false);
     doc.status = if has { "parsed".into() } else { "uploaded".into() };
     doc.account_id = None;
     doc.save(c, &before)?;
-    if let Some(id) = previous_account {
-        life_insurance::refresh(c, id); // the lines no longer rest on this paper
-    }
     naming::restore_name(c, doc)?; // waiting again: it shows the name it was dropped with
     ledger::mark_internal(c)?; // a line can still be internal by its name
+    for id in touched {
+        if prune {
+            tidy_account(c, id, &mine)?;
+        } else if Account::get(c, id)?.is_some() {
+            life_insurance::refresh(c, id);
+        }
+    }
     Ok(removed)
+}
+
+/// Accounts an import made that nothing rests on any more (no document, operation, statement, recap, loan or typed
+/// position): what is left of imports undone before the app removed such accounts itself.
+pub fn empty_accounts(c: &Connection) -> AppResult<Vec<Account>> {
+    let mut out = vec![];
+    for a in Account::query(c, "ORDER BY institution, name", [])? {
+        // only the ones an import made: by their origin, or (older ones) the bank's printed name of the holder, which
+        // only an import fills in
+        let from_import = a.origin.is_some() || nonempty(&a.holder_alias).is_some();
+        if from_import && content_of(c, a.id)? == 0 {
+            out.push(a);
+        }
+    }
+    Ok(access::only_editable(c, out)?)
 }
 
 /// What a one-click import does: the account the identity points to, operations, balance if it is newer.

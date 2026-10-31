@@ -368,6 +368,8 @@ table!(Account, "accounts", true, {
     archived: bool = false,
     notes: Option<String> = None,
     updated_at: NaiveDateTime = utcnow(),
+    // "import:<UTC time>" when an import created the account (it goes away with its last document), empty for accounts typed by hand
+    origin: Option<String> = None,
 });
 impl Account {
     fn touch(&mut self) {
@@ -659,6 +661,11 @@ pub fn setting_get(c: &Connection, key: &str) -> rusqlite::Result<Option<String>
         Some(r) => Some(String::from_sql(r.get_ref(0)?)),
         None => None,
     })
+}
+
+pub fn setting_delete(c: &Connection, key: &str) -> rusqlite::Result<()> {
+    c.execute("DELETE FROM settings WHERE \"key\" = ?", [key])?;
+    Ok(())
 }
 
 pub fn setting_set(c: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {

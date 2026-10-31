@@ -329,7 +329,8 @@ fn test_undoing_the_only_document_removes_the_loan_but_not_the_account() {
     core.undo_import(doc_id).unwrap();
     db(&core, |c| {
         assert!(Loan::query_one(c, "", [])?.is_none());
-        assert!(Account::get(c, num(&result, "account_id"))?.is_some());
+        // the loan's account was made by the import and nothing is left of it: it goes too
+        assert!(Account::get(c, num(&result, "account_id"))?.is_none());
         Ok(())
     });
 }

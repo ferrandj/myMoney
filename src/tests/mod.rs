@@ -22,3 +22,4 @@ mod accounts_page;
 mod people;
 mod public_rates;
 mod fiscal;
+mod cleanup;
