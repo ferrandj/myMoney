@@ -460,7 +460,7 @@ pub fn sync(c: &Connection) -> AppResult<(Vec<(String, i64)>, Vec<i64>)> {
     }
     if !kept.is_empty() {
         let names = kept.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
-        report.push((format!("comptes sans rien dessous, gardés car rien ne prouve qu'un import les a faits ({names}{}) : à supprimer à la main depuis la page du compte ou la table accounts", if kept.len() > 5 { "…" } else { "" }), kept.len() as i64));
+        note(&format!("comptes sans rien dessous, gardés car rien ne prouve qu'un import les a faits ({names}{}) : à supprimer à la main depuis la page du compte ou la table accounts", if kept.len() > 5 { "…" } else { "" }), kept.len());
     }
 
     // 3. documents validated whose data is missing: back to « à valider » to be imported again
