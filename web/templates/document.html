@@ -109,7 +109,7 @@
   </details>
   {% endif %}
   {% if st.account_number and doc.status != 'imported' %}<p class="small">{% if plan.candidates|length == 1 %}Il sera rattaché au compte <a href="/accounts/{{ plan.candidates[0].id }}">{{ plan.candidates[0].name }}</a> (contrat n° <span class="sensitive">{{ st.account_number }}</span>).{% else %}Aucun compte n'a encore ce numéro de contrat : il sera rattaché dès qu'il existera.{% endif %}</p>{% endif %}
-  <p class="small muted">Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable){% if st.account_number %}, avec le contrat n° <span class="sensitive">{{ st.account_number }}</span> quand son compte existe{% endif %}.</p>
+  <p class="small muted">{% if st.account_number %}Cette lettre n'a pas d'opération en euros à importer : elle met à jour les <strong>lignes du contrat</strong> (fonds vendus et achetés), visibles sur le compte du contrat n° <span class="sensitive">{{ st.account_number }}</span>, et elle est classée avec ses papiers (chiffrée, téléchargeable).{% else %}Ce document ne contient aucune opération : il n'y a rien à importer. Il est classé avec tes papiers (chiffré, téléchargeable).{% endif %}</p>
   {% if doc.status == 'imported' %}<p class="flash">✓ Classé avec {% if doc.account_id %}<a href="/accounts/{{ doc.account_id }}">le compte du contrat</a>{% else %}tes papiers (aucun compte n'a encore ce numéro de contrat){% endif %}.</p>
   {% else %}
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}">{% if queue %}<input type="hidden" name="review" value="1">{% endif %}<input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn primary">Classer ce document</button></form>

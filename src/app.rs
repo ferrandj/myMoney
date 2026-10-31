@@ -36,6 +36,10 @@ pub struct Portfolio {
     pub by_category: Vec<(&'static str, &'static str, Decimal)>,
     pub assets: Decimal,
     pub debts: Decimal,
+    /// what the loans make owed (negative): left out of `wealth`, which is what is owned
+    pub loans: Decimal,
+    /// the total without the loans
+    pub wealth: Decimal,
     pub history: Vec<(NaiveDate, Decimal)>,
 }
 
@@ -472,7 +476,8 @@ impl MyMoney {
         let by_category = CATEGORIES.iter().filter_map(|(code, label)| totals.get(code).map(|t| (*code, *label, *t))).collect();
         let assets = values.iter().map(|v| v.total()).filter(|t| *t > Decimal::ZERO).fold(Decimal::ZERO, |a, b| a + b);
         let debts = values.iter().map(|v| v.total()).filter(|t| *t < Decimal::ZERO).fold(Decimal::ZERO, |a, b| a + b);
-        Ok(Portfolio { accounts: values, total: assets + debts, by_category, assets, debts, history })
+        let loans = values.iter().filter(|v| v.account.category() == "dettes").map(|v| v.total()).fold(Decimal::ZERO, |a, b| a + b);
+        Ok(Portfolio { accounts: values, total: assets + debts, by_category, assets, debts, loans, wealth: assets + debts - loans, history })
     }
 
     // ------------------------------------------------------------ accounts

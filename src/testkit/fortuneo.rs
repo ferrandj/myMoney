@@ -566,11 +566,16 @@ pub fn fortuneo_investor_profile_pdf(established: &str, profile: &str) -> Vec<u8
 /// The other wording of the arbitrage confirmation ("Unités de comptes initiales / cibles", a management fee, then the
 /// whole portfolio after the arbitrage), with the spaces kept inside the names of the funds.
 pub fn fortuneo_arbitrage_v2_pdf(net: &str, initial_total: &str) -> Vec<u8> {
-    fortuneo_arbitrage_v2_named_pdf(net, initial_total, "Contrat : FORTUNEO VIE")
+    fortuneo_arbitrage_v2_named_pdf(net, initial_total, "Contrat : FORTUNEO VIE", true)
+}
+
+/// The same letter without the list of the whole portfolio afterwards (most letters have none).
+pub fn fortuneo_arbitrage_v2_plain_pdf(net: &str, initial_total: &str) -> Vec<u8> {
+    fortuneo_arbitrage_v2_named_pdf(net, initial_total, "Contrat : FORTUNEO VIE", false)
 }
 
 /// Same letter, with the contract line as given (some letters print "Contrat : FORTUNEOVIE").
-pub fn fortuneo_arbitrage_v2_named_pdf(net: &str, initial_total: &str, contract_line: &str) -> Vec<u8> {
+pub fn fortuneo_arbitrage_v2_named_pdf(net: &str, initial_total: &str, contract_line: &str, with_portfolio: bool) -> Vec<u8> {
     let mut pdf = Pdf::new("");
     pdf.text(40.0, 60.0, "Références :");
     pdf.text(40.0, 72.0, contract_line);
@@ -590,13 +595,15 @@ pub fn fortuneo_arbitrage_v2_named_pdf(net: &str, initial_total: &str, contract_
     pdf.text(40.0, 344.0, "SURAVENIR");
     pdf.text(40.0, 356.0, &format!("FDS EUROS EXEMPLE RENDEMENT 15/04/2026 1,00 {initial_total} {initial_total}"));
     pdf.text(40.0, 368.0, "CARMIGNAC");
-    pdf.text(40.0, 380.0, "FONDS ACTIONS EXEMPLE A FR0000000001 15/04/2026 400,00 0,2500 100,00");
+    pdf.text(40.0, 380.0, "FONDS ACTIONS EXEMPLE A FR0000000001 15/04/2026 400,00 0,1500 60,00");
     pdf.text(40.0, 410.0, "l Unités de comptes cibles :");
     pdf.text(40.0, 422.0, "FDS EUROS EXEMPLE RENDEMENT 15/04/2026 1,00 40,0000 40,00");
     pdf.text(40.0, 434.0, "FONDS DIVERS EXEMPLE C IE0000000003 15/04/2026 120,00 0,5000 60,00");
-    pdf.text(40.0, 464.0, "l Répartition des unités de comptes après arbitrage : (*)");
-    pdf.text(40.0, 476.0, "FDS EUROS EXEMPLE RENDEMENT 16/04/2026 1,00 340,0000 340,00");
-    pdf.text(40.0, 488.0, "FONDS DIVERS EXEMPLE C IE0000000003 16/04/2026 120,00 0,5000 60,00");
+    if with_portfolio {
+        pdf.text(40.0, 464.0, "l Répartition des unités de comptes après arbitrage : (*)");
+        pdf.text(40.0, 476.0, "FDS EUROS EXEMPLE RENDEMENT 16/04/2026 1,00 340,0000 340,00");
+        pdf.text(40.0, 488.0, "FONDS DIVERS EXEMPLE C IE0000000003 16/04/2026 120,00 0,5000 60,00");
+    }
     pdf.bytes()
 }
 

@@ -271,6 +271,9 @@ impl PriceService {
     }
 
     pub fn security_price(&self, isin: Option<&str>, symbol: Option<&str>) -> Option<(Decimal, String)> {
+        if cfg!(test) {
+            return None; // the tests never reach for the network: a line then keeps its last known price
+        }
         let symbol = match symbol.filter(|s| !s.is_empty()) {
             Some(s) => s.to_string(),
             None => self.yahoo_symbol(isin.filter(|i| !i.is_empty())?)?,

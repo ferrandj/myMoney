@@ -991,8 +991,10 @@ fn test_life_insurance_annual_statement_is_imported_as_a_balance() {
     db(&core, |c| {
         let account = Account::get(c, id)?.unwrap();
         assert_eq!((account.account_type.as_str(), account.account_number.clone(), account.institution.clone()), ("life_insurance", s("000123456789012345"), s("Fortuneo")));
-        assert_eq!(account.balance, d("600.00"));
-        assert!(Holding::query(c, "WHERE account_id = ?", [id])?.is_empty()); // the funds are not counted twice
+        // the value is carried by the lines, once: the cash is zero, the four funds hold the 600
+        assert_eq!(account.balance, Decimal::ZERO);
+        let lines = Holding::query(c, "WHERE account_id = ?", [id])?;
+        assert_eq!(lines.len(), 4);
         assert!(Transaction::query(c, "WHERE account_id = ?", [id])?.is_empty());
         let statements = crate::models::Statement::query(c, "WHERE account_id = ?", [id])?;
         assert_eq!(statements.len(), 1);
@@ -1013,7 +1015,7 @@ fn test_life_insurance_annual_statements_chain_year_after_year() {
     assert_eq!(num(&result, "account_id"), id);
     db(&core, |c| {
         assert_eq!(Account::query(c, "", [])?.len(), 1);
-        assert_eq!(Account::get(c, id)?.unwrap().balance, d("640.00")); // the older statement does not replace the newer balance
+        assert_eq!(Account::get(c, id)?.unwrap().balance, Decimal::ZERO); // the lines come from the newest statement, not from the older one
         let statements = crate::models::Statement::query(c, "WHERE account_id = ? ORDER BY period_start", [id])?;
         assert_eq!(statements.len(), 2);
         assert_eq!(crate::services::statements::coverage(c, id)?.1, Vec::<String>::new());
@@ -1091,7 +1093,7 @@ fn test_web_the_investor_profile_is_shown_and_filed() {
 // ---------------------------------------------------------------------- life insurance: letters and operations
 #[test]
 fn test_arbitrage_letter_in_the_other_wording_is_read_with_its_portfolio() {
-    let (found, parsed) = parse(fortuneo_arbitrage_v2_pdf("100,00", "0,00"));
+    let (found, parsed) = parse(fortuneo_arbitrage_v2_pdf("100,00", "40,00"));
     assert_eq!(found.chosen.as_ref().unwrap().adapter.id(), "fortuneo.life_arbitrage_pdf");
     let st = &parsed[0];
     assert!(st.warnings.is_empty(), "{:?}", st.warnings);
@@ -1103,7 +1105,7 @@ fn test_arbitrage_letter_in_the_other_wording_is_read_with_its_portfolio() {
     assert_eq!(extra(st, "portfolio_after").as_array().unwrap().len(), 2);
     // the unit value comes first in the letter, then the number of units
     let first = &extra(st, "sold")[1];
-    assert_eq!((first["unit_value"].clone(), first["units"].clone(), first["amount"].clone()), (json!("400.00"), json!("0.2500"), json!("100.00")));
+    assert_eq!((first["unit_value"].clone(), first["units"].clone(), first["amount"].clone()), (json!("400.00"), json!("0.1500"), json!("60.00")));
 }
 
 #[test]
@@ -1118,7 +1120,7 @@ fn test_arbitrage_letters_go_with_the_account_of_their_contract() {
     });
     // the annual statement creates the account: the loose letter joins it, and a later letter goes straight to it
     let id = life_account(&core);
-    let later = drop(&core, &fortuneo_arbitrage_v2_pdf("100,00", "0,00"));
+    let later = drop(&core, &fortuneo_arbitrage_v2_pdf("100,00", "40,00"));
     let result = core.auto_import(later).unwrap().expect("filed");
     assert_eq!(num(&result, "account_id"), id);
     db(&core, |c| {
@@ -1194,7 +1196,7 @@ fn test_life_insurance_operations_ask_when_there_are_two_contracts() {
 fn test_web_life_insurance_pages_show_the_letter_and_the_operations() {
     let mut client = client();
     let csrf = client.login();
-    let page = upload(&mut client, &csrf, "arbitrage.pdf", &fortuneo_arbitrage_v2_pdf("100,00", "0,00")).text();
+    let page = upload(&mut client, &csrf, "arbitrage.pdf", &fortuneo_arbitrage_v2_pdf("100,00", "40,00")).text();
     for expected in ["Contrat après l&#39;arbitrage", "frais de gestion", "aucun compte n"] {
         assert!(page.contains(expected) || page.contains(&expected.replace("&#39;", "'")), "{expected}");
     }
@@ -1206,7 +1208,7 @@ fn test_web_life_insurance_pages_show_the_letter_and_the_operations() {
 
 #[test]
 fn test_arbitrage_letter_that_lost_its_spaces_names_its_contract_properly() {
-    let st = parse_one(fortuneo_arbitrage_v2_named_pdf("100,00", "0,00", "Contrat : FORTUNEOVIE"));
+    let st = parse_one(fortuneo_arbitrage_v2_named_pdf("100,00", "0,00", "Contrat : FORTUNEOVIE", true));
     assert_eq!(extra(&st, "contract"), &json!("FORTUNEO VIE"));
     assert!(extra(&st, "title").as_str().unwrap().ends_with("FORTUNEO VIE"));
 }
@@ -1215,7 +1217,7 @@ fn test_arbitrage_letter_that_lost_its_spaces_names_its_contract_properly() {
 fn test_letters_read_again_are_filed_and_join_their_account() {
     let core = core();
     let id = life_account(&core);
-    let letter = drop(&core, &fortuneo_arbitrage_v2_pdf("100,00", "0,00"));
+    let letter = drop(&core, &fortuneo_arbitrage_v2_pdf("100,00", "40,00"));
     core.auto_import(letter).unwrap().expect("filed");
     // a letter filed without an account (before the contract existed) joins it when it is read again
     db(&core, |c| {
@@ -1251,7 +1253,7 @@ fn test_web_a_waiting_letter_says_which_account_it_will_join() {
     let annual = upload(&mut client, &csrf, "annuel.pdf", &fortuneo_life_annual_pdf(&LifeAnnualSpec::new(2025)));
     let id = doc_of(&annual.url).unwrap();
     client.post(&format!("/documents/{id}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Mon assurance-vie"), ("update_balance", "on"), ("balance", "600.00")]);
-    upload(&mut client, &csrf, "arbitrage.pdf", &fortuneo_arbitrage_v2_pdf("100,00", "0,00"));
+    upload(&mut client, &csrf, "arbitrage.pdf", &fortuneo_arbitrage_v2_pdf("100,00", "40,00"));
     let (letter_id, account) = {
         let mut found = (0, None);
         db(&client.core, |c| {
@@ -1266,4 +1268,88 @@ fn test_web_a_waiting_letter_says_which_account_it_will_join() {
     client.post(&format!("/documents/{letter_id}/undo"), &[("csrf", &csrf)]);
     let waiting = client.get(&format!("/documents/{letter_id}")).text();
     assert!(waiting.contains("Il sera rattaché au compte") && waiting.contains("Mon assurance-vie"), "{waiting}");
+}
+
+// -------------------------------------------------------------------------- the lines of a life-insurance contract
+fn contract_value(core: &Core, id: i64) -> Decimal {
+    core.portfolio(false).unwrap().accounts.iter().find(|v| v.account.id == id).map(|v| v.total()).unwrap()
+}
+
+fn line_units(core: &Core, id: i64) -> Vec<(String, Decimal)> {
+    let mut lines: Vec<(String, Decimal)> = vec![];
+    db(core, |c| {
+        lines = Holding::query(c, "WHERE account_id = ? ORDER BY name", [id])?.into_iter().map(|h| (h.name.unwrap_or_default(), h.quantity)).collect();
+        Ok(())
+    });
+    lines
+}
+
+#[test]
+fn test_the_lines_of_a_contract_follow_its_papers() {
+    let core = core();
+    // the yearly statement gives the funds held on 31 December: the contract is worth the sum of its lines, once
+    let id = life_account(&core);
+    assert_eq!(contract_value(&core, id), d("640.00"));
+    assert_eq!(line_units(&core, id).len(), 4);
+
+    // a letter without the whole portfolio: units sold leave, units bought come in (fund A sold out, fund C up)
+    let letter = drop(&core, &fortuneo_arbitrage_v2_plain_pdf("100,00", "40,00"));
+    core.auto_import(letter).unwrap().expect("filed");
+    let lines = line_units(&core, id);
+    assert!(!lines.iter().any(|(n, _)| n == "FONDS ACTIONS EXEMPLE A"), "{lines:?}");
+    let units = |name: &str| lines.iter().find(|(n, _)| n == name).map(|l| l.1);
+    assert_eq!(units("FONDS DIVERS EXEMPLE C"), Some(d("0.5100")));
+    assert_eq!(units("FDS EUROS EXEMPLE RENDEMENT"), Some(d("440.00"))); // 440 - 40 sold + 40 bought
+    // 440 (euro fund) + 125 (fund B) + 0.51 x 120 (fund C, last unit value of the letter)
+    assert_eq!(contract_value(&core, id), d("626.20"));
+    db(&core, |c| {
+        let summary = crate::services::life_insurance::summary(c, id).unwrap();
+        assert_eq!((summary["letters"].clone(), summary["base_from"].clone()), (json!(1), json!("relevé annuel")));
+        Ok(())
+    });
+
+    // the payments of the operations export since the statement go to the euro fund, and an arbitrage without its letter is said
+    let csv = drop_file(&core, "operations.csv", &fortuneo_life_operations_csv());
+    core.auto_import(csv).unwrap().expect("one life-insurance account");
+    assert_eq!(contract_value(&core, id), d("786.20")); // + 2 payments of 80
+    db(&core, |c| {
+        let warnings = crate::services::life_insurance::summary(c, id).unwrap()["warnings"].clone();
+        assert!(warnings.as_array().unwrap().iter().any(|w| w.as_str().unwrap().contains("n'a pas sa lettre")), "{warnings}");
+        Ok(())
+    });
+
+    // taking a letter back out puts its lines back
+    core.undo_import(letter).unwrap();
+    assert!(line_units(&core, id).iter().any(|(n, _)| n == "FONDS ACTIONS EXEMPLE A"));
+}
+
+#[test]
+fn test_a_letter_with_the_whole_portfolio_becomes_the_base() {
+    let core = core();
+    let id = life_account(&core);
+    let letter = drop(&core, &fortuneo_arbitrage_v2_pdf("100,00", "40,00")); // lists the portfolio afterwards: 340 euros and fund C
+    core.auto_import(letter).unwrap().expect("filed");
+    let lines = line_units(&core, id);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(contract_value(&core, id), d("400.00")); // 340 + 0.5 x 120
+    db(&core, |c| {
+        assert_eq!(crate::services::life_insurance::summary(c, id).unwrap()["base_from"], json!("lettre d'arbitrage"));
+        Ok(())
+    });
+}
+
+#[test]
+fn test_web_the_account_shows_the_lines_of_the_contract() {
+    let mut client = client();
+    let csrf = client.login();
+    let annual = upload(&mut client, &csrf, "annuel.pdf", &fortuneo_life_annual_pdf(&LifeAnnualSpec::new(2025)));
+    let id = doc_of(&annual.url).unwrap();
+    client.post(&format!("/documents/{id}/import/0"), &[("csrf", &csrf), ("account_id", "new"), ("name", "Mon assurance-vie"), ("update_balance", "on"), ("balance", "600.00")]);
+    let page = client.get("/accounts/1").text();
+    for expected in ["FONDS ACTIONS EXEMPLE A", "FR0000000001", "FDS EUROS EXEMPLE RENDEMENT", "Lignes reconstituées d'après le relevé annuel du 31/12/2025", "le relevé annuel de l"] {
+        assert!(page.contains(expected) || page.replace("&#39;", "'").contains(expected), "{expected}");
+    }
+    upload(&mut client, &csrf, "arbitrage.pdf", &fortuneo_arbitrage_v2_plain_pdf("100,00", "40,00"));
+    let after = client.get("/accounts/1").text();
+    assert!(!after.contains("FONDS ACTIONS EXEMPLE A") && after.contains("une lettre d'arbitrage") || after.contains("1 lettre(s) d&#39;arbitrage") || after.contains("1 lettre(s) d'arbitrage"), "{after}");
 }

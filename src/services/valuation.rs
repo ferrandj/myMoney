@@ -123,7 +123,15 @@ impl<'a> Valuator<'a> {
         } else if h.isin.as_deref().map(|i| !i.is_empty()).unwrap_or(false) || yahoo.is_some() {
             if let Some((p, cur)) = self.prices.security_price(h.isin.as_deref(), yahoo.as_deref()) {
                 if let Some(price) = self.convert(p, Some(&cur)) {
-                    return done(price);
+                    // a line rebuilt from papers knows its last price: a quote far from it is another class of the fund
+                    let guarded = h.extra.as_ref().and_then(|e| e.get("guard")).map(crate::models::truthy).unwrap_or(false);
+                    let far = match (guarded, h.unit_price) {
+                        (true, Some(last)) if !last.is_zero() => ((price - last).abs() / last) > Decimal::new(3, 1),
+                        _ => false,
+                    };
+                    if !far {
+                        return done(price);
+                    }
                 }
             }
         }

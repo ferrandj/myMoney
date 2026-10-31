@@ -32,8 +32,8 @@
 
 <section class="tiles kpis">
   <div class="tile"><span class="muted small">{{ 'Tous les comptes' if everything else (selected|length ~ ' compte(s) sélectionné(s)') }}</span><span class="big small-big">{{ total|money }}</span><span class="muted small">Patrimoine, prêts non compris{% if end != today %} au {{ end|frdate }}{% endif %}</span></div>
-  <div class="tile"><span class="muted small">Actifs</span><span class="kpi">{{ assets|money }}</span></div>
-  <div class="tile"><span class="muted small">Prêts (à part, hors total)</span><span class="kpi">{{ debts|money }}</span></div>
+  <div class="tile"><span class="muted small">Prêts (à part)</span><span class="kpi">{{ debts|money }}</span><span class="muted small"><a href="/analytics?vue=dettes">voir les dettes</a></span></div>
+  <div class="tile"><span class="muted small">Patrimoine net (prêts inclus)</span><span class="kpi">{{ net|money }}</span></div>
   {% if variation %}
   <div class="tile"><span class="muted small">Variation depuis le {{ start|frdate }}</span>
     <span class="kpi {{ 'pos' if variation.delta > 0 else ('neg' if variation.delta < 0 else '') }}">{{ variation.delta|money }}</span>
@@ -51,7 +51,7 @@
       {% for code, label, href in periods %}<a href="{{ href }}" {% if code == periode %}aria-current="true"{% endif %}>{{ label }}</a>{% endfor %}
     </div>
     <form method="get" action="/analytics" class="dates{{ ' active' if custom }}">
-      <input type="hidden" name="vue" value="{{ vue }}">{% if par and vue == 'evolution' %}<input type="hidden" name="par" value="{{ par }}">{% endif %}{% if sans_dettes %}<input type="hidden" name="sans_dettes" value="1">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
+      <input type="hidden" name="vue" value="{{ vue }}">{% if par and vue == 'evolution' %}<input type="hidden" name="par" value="{{ par }}">{% endif %}{% if sans_dettes %}<input type="hidden" name="sans_dettes" value="1">{% endif %}{% if avec_dettes %}<input type="hidden" name="avec_dettes" value="1">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
       {% if vue == 'depenses' %}{% if sens != 'sorties' %}<input type="hidden" name="sens" value="{{ sens }}">{% endif %}{% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}{% endif %}
       {% if not everything %}{% for a in accounts if a.id in selected %}<input type="hidden" name="c" value="{{ a.id }}">{% endfor %}{% endif %}
       <label>Du <input type="date" name="du" value="{{ du or start.isoformat() }}" max="{{ today.isoformat() }}"></label>
@@ -68,7 +68,8 @@
       <input type="hidden" name="vue" value="{{ vue }}">{% if custom %}<input type="hidden" name="du" value="{{ du }}"><input type="hidden" name="au" value="{{ au }}">{% else %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
       <input type="hidden" name="par" value="{{ par }}">
       {% if not everything %}{% for a in accounts if a.id in selected %}<input type="hidden" name="c" value="{{ a.id }}">{% endfor %}{% endif %}
-      <label class="check"><input type="checkbox" name="sans_dettes" value="1" {% if sans_dettes %}checked{% endif %}> Masquer les dettes (prêts)</label>
+      {% if par == 'total' %}<label class="check"><input type="checkbox" name="avec_dettes" value="1" {% if avec_dettes %}checked{% endif %}> Compter les prêts (patrimoine net)</label>
+      {% else %}<label class="check"><input type="checkbox" name="sans_dettes" value="1" {% if sans_dettes %}checked{% endif %}> Masquer les dettes (prêts)</label>{% endif %}
     </form>
     {% endif %}
     {% if vue == 'depenses' %}
@@ -92,6 +93,27 @@
     </ul>
     <p class="muted small">Historique reconstitué à partir des soldes des relevés et des opérations importées. Un compte compte à partir de sa première donnée.</p>
     {% else %}<p class="muted">Pas assez de données pour tracer une courbe : importe des relevés ou ouvre l'application quelques jours.</p>{% endif %}
+
+  {% elif vue == 'dettes' %}
+    {% if loan_count %}
+    {% if chart %}{{ chart|safe }}{% endif %}
+    <div class="table-wrap"><table data-sortable>
+      <thead><tr><th>Prêt</th><th>Établissement</th><th class="num">Capital restant dû</th><th class="num">Taux</th><th>Prochaine échéance</th><th>Fin prévue</th></tr></thead>
+      <tbody>
+        {% for r in loan_rows %}
+        <tr>
+          <td><a href="/accounts/{{ r.account.id }}">{{ r.account.name }}</a></td>
+          <td class="small">{{ r.account.institution or '' }}</td>
+          <td class="num" data-sort="{{ r.remaining }}"><strong>{{ r.remaining|money }}</strong>{% if r.principal %} <small class="muted">sur {{ r.principal|money }}</small>{% endif %}</td>
+          <td class="num small">{{ ('%.2f'|format(r.rate)|replace('.', ',') ~ ' %') if r.rate is not none else '' }}</td>
+          <td class="small">{% if r.next_date %}{{ r.next_date|frdate }} · {{ r.next_total|money }}{% else %}—{% endif %}</td>
+          <td class="small">{{ r.end_date|frdate if r.end_date else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    <p class="muted small">Les prêts ne sont pas comptés dans le patrimoine : ils sont montrés ici, à part. Le capital restant dû vient de l'échéancier du prêt.</p>
+    {% else %}<p class="muted">Aucun prêt dans la sélection. Dépose l'offre de prêt ou son tableau d'amortissement pour le suivre ici.</p>{% endif %}
 
   {% else %}
     {% if mois %}<div class="toolbar"><span class="tag">Mois : {{ month_label }} <a href="{{ month_off_link }}" aria-label="Revenir à toute la période">✕</a></span></div>{% endif %}
@@ -260,7 +282,7 @@
     <summary>Comptes pris en compte ({{ selected|length }} sur {{ accounts|length }})</summary>
     <form method="get" action="/analytics" class="stack" data-autosubmit>
       <input type="hidden" name="vue" value="{{ vue }}">{% if custom %}<input type="hidden" name="du" value="{{ du }}"><input type="hidden" name="au" value="{{ au }}">{% else %}<input type="hidden" name="periode" value="{{ periode }}">{% endif %}
-      <input type="hidden" name="par" value="{{ par }}">{% if sans_dettes %}<input type="hidden" name="sans_dettes" value="1">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
+      <input type="hidden" name="par" value="{{ par }}">{% if sans_dettes %}<input type="hidden" name="sans_dettes" value="1">{% endif %}{% if avec_dettes %}<input type="hidden" name="avec_dettes" value="1">{% endif %}{% if interne %}<input type="hidden" name="interne" value="1">{% endif %}
       {% if vue == 'depenses' %}{% if sens != 'sorties' %}<input type="hidden" name="sens" value="{{ sens }}">{% endif %}{% if cat %}<input type="hidden" name="cat" value="{{ cat }}">{% endif %}{% if mois %}<input type="hidden" name="mois" value="{{ mois }}">{% endif %}{% endif %}
       <div class="actions"><button type="button" class="btn small" data-check="all">Tout cocher</button><button type="button" class="btn small" data-check="none">Tout décocher</button></div>
       <div class="columns">

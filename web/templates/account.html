@@ -152,6 +152,11 @@
 {% if account.holdings or account.category in ['crypto', 'investissements', 'autres'] %}
 <section class="card">
   <h2>Positions</h2>
+  {% if life %}
+  <p class="small muted">Lignes reconstituées d'après le {{ life.base_from }} du {{ life.base_date|frdate }}{% if life.letters %}, {{ life.letters }} lettre(s) d'arbitrage depuis{% endif %}{% if life.payments %}, {{ life.payments|money }} de versements depuis (comptés dans le fonds en euros){% endif %}. Chaque ligne est valorisée au cours du jour quand le fonds est trouvé par son ISIN (un cours trop éloigné du dernier connu est ignoré), sinon à la dernière valeur connue : c'est une estimation, le relevé annuel de l'assureur fait foi.</p>
+  {% for w in life.warnings %}<p class="small warn">⚠ {{ w }}</p>{% endfor %}
+  {% for n in life.notes %}<p class="small muted">ℹ {{ n }}</p>{% endfor %}
+  {% endif %}
   {% if value.holdings %}
   <div class="table-wrap">
   <table>
