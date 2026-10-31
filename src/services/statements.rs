@@ -429,7 +429,7 @@ fn on(form: &Form, key: &str) -> bool {
 pub fn file_document(c: &Connection, doc: &mut Document, st: &ParsedStatement) -> AppResult<Map<String, Value>> {
     let before = doc.clone();
     doc.status = "imported".into();
-    let account = if nonempty(&st.account_number).is_some() { find_accounts(c, st)?.into_iter().find(|a| nonempty(&a.account_number) == nonempty(&st.account_number)) } else { None };
+    let account = contract_account(c, st)?;
     doc.account_id = account.as_ref().map(|a| a.id);
     doc.save(c, &before)?;
     let mut result = loans::import_result(None, Some("info"));
@@ -437,6 +437,14 @@ pub fn file_document(c: &Connection, doc: &mut Document, st: &ParsedStatement) -
         result.insert("account_id".into(), a.id.into());
     }
     Ok(result)
+}
+
+/// The account whose contract number a letter carries, when there is one.
+fn contract_account(c: &Connection, st: &ParsedStatement) -> AppResult<Option<Account>> {
+    if nonempty(&st.account_number).is_none() {
+        return Ok(None);
+    }
+    Ok(find_accounts(c, st)?.into_iter().find(|a| nonempty(&a.account_number) == nonempty(&st.account_number)))
 }
 
 /// Papers filed before their account existed (letters of a contract) join it when it appears.
@@ -523,6 +531,16 @@ pub fn import_statement(c: &Connection, doc: &mut Document, st: &ParsedStatement
 /// is there), and the file gets its standard name.
 pub fn refresh_identity(c: &Connection, doc: &mut Document) -> AppResult<()> {
     let st = doc.parse_result.as_ref().and_then(|r| r.get("statements")).and_then(|s| s.as_array()).and_then(|a| a.first()).map(ParsedStatement::from_json);
+    if let (None, Some(st)) = (doc.account_id, &st) {
+        // a letter filed before its contract had an account (or read again by a newer version): it joins the account now
+        if st.document_kind.as_deref() == Some("info") {
+            if let Some(account) = contract_account(c, st)? {
+                let before = doc.clone();
+                doc.account_id = Some(account.id);
+                doc.save(c, &before)?;
+            }
+        }
+    }
     if let (Some(account_id), Some(st)) = (doc.account_id, st) {
         if !document_only(st.document_kind.as_deref()) || st.document_kind.as_deref() == Some("fees_summary") {
             if let Some(mut account) = Account::get(c, account_id)? {

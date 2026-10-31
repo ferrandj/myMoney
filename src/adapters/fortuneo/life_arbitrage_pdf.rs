@@ -109,7 +109,9 @@ impl Adapter for FortuneoLifeArbitragePdf {
             st.set_extra("arbitrage_date", d.format("%Y-%m-%d").to_string());
         }
         if let Some(m) = search(r"Contrat\s*:\s*([^\n]+)", &text) {
-            st.set_extra("contract", py::strip(&m[1]).to_string());
+            let name = py::strip(&m[1]).to_string();
+            // some letters lose their spaces: "FORTUNEOVIE"
+            st.set_extra("contract", if squash(&name) == "fortuneovie" { "FORTUNEO VIE".to_string() } else { name });
         }
         let mut rows: Vec<String> = vec![];
         for words in doc.words(1.0)?.iter() {

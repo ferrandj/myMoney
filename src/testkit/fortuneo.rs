@@ -566,9 +566,14 @@ pub fn fortuneo_investor_profile_pdf(established: &str, profile: &str) -> Vec<u8
 /// The other wording of the arbitrage confirmation ("Unités de comptes initiales / cibles", a management fee, then the
 /// whole portfolio after the arbitrage), with the spaces kept inside the names of the funds.
 pub fn fortuneo_arbitrage_v2_pdf(net: &str, initial_total: &str) -> Vec<u8> {
+    fortuneo_arbitrage_v2_named_pdf(net, initial_total, "Contrat : FORTUNEO VIE")
+}
+
+/// Same letter, with the contract line as given (some letters print "Contrat : FORTUNEOVIE").
+pub fn fortuneo_arbitrage_v2_named_pdf(net: &str, initial_total: &str, contract_line: &str) -> Vec<u8> {
     let mut pdf = Pdf::new("");
     pdf.text(40.0, 60.0, "Références :");
-    pdf.text(40.0, 72.0, "Contrat : FORTUNEO VIE");
+    pdf.text(40.0, 72.0, contract_line);
     pdf.text(40.0, 84.0, "N°: 000123 45678901 23 45");
     pdf.text(40.0, 110.0, "Objet : Confirmation d'arbitrage");
     pdf.text(40.0, 130.0, "M. MARTIN PAUL");

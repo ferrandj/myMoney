@@ -893,9 +893,13 @@ impl MyMoney {
         match self.analyze_document(doc_id, chosen.as_deref(), None) {
             Ok(status) => {
                 if status == "parsed" {
-                    if let Err(e) = self.check_duplicate(doc_id) {
-                        log::warn!("Relecture de {doc_id} impossible : {e}");
-                        return false;
+                    match self.check_duplicate(doc_id) {
+                        Ok(None) => self.file_if_letter(doc_id),
+                        Ok(Some(_)) => {}
+                        Err(e) => {
+                            log::warn!("Relecture de {doc_id} impossible : {e}");
+                            return false;
+                        }
                     }
                 }
                 true
@@ -903,6 +907,16 @@ impl MyMoney {
             Err(e) => {
                 log::warn!("Relecture de {doc_id} impossible : {e}");
                 false
+            }
+        }
+    }
+
+    /// A letter to keep (nothing to ask, nothing to import) that was read again is filed like a new one would be.
+    fn file_if_letter(&self, doc_id: i64) {
+        let letter = self.session(|c| Ok(statements_of(&self.doc(c, doc_id, true)?).first().map(|s| s.get("document_kind").and_then(|k| k.as_str()) == Some("info")).unwrap_or(false)));
+        if letter.unwrap_or(false) {
+            if let Err(e) = self.auto_import(doc_id) {
+                log::warn!("Classement de {doc_id} impossible : {e}");
             }
         }
     }
@@ -949,8 +963,8 @@ impl MyMoney {
             Ok((doc.status.clone(), chosen))
         })?;
         if ["parsed", "needs_choice", "failed", "uploaded"].contains(&status.as_str()) {
-            if self.analyze_document(doc_id, chosen.as_deref(), None)? == "parsed" {
-                self.check_duplicate(doc_id)?;
+            if self.analyze_document(doc_id, chosen.as_deref(), None)? == "parsed" && self.check_duplicate(doc_id)?.is_none() {
+                self.file_if_letter(doc_id);
             }
             return Ok("relu");
         }
