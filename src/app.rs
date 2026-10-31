@@ -532,6 +532,7 @@ impl MyMoney {
             }
             account.notes = get("notes").filter(|s| !s.is_empty());
             account.archived = get("archived").as_deref() == Some("on");
+            account.mark_by_hand(); // created or changed in a form: no cleanup removes it on its own
             match before {
                 Some(b) => {
                     account.save(c, &b)?;
@@ -559,6 +560,7 @@ impl MyMoney {
             if account_type(account_type_code).is_some() {
                 account.account_type = account_type_code.to_string();
             }
+            account.mark_by_hand();
             account.save(c, &before)?;
             naming::rename_account_documents(c, account.id)?;
             Ok(())
@@ -673,6 +675,11 @@ impl MyMoney {
                 ..Default::default()
             }
             .insert(c)?;
+            if let Some(mut account) = Account::get(c, account_id)? {
+                let before = account.clone();
+                account.mark_by_hand();
+                account.save(c, &before)?;
+            }
             Ok(())
         })
     }

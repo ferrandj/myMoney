@@ -110,7 +110,7 @@ const EXTRA_TABLES: &[(&str, &str)] = &[(
 )];
 
 /// Columns added since the Python models were frozen (nullable, so the Python version still opens the same database).
-const EXTRA_COLUMNS: &[(&str, &str, &str, bool)] = &[("accounts", "holders", "TEXT", true), ("accounts", "interest_basis", "VARCHAR(10)", true), ("documents", "original_filename", "VARCHAR(300)", true), ("accounts", "origin", "VARCHAR(40)", true)];
+const EXTRA_COLUMNS: &[(&str, &str, &str, bool)] = &[("accounts", "holders", "TEXT", true), ("accounts", "interest_basis", "VARCHAR(10)", true), ("documents", "original_filename", "VARCHAR(300)", true), ("accounts", "origin", "VARCHAR(40)", true), ("accounts", "manual_at", "VARCHAR(40)", true)];
 
 /// Light schema upgrade: a database created by an older version gets the columns added since (all nullable).
 pub(crate) fn add_missing_columns(c: &Connection) -> rusqlite::Result<()> {

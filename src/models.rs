@@ -370,8 +370,21 @@ table!(Account, "accounts", true, {
     updated_at: NaiveDateTime = utcnow(),
     // "import:<UTC time>" when an import created the account (it goes away with its last document), empty for accounts typed by hand
     origin: Option<String> = None,
+    // when someone created or changed the account by hand (a form, not an import): such an account is never removed on
+    // its own (not when its documents are invalidated, not by the synchronisation)
+    manual_at: Option<String> = None,
 });
 impl Account {
+    pub fn mark_by_hand(&mut self) {
+        self.manual_at = Some(utcnow().format("%Y-%m-%dT%H:%M:%S").to_string());
+    }
+    pub fn by_hand(&self) -> bool {
+        self.manual_at.as_deref().map(|m| !m.is_empty()).unwrap_or(false)
+    }
+    /// Made by an import and left alone since: the app may remove it when nothing rests on it.
+    pub fn made_by_import(&self) -> bool {
+        !self.by_hand() && (self.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false) || self.holder_alias.as_deref().map(|a| !a.trim().is_empty()).unwrap_or(false))
+    }
     fn touch(&mut self) {
         self.updated_at = utcnow();
     }
