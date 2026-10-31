@@ -732,7 +732,7 @@ fn forget_balances(c: &Connection, gone: &[Statement]) -> AppResult<()> {
 }
 
 /// Where a position comes from: "import" (a document brought it), "life_insurance" (rebuilt from a contract's papers),
-/// None (typed by hand).
+/// "manual" (typed by hand; the ones typed before the mark have none).
 fn holding_source(h: &Holding) -> Option<&str> {
     h.extra.as_ref().and_then(|e| e.get("source")).and_then(|s| s.as_str())
 }
@@ -743,19 +743,31 @@ fn count(c: &Connection, sql: &str, account_id: i64) -> AppResult<i64> {
 
 /// What still rests on an account: its documents, operations, statements, fee recaps, loan and the positions typed by
 /// hand (the ones a document brought, or the ones rebuilt from papers, do not count: they go with their papers).
-fn content_of(c: &Connection, account_id: i64) -> AppResult<i64> {
+pub fn content_of(c: &Connection, account_id: i64) -> AppResult<i64> {
     let mut n = count(c, "SELECT COUNT(*) FROM documents WHERE account_id = ?", account_id)?;
     n += count(c, "SELECT COUNT(*) FROM transactions WHERE account_id = ?", account_id)?;
     n += count(c, "SELECT COUNT(*) FROM statements WHERE account_id = ?", account_id)?;
     n += count(c, "SELECT COUNT(*) FROM fee_summaries WHERE account_id = ?", account_id)?;
     n += count(c, "SELECT COUNT(*) FROM loans WHERE account_id = ?", account_id)?;
-    n += Holding::query(c, "WHERE account_id = ?", [account_id])?.iter().filter(|h| holding_source(h).is_none() && h.manual).count() as i64;
+    n += Holding::query(c, "WHERE account_id = ?", [account_id])?.iter().filter(|h| matches!(holding_source(h), None | Some("manual")) && h.manual).count() as i64;
     Ok(n)
 }
 
 /// An account an import created, with nothing left of it.
 fn vanished(c: &Connection, account: &Account) -> AppResult<bool> {
     Ok(account.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false) && content_of(c, account.id)? == 0)
+}
+
+/// Whether nothing rests on an account an import made (by its origin, or for older ones by the holder's printed name).
+pub fn vanishing(c: &Connection, account: &Account) -> AppResult<bool> {
+    let from_import = account.origin.is_some() || nonempty(&account.holder_alias).is_some();
+    Ok(from_import && content_of(c, account.id)? == 0)
+}
+
+/// The balance of an account takes back what its remaining statements say.
+pub fn rebalance(c: &Connection, account_id: i64) -> AppResult<()> {
+    tidy_account(c, account_id, &[])?;
+    Ok(())
 }
 
 /// Delete an account and everything that only existed for it: its lines, history, shares and loan (the database

@@ -23,3 +23,4 @@ mod people;
 mod public_rates;
 mod fiscal;
 mod cleanup;
+mod admin_db;

@@ -591,6 +591,39 @@ impl MyMoney {
         })
     }
 
+    // ------------------------------------------------------------- administrator: the database
+
+    /// Bring the database to the structure of this version. Returns what changed.
+    pub fn admin_migrate(&self) -> AppResult<Vec<String>> {
+        self.session(|c| crate::services::admin_db::migrate(c))
+    }
+
+    /// Delete the data of one user or of everybody (the users and the settings stay). Returns what went.
+    pub fn admin_clear(&self, scope: crate::services::admin_db::Scope) -> AppResult<Vec<(String, i64)>> {
+        let dir = self.settings.documents_dir();
+        let (report, paths) = self.session(|c| crate::services::admin_db::clear(c, scope, &dir))?;
+        for p in paths {
+            wipe(&p);
+        }
+        Ok(report)
+    }
+
+    /// Make the database say what the documents say (see `admin_db::sync`). Returns what was done.
+    pub fn admin_sync(&self) -> AppResult<Vec<(String, i64)>> {
+        let (mut report, again) = self.session(|c| crate::services::admin_db::sync(c))?;
+        let mut done = 0;
+        for id in &again {
+            if matches!(self.auto_import(*id), Ok(Some(_))) {
+                done += 1;
+            }
+        }
+        if !again.is_empty() {
+            report.push(("… importés de nouveau tout seuls".to_string(), done));
+            report.push(("… laissés « à valider » (à regarder dans Documents)".to_string(), again.len() as i64 - done));
+        }
+        Ok(report)
+    }
+
     /// Accounts nothing rests on (see `statements::empty_accounts`).
     pub fn empty_accounts(&self) -> AppResult<Vec<Account>> {
         self.session(|c| statement_service::empty_accounts(c))
@@ -620,11 +653,12 @@ impl MyMoney {
         let value_dec = if value.is_empty() { None } else { Some(dec(&value)?) };
         self.session(|c| {
             access::check_edit(c, account_id)?;
-            let extra = Some(data.get("yahoo").filter(|y| !y.is_empty()).map(|y| {
-                let mut m = Map::new();
-                m.insert("yahoo".into(), Value::String(py::strip(y).to_string()));
-                Value::Object(m)
-            }).unwrap_or(Value::Null));
+            let mut mark = Map::new();
+            mark.insert("source".into(), Value::String("manual".into())); // typed by hand: no import and no sync takes it away
+            if let Some(y) = data.get("yahoo").filter(|y| !y.is_empty()) {
+                mark.insert("yahoo".into(), Value::String(py::strip(y).to_string()));
+            }
+            let extra = Some(Value::Object(mark));
             Holding {
                 account_id,
                 symbol: symbol.clone(),

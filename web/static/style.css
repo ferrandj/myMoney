@@ -392,3 +392,7 @@ dialog.reminder h2 { margin-top: 0; }
 }
 
 @media (max-width: 640px) { .kpis .tile:nth-child(4) { grid-column: 1 / -1; } }
+
+/* administrator's database browser: one line per row, long values cut (the row page shows them whole) */
+.db-table td, .db-table th { white-space: nowrap; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.db-table td:first-child, .db-table th:first-child { max-width: none; }

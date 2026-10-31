@@ -31,7 +31,7 @@ const TABLES: &[&str] = &[
     "counterparty_identifiers",
 ];
 
-fn counts(core: &MyMoney) -> Vec<(&'static str, i64)> {
+pub(super) fn counts(core: &MyMoney) -> Vec<(&'static str, i64)> {
     db(core, |c| {
         let mut out = vec![];
         for t in TABLES {
@@ -42,12 +42,12 @@ fn counts(core: &MyMoney) -> Vec<(&'static str, i64)> {
     })
 }
 
-fn assert_nothing_left(core: &MyMoney) {
+pub(super) fn assert_nothing_left(core: &MyMoney) {
     let left: Vec<_> = counts(core).into_iter().filter(|(_, n)| *n != 0).collect();
     assert!(left.is_empty(), "left behind: {left:?}");
 }
 
-fn import_new(core: &Core, name: &str, data: &[u8], extra: &[(&str, &str)]) -> (i64, i64) {
+pub(super) fn import_new(core: &Core, name: &str, data: &[u8], extra: &[(&str, &str)]) -> (i64, i64) {
     let doc = drop_file(core, name, data);
     let mut pairs = vec![("account_id", "new"), ("import_transactions", "on")];
     pairs.extend_from_slice(extra);
@@ -55,7 +55,7 @@ fn import_new(core: &Core, name: &str, data: &[u8], extra: &[(&str, &str)]) -> (
     (doc, num(&result, "account_id"))
 }
 
-fn feed(core: &Core, name: &str, data: &[u8], account_id: Option<i64>) -> (i64, i64) {
+pub(super) fn feed(core: &Core, name: &str, data: &[u8], account_id: Option<i64>) -> (i64, i64) {
     let doc = drop_file(core, name, data);
     let result = match core.auto_import(doc).unwrap() {
         Some(r) => r,
@@ -64,7 +64,7 @@ fn feed(core: &Core, name: &str, data: &[u8], account_id: Option<i64>) -> (i64, 
     (doc, result.get("account_id").and_then(|a| a.as_i64()).unwrap_or(0))
 }
 
-fn imported_ids(core: &MyMoney) -> Vec<i64> {
+pub(super) fn imported_ids(core: &MyMoney) -> Vec<i64> {
     db(core, |c| Ok(Document::query(c, "WHERE status = 'imported'", [])?.into_iter().map(|d| d.id).collect()))
 }
 
