@@ -345,6 +345,7 @@ enum R {
     AccountEdit,
     AccountUpdate,
     AccountDelete,
+    AccountsDeleteEmpty,
     HoldingAdd,
     HoldingDelete,
     Documents,
@@ -420,6 +421,7 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/settings/tax/reviewed", R::TaxReviewed),
     ("POST", "/settings/tax/snooze", R::TaxSnooze),
     ("POST", "/settings/tax/reset", R::TaxReset),
+    ("POST", "/accounts/delete-empty", R::AccountsDeleteEmpty),
     ("POST", "/accounts/new", R::AccountCreate),
     ("GET", "/accounts/{account_id}", R::AccountDetail),
     ("POST", "/accounts/{account_id}/shares", R::ShareAdd),
@@ -892,6 +894,7 @@ impl Web {
             R::AccountEdit => self.account_edit(cx),
             R::AccountUpdate => self.account_update(cx),
             R::AccountDelete => self.account_delete(cx),
+            R::AccountsDeleteEmpty => self.accounts_delete_empty(cx),
             R::HoldingAdd => self.holding_add(cx),
             R::HoldingDelete => self.holding_delete(cx),
             R::Documents => self.documents_page(cx),
@@ -2487,7 +2490,8 @@ impl Web {
             .filter_map(|(code, label)| groups.iter().find(|(c, _)| c == code).map(|(_, list)| Value::tuple(vec![Value::str(code), Value::str(label), Value::list(list.clone())])))
             .collect();
         let archived: Vec<Value> = archived.iter().map(|a| (views::account_with(a, Value::None, vec![]), a)).filter(|(v, _)| keep(v)).map(|(v, a)| row(v, a.id, a.balance.into())).collect();
-        self.page(cx, "accounts.html", vec![("groups", Value::list(groups)), ("archived", Value::list(archived)), ("total", portfolio.total.into()), ("filtre", filtre.into())])
+        let empty: Vec<Value> = self.core.empty_accounts()?.iter().map(|a| Value::sdict(vec![("id", a.id.into()), ("name", a.name.clone().into()), ("institution", views::opt_str(&a.institution)), ("balance", a.balance.into()), ("imported", a.origin.is_some().into())])).collect();
+        self.page(cx, "accounts.html", vec![("groups", Value::list(groups)), ("archived", Value::list(archived)), ("total", portfolio.total.into()), ("filtre", filtre.into()), ("leftovers", Value::list(empty))])
     }
 
     fn account_delete(&self, cx: &Cx) -> Out {
@@ -2497,6 +2501,12 @@ impl Web {
         self.verified_form(cx)?;
         self.core.delete_account(account_id)?;
         msg("/", "Compte supprimé")
+    }
+
+    fn accounts_delete_empty(&self, cx: &Cx) -> Out {
+        self.verified_form(cx)?;
+        let n = self.core.delete_empty_accounts()?;
+        msg("/accounts", if n > 0 { format!("{n} compte(s) sans document ni opération supprimé(s)") } else { "Aucun compte vide à supprimer".to_string() })
     }
 
     fn holding_add(&self, cx: &Cx) -> Out {
@@ -2638,10 +2648,15 @@ impl Web {
             }
             groups.iter().filter(|(i, _)| chosen.contains(i)).map(|(i, _)| *i).collect()
         };
-        let count = self.core.invalidate_documents(&ids)?;
+        let (count, accounts) = self.core.invalidate_documents_report(&ids)?;
         msg(
             "/documents",
-            if count > 0 { format!("{count} import(s) invalidé(s) : les fichiers sont conservés et reviennent dans « À valider »") } else { "Aucun import à invalider".to_string() },
+            if count > 0 {
+                let gone = if accounts > 0 { format!(" ; {accounts} compte(s) devenu(s) vide(s) supprimé(s)") } else { String::new() };
+                format!("{count} import(s) invalidé(s) : opérations, relevés et positions retirés, les fichiers sont conservés et reviennent dans « À valider »{gone}")
+            } else {
+                "Aucun import à invalider".to_string()
+            },
         )
     }
 
