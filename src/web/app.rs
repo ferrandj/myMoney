@@ -372,6 +372,8 @@ enum R {
     DocumentAnalyze,
     DocumentImport,
     DocumentDedup,
+    DocumentPeople,
+    ContactHolderAdopt,
     DocumentKeep,
     DocumentUndo,
     DocumentRefresh,
@@ -456,6 +458,7 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/documents/{doc_id}/analyze", R::DocumentAnalyze),
     ("POST", "/documents/{doc_id}/import/{index}", R::DocumentImport),
     ("POST", "/documents/{doc_id}/dedup/{index}", R::DocumentDedup),
+    ("POST", "/documents/{doc_id}/people", R::DocumentPeople),
     ("POST", "/documents/{doc_id}/keep", R::DocumentKeep),
     ("POST", "/documents/{doc_id}/undo", R::DocumentUndo),
     ("POST", "/documents/{doc_id}/refresh", R::DocumentRefresh),
@@ -464,6 +467,7 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("GET", "/contacts", R::Contacts),
     ("GET", "/contacts/identify", R::ContactIdentifyPage),
     ("POST", "/contacts/identify", R::ContactIdentify),
+    ("POST", "/contacts/holders", R::ContactHolderAdopt),
     ("GET", "/contacts/new", R::ContactNew),
     ("POST", "/contacts/new", R::ContactCreate),
     ("GET", "/contacts/{contact_id}", R::ContactDetail),
@@ -941,6 +945,8 @@ impl Web {
             R::DocumentAnalyze => self.document_analyze(cx),
             R::DocumentImport => self.document_import(cx),
             R::DocumentDedup => self.document_dedup(cx),
+            R::DocumentPeople => self.document_people(cx),
+            R::ContactHolderAdopt => self.contact_holder_adopt(cx),
             R::DocumentKeep => self.document_keep(cx),
             R::DocumentUndo => self.document_undo(cx),
             R::DocumentRefresh => self.document_refresh(cx),
@@ -2864,7 +2870,8 @@ impl Web {
                 candidates.push(Value::tuple(vec![adapter_value(a), Value::from(&c)]));
             }
         }
-        let (to_identify, original, plans, accounts) = self.core.session(|c| {
+        let earlier: Vec<Value> = self.core.earlier_waiting(doc_id)?.iter().map(|d| Value::sdict(vec![("id", d.id.into()), ("filename", d.filename.clone().into())])).collect();
+        let (to_identify, original, plans, accounts, identity) = self.core.session(|c| {
             let to_identify = if doc.status == "imported" { contact_service::unresolved(c, false, Some(doc_id), None)? } else { vec![] };
             let original = match doc.duplicate_of {
                 Some(o) => Document::get(c, o)?.map(|d| doc_value(&d)).unwrap_or(Value::None),
@@ -2872,7 +2879,19 @@ impl Web {
             };
             let plans = review.plans.iter().map(|p| views::plan(c, p)).collect::<AppResult<Vec<_>>>()?;
             let accounts = review.accounts.iter().map(|a| views::account(c, a)).collect::<AppResult<Vec<_>>>()?;
-            Ok((to_identify, original, plans, accounts))
+            // who the document is about: the cards it is linked to, and what its reading proposes
+            let linked = people_service::of_document(c, doc)?;
+            let proposed: Vec<Value> = people_service::read_people(c, doc)?
+                .iter()
+                .filter(|p| !p.is_empty() && !p.id.map(|i| doc.people().contains(&i)).unwrap_or(false))
+                .map(|p| Value::sdict(vec![("label", crate::services::holders::compose(std::slice::from_ref(p)).into()), ("known", p.id.is_some().into())]))
+                .collect();
+            let identity = Value::sdict(vec![
+                ("linked", Value::list(linked.iter().map(views::person_card).collect())),
+                ("proposed", Value::list(proposed)),
+                ("line", crate::services::naming::reading_holder(doc).into()),
+            ]);
+            Ok((to_identify, original, plans, accounts, identity))
         })?;
         // As in the Python version, `review` then names the review itself (always truthy): every waiting document shows
         // the review bar, whatever the query says.
@@ -2897,6 +2916,8 @@ impl Web {
                 ("to_identify", Value::list(to_identify.iter().map(unresolved_value).collect())),
                 ("original", original),
                 ("queue", queue),
+                ("identity", identity),
+                ("earlier", Value::list(earlier)),
             ],
         )
     }
@@ -2982,6 +3003,42 @@ impl Web {
             Ok(None) => msg(&format!("/documents/{doc_id}"), "Action inconnue"),
             Err(e) => msg(&format!("/documents/{doc_id}"), format!("Impossible : {}", str_of(&e))),
         }
+    }
+
+    /// Link a document to people (or unlink it): the people its reading names, or a card picked by hand.
+    fn document_people(&self, cx: &Cx) -> Out {
+        let mut p = Params::new(cx);
+        let doc_id = p.path_int(0, "doc_id");
+        p.check()?;
+        let form = self.verified_form(cx)?;
+        let action = get(&form, "action").unwrap_or("").to_string();
+        let person: Option<i64> = get(&form, "person_id").and_then(|v| v.trim().parse().ok());
+        let done = self.core.session(|c| {
+            let mut doc = self.core.doc(c, doc_id, true)?;
+            Ok(match action.as_str() {
+                "accept" => {
+                    let n = people_service::accept_reading(c, &mut doc)?;
+                    if n == 0 { "Aucun nom lu sur ce document".to_string() } else { "Document lié (la fiche est créée si elle n'existait pas)".to_string() }
+                }
+                "add" => match person {
+                    Some(id) => {
+                        let card = people_service::get_visible(c, id)?;
+                        let mut ids = doc.people();
+                        ids.push(card.id);
+                        people_service::set_document_people(c, &mut doc, &ids)?;
+                        format!("Document lié à {}", people_service::label(&card))
+                    }
+                    None => "Choisis une personne".to_string(),
+                },
+                "remove" => {
+                    let ids: Vec<i64> = doc.people().into_iter().filter(|i| Some(*i) != person).collect();
+                    people_service::set_document_people(c, &mut doc, &ids)?;
+                    "Lien retiré".to_string()
+                }
+                _ => "Action inconnue".to_string(),
+            })
+        })?;
+        msg(&format!("/documents/{doc_id}"), done)
     }
 
     fn document_keep(&self, cx: &Cx) -> Out {
@@ -3107,7 +3164,9 @@ impl Web {
         let mut p = Params::new(cx);
         let all = p.query_int("all", 0);
         p.check()?;
-        let (summaries, pending) = self.core.session(|c| Ok((contact_service::summaries(c)?, contact_service::unresolved(c, all != 0, None, None)?)))?;
+        let tab = if cx.qs("tab") == "holders" { "holders" } else { "payees" };
+        let (summaries, pending, (holders, identities)) =
+            self.core.session(|c| Ok((contact_service::summaries(c)?, contact_service::unresolved(c, all != 0, None, None)?, people_service::holders_overview(c)?)))?;
         let summaries: Vec<Value> = summaries
             .iter()
             .map(|s| {
@@ -3123,11 +3182,31 @@ impl Web {
                 )
             })
             .collect();
+        let holders: Vec<Value> = holders.iter().map(|h| Value::sdict(vec![("card", views::person_card(&h.card)), ("accounts", h.accounts.into()), ("documents", h.documents.into())])).collect();
+        let identities: Vec<Value> = identities.iter().map(|i| Value::sdict(vec![("line", i.line.clone().into()), ("label", i.label.clone().into()), ("documents", i.documents.into())])).collect();
         self.page(
             cx,
             "contacts.html",
-            vec![("summaries", Value::list(summaries)), ("pending", Value::list(pending.iter().map(unresolved_value).collect())), ("include_shops", (all != 0).into())],
+            vec![
+                ("tab", tab.into()),
+                ("summaries", Value::list(summaries)),
+                ("pending", Value::list(pending.iter().map(unresolved_value).collect())),
+                ("include_shops", (all != 0).into()),
+                ("holders", Value::list(holders)),
+                ("identities", Value::list(identities)),
+            ],
         )
+    }
+
+    /// "Créer la fiche" for an identity read from documents.
+    fn contact_holder_adopt(&self, cx: &Cx) -> Out {
+        let form = self.verified_form(cx)?;
+        let line = get(&form, "line").unwrap_or("").trim().to_string();
+        if line.is_empty() {
+            return msg("/contacts?tab=holders", "Aucun nom");
+        }
+        let n = self.core.session(|c| people_service::adopt_identity(c, &line))?;
+        msg("/contacts?tab=holders", format!("Fiche créée, {n} document(s) lié(s)"))
     }
 
     fn contact_identify_page(&self, cx: &Cx) -> Out {

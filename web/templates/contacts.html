@@ -5,11 +5,51 @@
 <section class="hero">
   <div>
     <h1>Contacts</h1>
-    <p class="muted">À qui va l'argent, d'où il vient. Une fois nommé, un IBAN (ou un nom imprimé par la banque) est reconnu dans tous les imports suivants.</p>
+    <p class="muted">Deux catégories : ceux à qui va l'argent ou qui en prélèvent (bénéficiaires, créanciers), et les titulaires de tes comptes (lus dans tes documents). Une fois nommé, un IBAN (ou un nom imprimé par la banque) est reconnu dans tous les imports suivants.</p>
   </div>
   <div class="actions"><a class="btn primary" href="/contacts/new">+ Nouveau contact</a></div>
 </section>
 
+<nav class="tabs" aria-label="Catégories de contacts">
+  <a href="/contacts" {% if tab == 'payees' %}aria-current="page"{% endif %}>Bénéficiaires et créanciers <span class="tag">{{ summaries|length + pending|length }}</span></a><a href="/contacts?tab=holders" {% if tab == 'holders' %}aria-current="page"{% endif %}>Titulaires de comptes <span class="tag">{{ holders|length + identities|length }}</span></a>
+</nav>
+
+{% if tab == 'holders' %}
+<section class="card">
+  <h2>Titulaires de comptes</h2>
+  <p class="small muted">Les personnes dont tes documents portent le nom (destinataire, titulaire, emprunteur) ou qui sont derrière tes comptes. Ouvre une fiche pour voir ses comptes et la modifier ; sur un document, tu peux le lier à une personne.</p>
+  {% if holders %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Nom</th><th class="num">Comptes</th><th class="num">Documents</th></tr></thead>
+    {% for h in holders %}
+    <tr>
+      <td><a href="/people/{{ h.card.id }}"><span class="sensitive">{{ h.card.label }}</span></a></td>
+      <td class="num">{{ h.accounts }}</td>
+      <td class="num">{{ h.documents }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">Aucune fiche pour l'instant.</p>{% endif %}
+</section>
+
+{% if identities %}
+<section class="card">
+  <h2>Lus dans tes documents, sans fiche <span class="tag">{{ identities|length }}</span></h2>
+  <p class="small muted">Des noms imprimés sur tes documents qui ne correspondent encore à aucune personne. Crée la fiche : les documents concernés y sont liés.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Nom lu</th><th class="num">Documents</th><th></th></tr></thead>
+    {% for i in identities %}
+    <tr>
+      <td><span class="sensitive">{{ i.label or i.line }}</span></td>
+      <td class="num">{{ i.documents }}</td>
+      <td><form method="post" action="/contacts/holders" class="inline-identify"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="line" value="{{ i.line }}"><button class="btn small primary">Créer la fiche</button></form></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
+<p class="small"><a class="btn" href="/people/new">+ Nouvelle personne</a></p>
+{% else %}
 {% if pending %}
 <section class="card">
   <h2>À identifier <span class="tag">{{ pending|length }}</span></h2>
@@ -19,7 +59,8 @@
 {% endif %}
 
 <section class="card">
-  <h2>Mes contacts</h2>
+  <h2>Bénéficiaires et créanciers</h2>
+  <p class="small muted">À qui tu envoies de l'argent, et qui te prélève (loyer, assurance, abonnements, impôts…).</p>
   {% if summaries %}
   <div class="table-wrap"><table>
     <thead><tr><th>Nom</th><th>Type</th><th>Téléphone</th><th>Identifiants</th><th class="num">Opérations</th><th class="num">Reçu</th><th class="num">Envoyé</th></tr></thead>
@@ -37,4 +78,5 @@
   </table></div>
   {% else %}<p class="muted">Aucun contact pour l'instant. Ils se créent depuis la liste « À identifier », ou à la main.</p>{% endif %}
 </section>
+{% endif %}
 {% endblock %}

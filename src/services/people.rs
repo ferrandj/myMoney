@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
-use crate::models::{Account, PersonCard};
+use crate::models::{Account, Document, PersonCard};
 use crate::py;
 use crate::services::{access, holders, naming};
 use holders::Person;
@@ -165,6 +165,11 @@ pub fn sync(c: &Connection, id: i64) -> AppResult<()> {
         account.save(c, &before)?;
         naming::rename_account_documents(c, account.id)?;
     }
+    for mut doc in documents_linked_to(c, id)? {
+        if doc.status == "imported" {
+            naming::rename_document(c, &mut doc)?;
+        }
+    }
     Ok(())
 }
 
@@ -182,6 +187,10 @@ pub fn delete(c: &Connection, id: i64) -> AppResult<()> {
         let before = account.clone();
         link(&mut account, &people);
         account.save(c, &before)?;
+    }
+    for mut doc in documents_linked_to(c, id)? {
+        let ids: Vec<i64> = doc.people().into_iter().filter(|i| *i != id).collect();
+        set_document_people(c, &mut doc, &ids)?;
     }
     PersonCard::delete(c, id)?;
     Ok(())
@@ -210,4 +219,146 @@ pub fn backfill(c: &Connection) -> AppResult<usize> {
         changed += 1;
     }
     Ok(changed)
+}
+
+// ------------------------------------------------------------------------------------------------ documents
+// A document can be about one or several people (its addressee, its holder, its borrower): the cards it is linked to are
+// in `documents.person_ids`. The reading of the document proposes them; a person can always link or unlink by hand.
+
+/// The documents (all of them, whoever may see them) linked to this card.
+fn documents_linked_to(c: &Connection, id: i64) -> AppResult<Vec<Document>> {
+    Ok(Document::query(c, "WHERE person_ids IS NOT NULL ORDER BY id", [])?.into_iter().filter(|d| d.people().contains(&id)).collect())
+}
+
+/// The people the reading of a document names, a known card standing in for each one it designates (`id` set).
+pub fn read_people(c: &Connection, doc: &Document) -> AppResult<Vec<Person>> {
+    let guess = holders::parse_printed(&naming::reading_holder(doc));
+    Ok(match_guess(&visible(c)?, &guess))
+}
+
+/// The cards a document is linked to (the ones the current user may see), in the order they were linked.
+pub fn of_document(c: &Connection, doc: &Document) -> AppResult<Vec<PersonCard>> {
+    let cards = visible(c)?;
+    Ok(doc.people().into_iter().filter_map(|id| cards.iter().find(|k| k.id == id).cloned()).collect())
+}
+
+/// Remember who a document is about (an empty list is a decision too: nobody). The name of an imported file follows.
+pub fn set_document_people(c: &Connection, doc: &mut Document, ids: &[i64]) -> AppResult<()> {
+    let mut unique: Vec<i64> = vec![];
+    for id in ids {
+        if !unique.contains(id) {
+            unique.push(*id);
+        }
+    }
+    let before = doc.clone();
+    doc.person_ids = Some(Value::Array(unique.into_iter().map(Value::from).collect()));
+    doc.save(c, &before)?;
+    if doc.status == "imported" && doc.person_ids != before.person_ids {
+        naming::rename_document(c, doc)?;
+    }
+    Ok(())
+}
+
+/// A document nobody has looked at yet gets the people it clearly is about: the holders of its account, else the cards its
+/// reading designates. Nothing known = left undecided, so a card made later can still be picked up.
+pub fn attach_known(c: &Connection, doc: &mut Document) -> AppResult<()> {
+    if doc.person_ids.is_some() {
+        return Ok(());
+    }
+    let mut ids: Vec<i64> = match doc.account_id {
+        Some(a) => Account::get(c, a)?.map(|a| holders::of_account(&a).iter().filter_map(|p| p.id).collect()).unwrap_or_default(),
+        None => vec![],
+    };
+    if ids.is_empty() {
+        ids = read_people(c, doc)?.iter().filter_map(|p| p.id).collect();
+    }
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let before = doc.clone();
+    ids.dedup();
+    doc.person_ids = Some(Value::Array(ids.into_iter().map(Value::from).collect()));
+    doc.save(c, &before)?;
+    Ok(())
+}
+
+/// Link the people the reading names, creating the cards that do not exist yet. Returns how many people were linked.
+pub fn accept_reading(c: &Connection, doc: &mut Document) -> AppResult<usize> {
+    let named = resolve(c, read_people(c, doc)?)?;
+    let mut ids = doc.people();
+    ids.extend(named.iter().filter_map(|p| p.id));
+    set_document_people(c, doc, &ids)?;
+    Ok(named.len())
+}
+
+/// One identity read from documents that no card stands for yet.
+pub struct Identity {
+    /// The line as the documents print it.
+    pub line: String,
+    pub label: String,
+    pub documents: usize,
+}
+
+/// A holder of accounts, as the Contacts page lists them.
+pub struct Holder {
+    pub card: PersonCard,
+    pub accounts: usize,
+    pub documents: usize,
+}
+
+/// The people behind the accounts and documents the user can see: the cards (with what points to each), and the identities
+/// the documents name that have no card yet.
+pub fn holders_overview(c: &Connection) -> AppResult<(Vec<Holder>, Vec<Identity>)> {
+    let cards = visible(c)?;
+    let docs = access::visible_documents(c)?;
+    let accounts = access::only_readable(c, Account::query(c, "", [])?)?;
+    let mut documents: std::collections::HashMap<i64, HashSet<i64>> = std::collections::HashMap::new();
+    let mut unknown: Vec<Identity> = vec![];
+    for d in &docs {
+        let mut ids: HashSet<i64> = d.people().into_iter().collect();
+        if let Some(a) = d.account_id.and_then(|a| accounts.iter().find(|x| x.id == a)) {
+            ids.extend(holders::of_account(a).iter().filter_map(|p| p.id));
+        }
+        if d.person_ids.is_none() {
+            // nobody looked at this document yet: what it names counts, with or without a card
+            let line = naming::reading_holder(d);
+            let guess = holders::parse_printed(&line);
+            let matched = match_guess(&cards, &guess);
+            ids.extend(matched.iter().filter_map(|p| p.id));
+            if matched.iter().any(|p| p.id.is_none()) {
+                match unknown.iter_mut().find(|u| same(&u.line, &line)) {
+                    Some(u) => u.documents += 1,
+                    None => unknown.push(Identity { label: holders::compose(&guess), line, documents: 1 }),
+                }
+            }
+        }
+        for id in ids {
+            documents.entry(id).or_default().insert(d.id);
+        }
+    }
+    let mut out = vec![];
+    for card in cards {
+        let accounts = accounts_of(c, card.id)?.len();
+        let documents = documents.get(&card.id).map(|s| s.len()).unwrap_or(0);
+        out.push(Holder { card, accounts, documents });
+    }
+    Ok((out, unknown))
+}
+
+/// "Create the card" for an identity read from documents: every document that names it (and was not looked at yet) is
+/// linked to the card, which is created unless it exists. Returns the number of documents linked.
+pub fn adopt_identity(c: &Connection, line: &str) -> AppResult<usize> {
+    let mut linked = 0;
+    for mut d in access::visible_documents(c)? {
+        if d.person_ids.is_some() || !same(&naming::reading_holder(&d), line) {
+            continue;
+        }
+        accept_reading(c, &mut d)?;
+        linked += 1;
+    }
+    if linked == 0 {
+        // no document to start from: the line alone still gives a card
+        resolve(c, holders::parse_printed(line))?;
+    }
+    Ok(linked)
 }

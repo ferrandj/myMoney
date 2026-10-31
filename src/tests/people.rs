@@ -179,3 +179,93 @@ fn names_are_kept_in_capitals_whatever_is_typed() {
     let js = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/web/static/app.js")).unwrap();
     assert!(js.contains("toUpperCase()"));
 }
+
+// ------------------------------------------------------------------------------------- documents and people
+
+fn people_of_doc(core: &crate::app::MyMoney, doc_id: i64) -> Vec<i64> {
+    db(core, |c| Ok(Document::get(c, doc_id)?.unwrap().people()))
+}
+
+#[test]
+fn a_letter_naming_someone_proposes_to_link_it_to_a_person_and_the_contacts_list_the_holders() {
+    let mut client = client();
+    let csrf = client.login();
+    let doc = drop_file(&client.core, "fgdr.pdf", &crate::testkit::fortuneo::fortuneo_info());
+
+    let page = client.get(&format!("/documents/{doc}")).text();
+    assert!(page.contains("Identité") && page.contains("Ce document est au nom de") && page.contains("M MARTIN PAUL"), "{page}");
+    assert!(page.contains("Créer la fiche et lier"), "no card yet: the proposal creates it");
+    assert!(people_of_doc(&client.core, doc).is_empty());
+
+    // the Contacts page already lists the identity read from the document, apart from the beneficiaries
+    let contacts = client.get("/contacts?tab=holders").text();
+    assert!(contacts.contains("Titulaires de comptes") && contacts.contains("Bénéficiaires et créanciers"));
+    assert!(contacts.contains("Lus dans tes documents, sans fiche") && contacts.contains("M MARTIN PAUL"), "{contacts}");
+    assert!(!client.get("/contacts").text().contains("Lus dans tes documents"), "the other category does not show them");
+
+    let done = client.post(&format!("/documents/{doc}/people"), &[("csrf", &csrf), ("action", "accept")]);
+    assert!(done.text().contains("Délier"), "{}", done.text());
+    let cards = db(&client.core, |c| Ok(PersonCard::query(c, "", [])?));
+    assert_eq!(cards.len(), 1);
+    assert_eq!(people_of_doc(&client.core, doc), vec![cards[0].id]);
+    let page = client.get(&format!("/documents/{doc}")).text();
+    assert!(!page.contains("Ce document est au nom de"), "nothing left to propose");
+
+    let contacts = client.get("/contacts?tab=holders").text();
+    assert!(!contacts.contains("Lus dans tes documents"), "the card exists now");
+    assert!(contacts.contains(&format!("/people/{}", cards[0].id)) && contacts.contains("M MARTIN PAUL"));
+
+    // unlinking is a decision: it stays unlinked
+    client.post(&format!("/documents/{doc}/people"), &[("csrf", &csrf), ("action", "remove"), ("person_id", &cards[0].id.to_string())]);
+    assert!(people_of_doc(&client.core, doc).is_empty());
+    client.core.import_statement(doc, 0, &form(&[])).unwrap();
+    assert!(people_of_doc(&client.core, doc).is_empty(), "filing does not link again what was unlinked");
+}
+
+#[test]
+fn filing_a_document_links_the_card_it_designates_and_a_card_can_be_picked_by_hand() {
+    let mut client = client();
+    let csrf = client.login();
+    let first = drop_file(&client.core, "a.pdf", &crate::testkit::fortuneo::fortuneo_info());
+    client.post(&format!("/documents/{first}/people"), &[("csrf", &csrf), ("action", "accept")]);
+    let card = db(&client.core, |c| Ok(PersonCard::query(c, "", [])?.remove(0))).id;
+
+    // a second letter for the same person: the card is recognised when it is filed
+    let second = drop_file(&client.core, "b.pdf", &crate::testkit::fortuneo::fortuneo_info_pdf(2025, "M MARTIN PAUL", None, "Fortuneo", "b", "100 000 €"));
+    assert!(people_of_doc(&client.core, second).is_empty());
+    client.core.import_statement(second, 0, &form(&[])).unwrap();
+    assert_eq!(people_of_doc(&client.core, second), vec![card]);
+
+    // a document without any name can still be linked by hand
+    let third = drop_file(&client.core, "c.pdf", &crate::testkit::fortuneo::fortuneo_info_pdf(2024, "", None, "Fortuneo", "c", "100 000 €"));
+    let page = client.get(&format!("/documents/{third}")).text();
+    assert!(page.contains("lier à une personne"), "{page}");
+    client.post(&format!("/documents/{third}/people"), &[("csrf", &csrf), ("action", "add"), ("person_id", &card.to_string())]);
+    assert_eq!(people_of_doc(&client.core, third), vec![card]);
+
+    // deleting the card unlinks its documents
+    client.post(&format!("/people/{card}/delete"), &[("csrf", &csrf)]);
+    for d in [first, second, third] {
+        assert!(people_of_doc(&client.core, d).is_empty());
+    }
+}
+
+#[test]
+fn creating_the_card_of_an_identity_read_from_documents_links_all_of_them() {
+    let mut client = client();
+    let csrf = client.login();
+    let a = drop_file(&client.core, "a.pdf", &crate::testkit::fortuneo::fortuneo_info());
+    let b = drop_file(&client.core, "b.pdf", &crate::testkit::fortuneo::fortuneo_info_pdf(2025, "M MARTIN PAUL", None, "Fortuneo", "b", "100 000 €"));
+    let page = client.get("/contacts?tab=holders").text();
+    assert!(page.contains("Créer la fiche"), "{page}");
+    client.post("/contacts/holders", &[("csrf", &csrf), ("line", "M MARTIN PAUL")]);
+    let cards = db(&client.core, |c| Ok(PersonCard::query(c, "", [])?));
+    assert_eq!(cards.len(), 1);
+    assert_eq!(people_of_doc(&client.core, a), vec![cards[0].id]);
+    assert_eq!(people_of_doc(&client.core, b), vec![cards[0].id]);
+    let page = client.get("/contacts?tab=holders").text();
+    assert!(!page.contains("Lus dans tes documents") && page.contains("M MARTIN PAUL"));
+    // the card says how many documents it has
+    let holders = db(&client.core, |c| Ok(people::holders_overview(c)?.0));
+    assert_eq!((holders[0].documents, holders[0].accounts), (2, 0));
+}

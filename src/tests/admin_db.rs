@@ -200,3 +200,47 @@ fn test_the_synchronisation_never_touches_what_was_typed_by_hand() {
     });
     let _ = (drop_file, csrf_of, admin_db::PER_PAGE, assert_nothing_left);
 }
+
+#[test]
+fn test_an_account_created_or_changed_by_hand_is_marked_and_no_cleanup_removes_it() {
+    let core = crate::testkit::env::core();
+    // created in the form: marked
+    let typed = core.save_account(None, &form(&[("name", "Livret à la main"), ("account_type", "livret_a"), ("balance", "500")])).unwrap();
+    assert!(db(&core, |c| Ok(Account::get(c, typed)?.unwrap().by_hand())));
+    // made by an import: not marked, so an empty one goes with its last document ...
+    let spec = Spec::new(sample_entries());
+    let (doc_a, imported) = import_new(&core, "septembre.pdf", &boursobank_statement_pdf(&spec), &[("name", "Compte courant")]);
+    assert!(!db(&core, |c| Ok(Account::get(c, imported)?.unwrap().by_hand())));
+    // ... until someone changes it by hand: renamed in the list, edited in the form, or given a position
+    let (doc_b, renamed) = import_new(&core, "fortuneo.pdf", &fortuneo_statement_pdf(&FSpec::new(fortuneo_entries())), &[("name", "Fortuneo")]);
+    core.quick_edit_account(renamed, "Mon compte Fortuneo", "Fortuneo", "checking").unwrap();
+    let (doc_c, edited) = import_new(&core, "fortuneo-frais.pdf", &fortuneo_fees_pdf(&FeesSpec::new()), &[("name", "Frais")]);
+    core.save_account(Some(edited), &form(&[("name", "Compte corrigé"), ("account_type", "checking")])).unwrap();
+    for (id, why) in [(renamed, "renamed"), (edited, "edited")] {
+        assert!(db(&core, |c| Ok(Account::get(c, id)?.unwrap().by_hand())), "{why}");
+    }
+    core.invalidate_documents(&[doc_a, doc_b, doc_c]).unwrap();
+    db(&core, |c| {
+        assert!(Account::get(c, imported)?.is_none(), "an untouched import account goes");
+        assert!(Account::get(c, renamed)?.is_some() && Account::get(c, edited)?.is_some() && Account::get(c, typed)?.is_some(), "what was changed by hand stays");
+        Ok(())
+    });
+    // the synchronisation and the list of empty accounts leave them too
+    let report = core.admin_sync().unwrap();
+    assert!(report.iter().any(|(l, n)| l.contains("comptes vides gardés") && *n == 3), "{report:?}");
+    assert_eq!(core.empty_accounts().unwrap().len(), 0);
+    db(&core, |c| {
+        assert_eq!(Account::query(c, "", [])?.len(), 3);
+        Ok(())
+    });
+}
+
+#[test]
+fn test_a_rate_given_when_the_app_asks_does_not_make_an_import_account_a_hand_made_one() {
+    let core = crate::testkit::env::core();
+    let (doc, account) = import_new(&core, "septembre.pdf", &boursobank_statement_pdf(&Spec::new(sample_entries())), &[("name", "Compte courant")]);
+    core.set_rate(account, dec("1.5"), None).unwrap();
+    assert!(!db(&core, |c| Ok(Account::get(c, account)?.unwrap().by_hand())));
+    core.invalidate_documents(&[doc]).unwrap();
+    assert!(db(&core, |c| Ok(Account::get(c, account)?.is_none())));
+}

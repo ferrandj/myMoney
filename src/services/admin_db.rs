@@ -415,8 +415,9 @@ pub fn sync(c: &Connection) -> AppResult<(Vec<(String, i64)>, Vec<i64>)> {
     let mut removed_accounts = 0;
     let mut removed_people: BTreeSet<i64> = BTreeSet::new();
     for account in Account::query(c, "", [])? {
-        let from_import = account.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false) || account.holder_alias.as_deref().map(|a| !a.trim().is_empty()).unwrap_or(false) || loan_accounts.contains(&account.id);
-        if !from_import {
+        // an account made or changed by hand is never touched; an import's account is known by its origin, the bank's
+        // printed holder name (older ones) or its loan (a loan only comes from an import)
+        if account.by_hand() || !(account.made_by_import() || loan_accounts.contains(&account.id)) {
             continue;
         }
         let documents: i64 = c.query_row("SELECT COUNT(*) FROM documents WHERE account_id = ? AND status = 'imported'", [account.id], |r| r.get(0))?;
@@ -460,7 +461,7 @@ pub fn sync(c: &Connection) -> AppResult<(Vec<(String, i64)>, Vec<i64>)> {
     }
     if !kept.is_empty() {
         let names = kept.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
-        note(&format!("comptes sans rien dessous, gardés car rien ne prouve qu'un import les a faits ({names}{}) : à supprimer à la main depuis la page du compte ou la table accounts", if kept.len() > 5 { "…" } else { "" }), kept.len());
+        note(&format!("comptes vides gardés : ils ont été saisis ou modifiés à la main, ou rien ne prouve qu'un import les a faits ({names}{}). À supprimer depuis la page du compte, ou la table accounts", if kept.len() > 5 { "…" } else { "" }), kept.len());
     }
 
     // 3. documents validated whose data is missing: back to « à valider » to be imported again

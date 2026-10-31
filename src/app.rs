@@ -106,6 +106,47 @@ pub fn period_key(doc: &Document) -> String {
     }
 }
 
+/// The statements of an account must be validated in order: the documents still waiting that are for the same account and
+/// older than this one (oldest first). Only statements with a period count; a fees recap, a letter or a loan paper never
+/// waits for a statement.
+pub fn earlier_waiting(c: &Connection, doc: &Document) -> AppResult<Vec<Document>> {
+    let statement_like = |st: &ParsedStatement| !statement_service::document_only(st.document_kind.as_deref());
+    let sts = statements_of(doc);
+    let Some(mine) = sts.first().map(ParsedStatement::from_json).filter(|st| statement_like(st)) else { return Ok(vec![]) };
+    let key = period_key(doc);
+    if doc.status != "parsed" || key.is_empty() {
+        return Ok(vec![]);
+    }
+    let clean = |s: &Option<String>| s.as_deref().map(|v| py::upper(&v.replace(' ', ""))).unwrap_or_default();
+    let same_account = |other: &ParsedStatement| {
+        let (a, b) = (clean(&mine.iban), clean(&other.iban));
+        if !a.is_empty() && !b.is_empty() {
+            return a == b;
+        }
+        let (a, b) = (clean(&mine.account_number), clean(&other.account_number));
+        !a.is_empty() && a == b && clean(&mine.institution) == clean(&other.institution)
+    };
+    let mut out: Vec<Document> = vec![];
+    for d in access::visible_documents(c)? {
+        if d.id == doc.id || d.status != "parsed" || period_key(&d).is_empty() || (period_key(&d), d.id) >= (key.clone(), doc.id) {
+            continue;
+        }
+        let sts = statements_of(&d);
+        let Some(other) = sts.first().map(ParsedStatement::from_json).filter(|st| statement_like(st)) else { continue };
+        if same_account(&other) && period_key(&d) != key {
+            out.push(d);
+        }
+    }
+    out.sort_by(|a, b| (period_key(a), a.id).cmp(&(period_key(b), b.id)));
+    Ok(out)
+}
+
+fn waiting_message(earlier: &[Document]) -> String {
+    let names: Vec<String> = earlier.iter().take(3).map(|d| format!("« {} »", d.filename)).collect();
+    let more = if earlier.len() > 3 { format!(" et {} autre(s)", earlier.len() - 3) } else { String::new() };
+    format!("Valide d'abord, dans l'ordre, les relevés plus anciens de ce compte : {}{more}", names.join(", "))
+}
+
 /// Statements first: fees recaps and loan notices wait for the account a statement creates.
 fn kind_rank(doc: &Document) -> i64 {
     match doc.kind.as_str() {
@@ -532,6 +573,7 @@ impl MyMoney {
             }
             account.notes = get("notes").filter(|s| !s.is_empty());
             account.archived = get("archived").as_deref() == Some("on");
+            account.mark_by_hand(); // created or changed in a form: no cleanup removes it on its own
             match before {
                 Some(b) => {
                     account.save(c, &b)?;
@@ -559,6 +601,7 @@ impl MyMoney {
             if account_type(account_type_code).is_some() {
                 account.account_type = account_type_code.to_string();
             }
+            account.mark_by_hand();
             account.save(c, &before)?;
             naming::rename_account_documents(c, account.id)?;
             Ok(())
@@ -673,6 +716,11 @@ impl MyMoney {
                 ..Default::default()
             }
             .insert(c)?;
+            if let Some(mut account) = Account::get(c, account_id)? {
+                let before = account.clone();
+                account.mark_by_hand();
+                account.save(c, &before)?;
+            }
             Ok(())
         })
     }
@@ -1094,7 +1142,19 @@ impl MyMoney {
         self.session(|c| {
             let mut doc = self.doc(c, doc_id, true)?;
             let st = Self::statement_at(&doc, index)?;
+            let earlier = earlier_waiting(c, &doc)?;
+            if !earlier.is_empty() {
+                return Err(AppError::Value(waiting_message(&earlier)));
+            }
             statement_service::import_statement(c, &mut doc, &st, form)
+        })
+    }
+
+    /// The older statements of the same account still waiting before this document can be validated.
+    pub fn earlier_waiting(&self, doc_id: i64) -> AppResult<Vec<Document>> {
+        self.session(|c| {
+            let doc = self.doc(c, doc_id, false)?;
+            earlier_waiting(c, &doc)
         })
     }
 
@@ -1171,6 +1231,10 @@ impl MyMoney {
                     statement_service::import_statement(c, &mut doc, &st, &Form::new())?;
                 }
                 return Ok(None);
+            }
+            let earlier = earlier_waiting(c, &doc)?;
+            if !earlier.is_empty() {
+                return Ok(Some(waiting_message(&earlier)));
             }
             let found = statement_service::find_accounts(c, &st)?;
             if found.len() > 1 {

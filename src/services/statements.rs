@@ -755,13 +755,12 @@ pub fn content_of(c: &Connection, account_id: i64) -> AppResult<i64> {
 
 /// An account an import created, with nothing left of it.
 fn vanished(c: &Connection, account: &Account) -> AppResult<bool> {
-    Ok(account.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false) && content_of(c, account.id)? == 0)
+    Ok(!account.by_hand() && account.origin.as_deref().map(|o| o.starts_with("import")).unwrap_or(false) && content_of(c, account.id)? == 0)
 }
 
 /// Whether nothing rests on an account an import made (by its origin, or for older ones by the holder's printed name).
 pub fn vanishing(c: &Connection, account: &Account) -> AppResult<bool> {
-    let from_import = account.origin.is_some() || nonempty(&account.holder_alias).is_some();
-    Ok(from_import && content_of(c, account.id)? == 0)
+    Ok(account.made_by_import() && content_of(c, account.id)? == 0)
 }
 
 /// The balance of an account takes back what its remaining statements say.
@@ -907,8 +906,7 @@ pub fn empty_accounts(c: &Connection) -> AppResult<Vec<Account>> {
     for a in Account::query(c, "ORDER BY institution, name", [])? {
         // only the ones an import made: by their origin, or (older ones) the bank's printed name of the holder, which
         // only an import fills in
-        let from_import = a.origin.is_some() || nonempty(&a.holder_alias).is_some();
-        if from_import && content_of(c, a.id)? == 0 {
+        if a.made_by_import() && content_of(c, a.id)? == 0 {
             out.push(a);
         }
     }

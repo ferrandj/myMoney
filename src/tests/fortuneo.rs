@@ -1354,3 +1354,36 @@ fn test_web_the_account_shows_the_lines_of_the_contract() {
     let after = client.get("/accounts/1").text();
     assert!(!after.contains("FONDS ACTIONS EXEMPLE A") && after.contains("une lettre d'arbitrage") || after.contains("1 lettre(s) d&#39;arbitrage") || after.contains("1 lettre(s) d'arbitrage"), "{after}");
 }
+
+#[test]
+fn test_the_statements_of_an_account_are_validated_oldest_first() {
+    let mut client = client();
+    client.login();
+    let core = client.core.clone();
+    let core = &*core;
+    let august = FSpec { period_end: ymd(2026, 8, 31), title: "août".into(), ..FSpec::new(vec![fentry(ymd(2026, 8, 5), &["CARTE 04/08 SHOP"], "-9.00")]) };
+    let september = FSpec { opening: august.closing(), period_end: ymd(2026, 9, 30), title: "sept".into(), ..FSpec::new(vec![fentry(ymd(2026, 9, 5), &["CARTE 04/09 SHOP"], "-10.00")]) };
+    let october = FSpec { opening: september.closing(), period_end: ymd(2026, 10, 31), title: "oct".into(), ..FSpec::new(vec![fentry(ymd(2026, 10, 5), &["CARTE 04/10 SHOP"], "-11.00")]) };
+    let other = FSpec { account: "00011112222".into(), title: "autre".into(), ..FSpec::new(vec![fentry(ymd(2026, 10, 6), &["CARTE 05/10 SHOP"], "-1.00")]) };
+    // dropped in the wrong order
+    let (oct, sep, aug) = (drop_file(core, "doc.pdf", &fortuneo_statement_pdf(&october)), drop_file(core, "doc.pdf", &fortuneo_statement_pdf(&september)), drop_file(core, "doc.pdf", &fortuneo_statement_pdf(&august)));
+    let by_hand = form(&[("account_id", "new"), ("name", "Compte Fortuneo"), ("import_transactions", "on")]);
+
+    let page = client.get(&format!("/documents/{oct}")).text();
+    assert!(page.contains("À valider dans l'ordre"), "{page}");
+    let err = core.import_statement(oct, 0, &by_hand).unwrap_err().to_string();
+    assert!(err.contains("Valide d'abord"), "{err}");
+    assert!(core.import_statement(sep, 0, &by_hand).is_err(), "September waits for August too");
+    assert!(core.pending_reasons().unwrap().iter().any(|(id, why)| *id == oct && why.contains("Valide d'abord")));
+    // the oldest one is never blocked
+    assert!(!client.get(&format!("/documents/{aug}")).text().contains("À valider dans l'ordre"));
+    let imported = core.import_statement(aug, 0, &by_hand).unwrap();
+    let account = num(&imported, "account_id");
+    assert!(core.import_statement(oct, 0, &by_hand).is_err(), "October still waits for September");
+    let account = account.to_string();
+    core.import_statement(sep, 0, &form(&[("account_id", &account), ("import_transactions", "on")])).unwrap();
+    core.import_statement(oct, 0, &form(&[("account_id", &account), ("import_transactions", "on")])).unwrap();
+    // another account does not wait for these
+    let doc = drop_file(core, "doc.pdf", &fortuneo_statement_pdf(&other));
+    assert!(core.earlier_waiting(doc).unwrap().is_empty());
+}

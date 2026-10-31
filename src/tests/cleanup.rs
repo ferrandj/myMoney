@@ -216,6 +216,7 @@ fn test_accounts_left_empty_by_older_versions_are_listed_and_can_be_deleted_but_
         let mut a = Account::get(c, left)?.unwrap();
         let before = a.clone();
         a.holder_alias = Some("M MARTIN PAUL".into());
+        a.manual_at = None; // an older version left no mark at all
         a.save(c, &before)?;
         Ok(())
     });
