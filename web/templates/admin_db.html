@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Base{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="muted">Base de données · administrateur</p>
+    <p class="big">{{ tables|length }} table{{ 's' if tables|length > 1 }}</p>
+    <p class="muted small">Tu lis ici la base entière, avec les données de tous les utilisateurs (il n'y a qu'une base et qu'une clé de données : chaque mot de passe ouvre la même). Chaque table se parcourt, chaque ligne se corrige ou se supprime. Rien ici n'est annulable : sauvegarde le dossier <code>data/</code> avant de vider ou de corriger à la main.</p>
+  </div>
+</section>
+
+{% if report %}
+<section class="card">
+  <h2>{{ report.title }}</h2>
+  <ul class="checks">
+    {% for label, n in report.lines %}<li class="ok">✓ {{ label }}{% if n %} : <strong>{{ n }}</strong>{% endif %}</li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card" id="outils">
+  <h2>Mettre à jour et synchroniser</h2>
+  <div class="stack">
+    <form method="post" action="/admin/db/migrate">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn">Mettre la base à la dernière version</button>
+      <p class="muted small">Crée les tables et les colonnes que cette version attend (l'application le fait déjà à chaque démarrage) et dit ce qui a changé.</p>
+    </form>
+    <form method="post" action="/admin/db/sync">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn danger" data-clicks="3" data-confirm="Synchroniser la base avec les documents ? Tout ce qu'aucun document validé n'explique est supprimé (opérations, relevés, positions, comptes et fiches créés par un import). Sans aucun document validé, la base d'import se vide.">Synchroniser avec les documents</button>
+      <p class="muted small">La base redit ce que disent les documents <strong>validés</strong> : ce qu'aucun n'explique est supprimé (opérations, relevés, récapitulatifs de frais, prêts, positions, comptes et fiches faits par un import et vides). Les documents validés dont les données manquent repassent « à valider » et sont réimportés. Les comptes, positions et opérations saisis à la main ne sont pas touchés. Sans aucun document validé, tout ce qui vient d'un import disparaît.</p>
+    </form>
+  </div>
+</section>
+
+<section class="card" id="vider">
+  <h2>Vider</h2>
+  <p class="small muted">Supprime les comptes (avec leurs opérations, relevés, positions, historique, prêts et partages), les documents (fichiers chiffrés compris), les fiches de personnes et les règles de catégories. Les utilisateurs et les réglages restent.</p>
+  <table class="user-table">
+    <thead><tr><th>Utilisateur</th><th class="num">Comptes</th><th class="num">Documents</th><th></th></tr></thead>
+    {% for o in owners %}
+    <tr>
+      <td class="sensitive">{{ o.email }}</td><td class="num">{{ o.accounts }}</td><td class="num">{{ o.documents }}</td>
+      <td><form method="post" action="/admin/db/clear"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="scope" value="user:{{ o.id }}">
+        <button class="btn small danger" data-clicks="3" data-confirm="Supprimer toutes les données de {{ o.email }} (comptes, documents, fiches, règles) ?">Vider ses données</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <form method="post" action="/admin/db/clear">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="scope" value="all">
+    <button class="btn danger" data-clicks="3" data-confirm="Supprimer les données de TOUS les utilisateurs (comptes, documents, fiches, règles, contacts) ? Les utilisateurs et les réglages restent.">Vider les données de tous les utilisateurs</button>
+  </form>
+</section>
+
+<section class="card" id="tables">
+  <h2>Tables</h2>
+  <div class="table-wrap"><table data-sortable>
+    <thead><tr><th>Table</th><th class="num">Lignes</th><th class="num">Colonnes</th></tr></thead>
+    <tbody>
+    {% for t in tables %}
+      <tr><td><a href="/admin/db/table/{{ t.name }}"><code>{{ t.name }}</code></a></td><td class="num" data-sort="{{ t.rows }}">{{ t.rows }}</td><td class="num">{{ t.columns }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card" id="sql">
+  <h2>Console SQL</h2>
+  <p class="small muted">Une instruction à la fois. Tout est permis (lire, insérer, modifier, supprimer, créer, détruire) sauf ce qui sort de la base : <code>ATTACH</code>, <code>VACUUM</code>, <code>load_extension</code> et les <code>PRAGMA</code> autres que de lecture. Une instruction qui échoue ne change rien.</p>
+  <form method="post" action="/admin/db/sql" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <textarea name="sql" rows="4" spellcheck="false" placeholder="SELECT id, name, balance FROM accounts ORDER BY id;" required>{{ sql_result.sql if sql_result else '' }}</textarea>
+    <div class="actions"><button class="btn danger" data-clicks="2" data-confirm="Exécuter cette instruction sur la base réelle ?">Exécuter</button></div>
+  </form>
+  {% if sql_result %}
+    {% if sql_result.error %}<p class="warn">⚠ {{ sql_result.error }}</p>
+    {% elif sql_result.affected is not none %}<p class="flash">✓ {{ sql_result.affected }} ligne(s) touchée(s)</p>
+    {% else %}
+    <div class="table-wrap"><table>
+      <thead><tr>{% for c in sql_result.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for r in sql_result.rows %}<tr>{% for c in r %}<td>{% if c.null %}<span class="muted">NULL</span>{% else %}<span class="sensitive">{{ c.text }}</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="small muted">{{ sql_result.rows|length }} ligne(s){% if sql_result.more %} (les 500 premières){% endif %}</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

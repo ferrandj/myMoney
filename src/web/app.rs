@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{Account, AccountShare, Counterparty, Document, Holding, Loan, LoanEvent, LoanInstallment, Transaction, User, ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS};
 use crate::py::{self, PyDec};
 use crate::services::access::{self, Identity};
-use crate::services::{analytics, people as people_service, categories as category_service, counterparties as contact_service, coverage as coverage_service, loans as loan_service, rates, users as user_service};
+use crate::services::{admin_db, analytics, people as people_service, categories as category_service, counterparties as contact_service, coverage as coverage_service, loans as loan_service, rates, users as user_service};
 
 const PUBLIC_PATHS: &[&str] = &["/static/", "/themes.css", "/healthz", "/login", "/setup", "/manifest.webmanifest", "/sw.js", "/icons/"];
 
@@ -289,6 +289,9 @@ const TEMPLATES: &[(&str, &str)] = template_sources!(
     "rebuild.html",
     "recovery.html",
     "settings.html",
+    "admin_db.html",
+    "admin_table.html",
+    "admin_row.html",
     "setup.html",
 );
 
@@ -345,6 +348,16 @@ enum R {
     AccountEdit,
     AccountUpdate,
     AccountDelete,
+    AdminDb,
+    AdminDbMigrate,
+    AdminDbSync,
+    AdminDbClear,
+    AdminDbSql,
+    AdminTable,
+    AdminTableEmpty,
+    AdminRow,
+    AdminRowSave,
+    AdminRowDelete,
     AccountsDeleteEmpty,
     HoldingAdd,
     HoldingDelete,
@@ -462,6 +475,16 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("GET", "/settings", R::Settings),
     ("POST", "/settings/password", R::SettingsPassword),
     ("POST", "/settings/recovery", R::SettingsRecovery),
+    ("GET", "/admin/db", R::AdminDb),
+    ("POST", "/admin/db/migrate", R::AdminDbMigrate),
+    ("POST", "/admin/db/sync", R::AdminDbSync),
+    ("POST", "/admin/db/clear", R::AdminDbClear),
+    ("POST", "/admin/db/sql", R::AdminDbSql),
+    ("GET", "/admin/db/table/{table}", R::AdminTable),
+    ("POST", "/admin/db/table/{table}/empty", R::AdminTableEmpty),
+    ("GET", "/admin/db/table/{table}/row/{rowid}", R::AdminRow),
+    ("POST", "/admin/db/table/{table}/row/{rowid}", R::AdminRowSave),
+    ("POST", "/admin/db/table/{table}/row/{rowid}/delete", R::AdminRowDelete),
     ("POST", "/settings/users", R::SettingsUserAdd),
     ("POST", "/settings/users/{user_id}/delete", R::SettingsUserDelete),
     ("POST", "/settings/users/{user_id}/role", R::SettingsUserRole),
@@ -894,6 +917,16 @@ impl Web {
             R::AccountEdit => self.account_edit(cx),
             R::AccountUpdate => self.account_update(cx),
             R::AccountDelete => self.account_delete(cx),
+            R::AdminDb => self.admin_db_page(cx, vec![]),
+            R::AdminDbMigrate => self.admin_db_migrate(cx),
+            R::AdminDbSync => self.admin_db_sync(cx),
+            R::AdminDbClear => self.admin_db_clear(cx),
+            R::AdminDbSql => self.admin_db_sql(cx),
+            R::AdminTable => self.admin_table(cx),
+            R::AdminTableEmpty => self.admin_table_empty(cx),
+            R::AdminRow => self.admin_row(cx),
+            R::AdminRowSave => self.admin_row_save(cx),
+            R::AdminRowDelete => self.admin_row_delete(cx),
             R::AccountsDeleteEmpty => self.accounts_delete_empty(cx),
             R::HoldingAdd => self.holding_add(cx),
             R::HoldingDelete => self.holding_delete(cx),
@@ -3238,6 +3271,174 @@ impl Web {
     }
 }
 
+
+// ------------------------------------------------------------------------------- administrator: the database
+
+fn cell_value(c: &crate::services::admin_db::Cell) -> Value {
+    Value::sdict(vec![("text", c.text.clone().into()), ("null", c.null.into()), ("blob", c.blob.into()), ("cut", c.cut.into())])
+}
+
+impl Web {
+    /// The page of the database tools. `extra` carries what an action just did (a report, a SQL result).
+    fn admin_db_page(&self, cx: &Cx, extra: Vec<(&str, Value)>) -> Out {
+        self.admin_only(cx)?;
+        let (tables, owners) = self.core.session(|c| Ok((admin_db::tables(c)?, admin_db::owners(c)?)))?;
+        let tables: Vec<Value> = tables.iter().map(|t| Value::sdict(vec![("name", t.name.clone().into()), ("rows", t.rows.into()), ("columns", Value::Int(t.columns.len() as i64))])).collect();
+        let owners: Vec<Value> = owners.iter().map(|(id, email, accounts, documents)| Value::sdict(vec![("id", (*id).into()), ("email", email.clone().into()), ("accounts", (*accounts).into()), ("documents", (*documents).into())])).collect();
+        let mut vars: Vec<(&str, Value)> = vec![("tables", Value::list(tables)), ("owners", Value::list(owners))];
+        vars.extend(extra);
+        self.page(cx, "admin_db.html", vars)
+    }
+
+    fn admin_report(title: &str, lines: Vec<(String, i64)>) -> Value {
+        Value::sdict(vec![("title", title.into()), ("lines", Value::list(lines.into_iter().map(|(l, n)| Value::tuple(vec![l.into(), n.into()])).collect()))])
+    }
+
+    fn admin_db_migrate(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        self.verified_form(cx)?;
+        let changes = self.core.admin_migrate()?;
+        let lines: Vec<(String, i64)> = if changes.is_empty() { vec![("La base est déjà à la dernière version : rien à changer".to_string(), 0)] } else { changes.into_iter().map(|c| (c, 0)).collect() };
+        self.admin_db_page(cx, vec![("report", Self::admin_report("Mise à jour de la base", lines))])
+    }
+
+    fn admin_db_sync(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        self.verified_form(cx)?;
+        let lines = self.core.admin_sync()?;
+        let lines = if lines.is_empty() { vec![("La base disait déjà ce que disent les documents : rien à changer".to_string(), 0)] } else { lines };
+        self.admin_db_page(cx, vec![("report", Self::admin_report("Synchronisation avec les documents", lines))])
+    }
+
+    fn admin_db_clear(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let form = self.verified_form(cx)?;
+        let scope = get_or(&form, "scope", "");
+        let (title, lines) = if scope == "all" {
+            ("Données de tous les utilisateurs supprimées", self.core.admin_clear(admin_db::Scope::Everyone)?)
+        } else if let Some(id) = scope.strip_prefix("user:").and_then(|i| py::py_int(i).ok()) {
+            ("Données de l'utilisateur supprimées", self.core.admin_clear(admin_db::Scope::User(id))?)
+        } else {
+            return msg("/admin/db", "Choisis ce qu'il faut vider");
+        };
+        self.admin_db_page(cx, vec![("report", Self::admin_report(title, lines))])
+    }
+
+    fn admin_db_sql(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let form = self.verified_form(cx)?;
+        let text = get_or(&form, "sql", "").to_string();
+        let outcome = self.core.session(|c| admin_db::run_sql(c, &text));
+        let result = match outcome {
+            Ok(o) => Value::sdict(vec![
+                ("sql", text.clone().into()),
+                ("columns", Value::list(o.columns.iter().map(|c| Value::str(c)).collect())),
+                ("rows", Value::list(o.rows.iter().map(|r| Value::list(r.iter().map(cell_value).collect())).collect())),
+                ("more", o.more.into()),
+                ("affected", o.affected.map(|n| Value::Int(n as i64)).unwrap_or(Value::None)),
+                ("error", Value::None),
+            ]),
+            Err(e) => Value::sdict(vec![("sql", text.clone().into()), ("error", str_of(&e).into())]),
+        };
+        self.admin_db_page(cx, vec![("sql_result", result)])
+    }
+
+    fn admin_table(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let table = cx.params[0].clone();
+        let mut p = Params::new(cx);
+        let page_no = p.query_int("page", 0);
+        p.check()?;
+        let search = cx.qs("q");
+        let data = self.core.session(|c| {
+            let name = admin_db::check_table(c, &table)?;
+            Ok((name.clone(), admin_db::columns(c, &name)?, admin_db::page(c, &name, page_no, &search)?))
+        });
+        let (name, columns, page) = match data {
+            Ok(d) => d,
+            Err(e) => return msg("/admin/db", str_of(&e)),
+        };
+        let pages = ((page.total + admin_db::PER_PAGE - 1) / admin_db::PER_PAGE).max(1);
+        let rows: Vec<Value> = page.rows.iter().map(|(id, cells)| Value::tuple(vec![(*id).into(), Value::list(cells.iter().map(cell_value).collect())])).collect();
+        self.page(
+            cx,
+            "admin_table.html",
+            vec![
+                ("table", name.into()),
+                ("columns", Value::list(columns.iter().map(|c| Value::sdict(vec![("name", c.name.clone().into()), ("type", c.sqltype.clone().into()), ("primary", c.primary.into())])).collect())),
+                ("rows", Value::list(rows)),
+                ("total", page.total.into()),
+                ("page_no", page_no.max(0).into()),
+                ("pages", pages.into()),
+                ("q", search.into()),
+            ],
+        )
+    }
+
+    fn admin_table_empty(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let table = cx.params[0].clone();
+        self.verified_form(cx)?;
+        match self.core.session(|c| admin_db::empty_table(c, &table)) {
+            Ok(n) => msg(&format!("/admin/db/table/{table}"), format!("{n} ligne(s) supprimée(s)")),
+            Err(e) => msg(&format!("/admin/db/table/{table}"), str_of(&e)),
+        }
+    }
+
+    fn admin_row(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let (table, rowid) = (cx.params[0].clone(), py::py_int(&cx.params[1]).unwrap_or(0));
+        let found = self.core.session(|c| {
+            let name = admin_db::check_table(c, &table)?;
+            Ok((name.clone(), admin_db::row(c, &name, rowid)?))
+        });
+        let (name, row) = match found {
+            Ok((n, Some(r))) => (n, r),
+            Ok((n, None)) => return msg(&format!("/admin/db/table/{n}"), "Cette ligne n'existe plus"),
+            Err(e) => return msg("/admin/db", str_of(&e)),
+        };
+        let fields: Vec<Value> = row.iter().map(|(col, c)| Value::sdict(vec![("name", col.name.clone().into()), ("type", col.sqltype.clone().into()), ("primary", col.primary.into()), ("cell", cell_value(c))])).collect();
+        self.page(cx, "admin_row.html", vec![("table", name.into()), ("rowid", rowid.into()), ("fields", Value::list(fields))])
+    }
+
+    fn admin_row_save(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let (table, rowid) = (cx.params[0].clone(), py::py_int(&cx.params[1]).unwrap_or(0));
+        let form = self.verified_form(cx)?;
+        let url = format!("/admin/db/table/{table}/row/{rowid}");
+        let done = self.core.session(|c| {
+            let name = admin_db::check_table(c, &table)?;
+            let Some(current) = admin_db::row(c, &name, rowid)? else { return Ok(None) };
+            let mut changes: Vec<(String, Option<String>)> = vec![];
+            for (col, was) in &current {
+                let wants_null = form.contains_key(&format!("null_{}", col.name));
+                let typed = form.get(&format!("v_{}", col.name)).cloned();
+                let new = if wants_null { None } else { typed.or_else(|| Some(was.text.clone())) };
+                let old = if was.null { None } else { Some(was.text.clone()) };
+                if new != old && !was.blob {
+                    changes.push((col.name.clone(), new));
+                }
+            }
+            Ok(Some(admin_db::set_cells(c, &name, rowid, &changes)?))
+        });
+        match done {
+            Ok(Some(n)) => msg(&url, if n == 0 { "Rien n'a changé".to_string() } else { format!("{n} valeur(s) modifiée(s)") }),
+            Ok(None) => msg(&format!("/admin/db/table/{table}"), "Cette ligne n'existe plus"),
+            Err(e) => msg(&url, format!("Refusé : {}", str_of(&e))),
+        }
+    }
+
+    fn admin_row_delete(&self, cx: &Cx) -> Out {
+        self.admin_only(cx)?;
+        let (table, rowid) = (cx.params[0].clone(), py::py_int(&cx.params[1]).unwrap_or(0));
+        self.verified_form(cx)?;
+        match self.core.session(|c| admin_db::delete_row(c, &table, rowid)) {
+            Ok(_) => msg(&format!("/admin/db/table/{table}"), "Ligne supprimée"),
+            Err(e) => msg(&format!("/admin/db/table/{table}"), format!("Refusé : {}", str_of(&e))),
+        }
+    }
+}
+
 // -------------------------------------------------------------------------------------- settings
 
 impl Web {
@@ -3350,7 +3551,7 @@ impl Web {
         let form = self.verified_form(cx)?;
         self.admin_only(cx)?;
         let outcome = self.core.session(|c| {
-            let user = user_service::add_with_password(c, &self.core.vault, get_or(&form, "email", ""), get(&form, "name"), get_or(&form, "password", ""), get(&form, "is_admin") == Some("on"))?;
+            let user = user_service::add_with_password(c, &self.core.vault, get_or(&form, "email", ""), get(&form, "name"), get_or(&form, "password", ""), get(&form, "is_admin") == Some("on") || get(&form, "role") == Some("admin"))?;
             Ok(user.label())
         });
         match outcome {
@@ -3391,7 +3592,7 @@ impl Web {
         p.check()?;
         let form = self.verified_form(cx)?;
         self.admin_only(cx)?;
-        let make_admin = get(&form, "is_admin") == Some("on");
+        let make_admin = get(&form, "is_admin") == Some("on") || get(&form, "role") == Some("admin");
         let outcome = self.core.session(|c| {
             let Some(mut user) = User::get(c, user_id)? else { return Ok(Err(not_found())) };
             if user.is_admin && !make_admin && user_service::all_users(c)?.iter().filter(|u| u.is_admin).count() <= 1 {

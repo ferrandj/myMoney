@@ -26,6 +26,7 @@
       <a href="/documents" {% if request.url.path.startswith('/documents') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">📄</span><span>Documents</span></a>
       <a href="/contacts" {% if request.url.path.startswith('/contacts') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span><span>Contacts</span></a>
       <a href="/settings" {% if request.url.path.startswith('/settings') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">⚙️</span><span>Paramètres</span></a>
+      {% if me and me.is_admin %}<a href="/admin/db" {% if request.url.path.startswith('/admin') %}aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🗄️</span><span>Base</span></a>{% endif %}
     </nav>
     <div class="tools">
       <button type="button" class="btn ghost" id="privacy-toggle" aria-pressed="false" title="Masquer ou afficher les montants, IBAN, noms et autres données sensibles"><span class="ico">👁</span><span class="lbl">Masquer</span></button>

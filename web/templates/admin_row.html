@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Base · {{ table }} #{{ rowid }}{% endblock %}
+{% block content %}
+<p><a href="/admin/db/table/{{ table }}">← <code>{{ table }}</code></a></p>
+<section class="card">
+  <h2><code>{{ table }}</code> · ligne {{ rowid }}</h2>
+  <p class="small muted">Change une valeur et enregistre : seules les valeurs modifiées sont écrites. Coche « NULL » pour vider une valeur. Les valeurs sont du texte : la colonne le convertit selon son type.</p>
+  <form method="post" action="/admin/db/table/{{ table }}/row/{{ rowid }}" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for f in fields %}
+    <div class="field">
+      <label>{{ f.name }} <span class="muted small">{{ f.type }}{% if f.primary %} · clé{% endif %}</span>
+        {% if f.cell.blob %}<span class="muted">{{ f.cell.text }}</span>
+        {% else %}<textarea name="v_{{ f.name }}" rows="{{ 1 if f.cell.text|length < 70 else 4 }}" spellcheck="false">{{ '' if f.cell.null else f.cell.text }}</textarea>
+        <label class="check"><input type="checkbox" name="null_{{ f.name }}" {% if f.cell.null %}checked{% endif %}> NULL</label>{% endif %}
+      </label>
+    </div>
+    {% endfor %}
+    <div class="actions"><button class="btn primary">Enregistrer</button></div>
+  </form>
+  <form method="post" action="/admin/db/table/{{ table }}/row/{{ rowid }}/delete" class="danger-zone">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn danger" data-clicks="3" data-confirm="Supprimer cette ligne de {{ table }} ?">Supprimer la ligne</button>
+  </form>
+</section>
+{% endblock %}
