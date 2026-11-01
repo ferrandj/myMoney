@@ -6,6 +6,7 @@ pub mod cloudflare;
 pub mod env;
 pub mod fixtures;
 pub mod fortuneo;
+pub mod hellobank;
 pub mod loan;
 pub mod pdf;
 

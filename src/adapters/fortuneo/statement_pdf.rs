@@ -266,7 +266,7 @@ fn read_header(st: &mut ParsedStatement, rows: &[Vec<W>], texts: &[String]) {
     }
 }
 
-fn check(st: &mut ParsedStatement, declared: &Map<String, Value>, declared_d: &[(String, Decimal)]) {
+pub fn check(st: &mut ParsedStatement, declared: &Map<String, Value>, declared_d: &[(String, Decimal)]) {
     let total: Decimal = st.transactions.iter().map(|t| t.amount).sum();
     if let (Some(o), Some(b)) = (st.opening_balance, st.balance) {
         let gap = b - o - total;
@@ -313,7 +313,7 @@ fn check(st: &mut ParsedStatement, declared: &Map<String, Value>, declared_d: &[
 }
 
 /// Operation dates have no year: take the one that puts the date inside (or just around) the statement's period.
-fn resolve(day: i64, month: i64, st: &ParsedStatement) -> Option<NaiveDate> {
+pub fn resolve(day: i64, month: i64, st: &ParsedStatement) -> Option<NaiveDate> {
     let anchor = st.period_end.or(st.balance_date)?;
     let ay = anchor.year() as i64;
     match st.period_start {

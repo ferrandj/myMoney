@@ -35,7 +35,7 @@ def python_side(path: str) -> str:
 
 # Adapters that only exist in the Rust version (the Python reference is frozen): they are taken out of the Rust side
 # before comparing, so that everything else is still compared to the byte. Their own tests are in src/tests.
-RUST_ONLY = {"fortuneo.life_annual_pdf", "fortuneo.investor_profile_pdf", "fortuneo.life_operations_csv"}
+RUST_ONLY = {"fortuneo.life_annual_pdf", "fortuneo.investor_profile_pdf", "fortuneo.life_operations_csv", "hellobank.statement_pdf"}
 # Adapters whose reading was deliberately improved in Rust (the arbitrage letter: both wordings, unit value before
 # units, contract number as account number): detection and scores are still compared, not what they read.
 READ_DIVERGED = {"fortuneo.life_arbitrage_pdf"}

@@ -22,6 +22,7 @@ use super::fortuneo::loan_prepayment_pdf::FortuneoLoanPrepaymentPdf;
 use super::fortuneo::loan_schedule_pdf::FortuneoLoanSchedulePdf;
 use super::fortuneo::statement_pdf::FortuneoStatementPdf;
 use super::generic::{GenericCsv, GenericOfx, GenericPdf, GenericQif};
+use super::hellobank::statement_pdf::HelloBankStatementPdf;
 use super::revolut::statement_csv::RevolutStatementCsv;
 
 /// A short fingerprint of the reading code (every adapter and the PDF reader). A document remembers the one that read
@@ -44,6 +45,7 @@ pub static ADAPTERS: &[&dyn Adapter] = &[
     &FortuneoLoanOfferPdf,
     &FortuneoLoanSchedulePdf,
     &FortuneoLoanPrepaymentPdf,
+    &HelloBankStatementPdf,
     &RevolutStatementCsv,
     &GenericOfx,
     &GenericQif,
