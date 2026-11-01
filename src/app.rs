@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration as StdDuration, Instant};
 
-use chrono::{Duration, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone};
 use rand::RngCore;
 use rusqlite::Connection;
 use rust_decimal::Decimal;
@@ -106,16 +106,16 @@ pub fn period_key(doc: &Document) -> String {
     }
 }
 
-/// The statements of an account must be validated in order: the documents still waiting that are for the same account and
-/// older than this one (oldest first). Only statements with a period count; a fees recap, a letter or a loan paper never
-/// waits for a statement.
-pub fn earlier_waiting(c: &Connection, doc: &Document) -> AppResult<Vec<Document>> {
+/// The statements of an account must be validated in order: among `candidates` (documents still waiting), the ones for the
+/// same account and older than this one, oldest first. Only statements with a period count; a fees recap, a letter or a
+/// loan paper never waits for a statement.
+fn earlier_in(doc: &Document, candidates: &[Document]) -> Vec<Document> {
     let statement_like = |st: &ParsedStatement| !statement_service::document_only(st.document_kind.as_deref());
     let sts = statements_of(doc);
-    let Some(mine) = sts.first().map(ParsedStatement::from_json).filter(|st| statement_like(st)) else { return Ok(vec![]) };
+    let Some(mine) = sts.first().map(ParsedStatement::from_json).filter(|st| statement_like(st)) else { return vec![] };
     let key = period_key(doc);
     if doc.status != "parsed" || key.is_empty() {
-        return Ok(vec![]);
+        return vec![];
     }
     let clean = |s: &Option<String>| s.as_deref().map(|v| py::upper(&v.replace(' ', ""))).unwrap_or_default();
     let same_account = |other: &ParsedStatement| {
@@ -127,18 +127,103 @@ pub fn earlier_waiting(c: &Connection, doc: &Document) -> AppResult<Vec<Document
         !a.is_empty() && a == b && clean(&mine.institution) == clean(&other.institution)
     };
     let mut out: Vec<Document> = vec![];
-    for d in access::visible_documents(c)? {
-        if d.id == doc.id || d.status != "parsed" || period_key(&d).is_empty() || (period_key(&d), d.id) >= (key.clone(), doc.id) {
+    for d in candidates {
+        if d.id == doc.id || d.status != "parsed" || period_key(d).is_empty() || (period_key(d), d.id) >= (key.clone(), doc.id) {
             continue;
         }
-        let sts = statements_of(&d);
+        let sts = statements_of(d);
         let Some(other) = sts.first().map(ParsedStatement::from_json).filter(|st| statement_like(st)) else { continue };
-        if same_account(&other) && period_key(&d) != key {
-            out.push(d);
+        if same_account(&other) && period_key(d) != key {
+            out.push(d.clone());
         }
     }
     out.sort_by(|a, b| (period_key(a), a.id).cmp(&(period_key(b), b.id)));
-    Ok(out)
+    out
+}
+
+pub fn earlier_waiting(c: &Connection, doc: &Document) -> AppResult<Vec<Document>> {
+    let waiting: Vec<Document> = access::visible_documents(c)?.into_iter().filter(|d| d.status == "parsed").collect();
+    Ok(earlier_in(doc, &waiting))
+}
+
+// ------------------------------------------------------------------------------------- the order of the review
+// Documents are reviewed (and shown in "À valider") account by account: a loan with its offer, then its tables and
+// notices as they come; a statement account month after month; a life-insurance contract with its letters. The accounts
+// follow each other by the date of their first paper; papers without any date come last.
+
+/// The date a paper is about: what its reading dates it by, for its kind.
+fn review_day(doc: &Document) -> Option<NaiveDate> {
+    let sts = statements_of(doc);
+    let st = sts.first()?;
+    let date_at = |v: Option<&Value>| v.and_then(|x| x.as_str()).and_then(|x| NaiveDate::parse_from_str(x, "%Y-%m-%d").ok()).filter(|d| d.year() > 1);
+    let top = |k: &str| date_at(st.get(k));
+    let extra = |k: &str| date_at(st.get("extra").and_then(|e| e.get(k)));
+    let loan = |k: &str| date_at(st.get("extra").and_then(|e| e.get("loan")).and_then(|l| l.get(k)));
+    match st.get("document_kind").and_then(|k| k.as_str()) {
+        // the table is numbered by dates that run to the end of the loan: it starts where its first instalment is
+        Some("loan_schedule") => top("period_start"),
+        Some("loan_offer") => loan("offer_date"),
+        _ => top("period_end").or_else(|| top("balance_date")).or_else(|| extra("issued_on")).or_else(|| extra("arbitrage_date")).or_else(|| top("period_start")),
+    }
+}
+
+/// What the paper belongs to: its loan, its account (IBAN, else institution and number) or its contract.
+fn review_group(doc: &Document) -> Option<String> {
+    let sts = statements_of(doc);
+    let st = ParsedStatement::from_json(sts.first()?);
+    let clean = |s: &str| py::upper(&s.chars().filter(|c| c.is_alphanumeric()).collect::<String>());
+    let loan_ref = st.extra.get("loan").and_then(|l| l.get("reference")).and_then(|r| r.as_str()).map(clean).filter(|r| !r.is_empty());
+    if let Some(r) = loan_ref {
+        return Some(format!("loan:{r}"));
+    }
+    if let Some(i) = st.iban.as_deref().map(clean).filter(|i| !i.is_empty()) {
+        return Some(format!("iban:{i}"));
+    }
+    let number = st.account_number.as_deref().or_else(|| st.extra.get("contract_number").and_then(|n| n.as_str())).map(clean).filter(|n| !n.is_empty())?;
+    Some(format!("acct:{}:{number}", st.institution.as_deref().map(clean).unwrap_or_default()))
+}
+
+/// Within a day, what comes first: the offer, the table, the notice; statements before the papers about them.
+fn review_rank(doc: &Document) -> i64 {
+    let sts = statements_of(doc);
+    match sts.first().and_then(|s| s.get("document_kind")).and_then(|k| k.as_str()) {
+        Some("loan_offer") => 0,
+        Some("loan_schedule") => 1,
+        Some("loan_event") => 2,
+        Some("fees_summary") => 3,
+        Some("info") => 4,
+        _ => 1,
+    }
+}
+
+/// The documents in the order they are to be validated.
+pub fn review_order(docs: Vec<Document>) -> Vec<Document> {
+    let info: Vec<(Option<NaiveDate>, Option<String>)> = docs.iter().map(|d| (review_day(d), review_group(d))).collect();
+    let mut first: HashMap<String, NaiveDate> = HashMap::new();
+    for (day, group) in &info {
+        if let (Some(day), Some(group)) = (day, group) {
+            let e = first.entry(group.clone()).or_insert(*day);
+            *e = (*e).min(*day);
+        }
+    }
+    let far = NaiveDate::MAX;
+    let mut keyed: Vec<_> = docs
+        .into_iter()
+        .zip(info)
+        .map(|(d, (day, group))| {
+            let key = (
+                day.is_none(),
+                day.map(|x| group.as_ref().and_then(|g| first.get(g)).copied().unwrap_or(x)).unwrap_or(far),
+                group.clone().unwrap_or_else(|| format!("~{:012}", d.id)),
+                day.unwrap_or(far),
+                review_rank(&d),
+                d.id,
+            );
+            (key, d)
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.into_iter().map(|(_, d)| d).collect()
 }
 
 fn waiting_message(earlier: &[Document]) -> String {
@@ -1150,6 +1235,12 @@ impl MyMoney {
         })
     }
 
+    /// For each waiting document that cannot be validated yet: the first older statement it waits for.
+    pub fn blocked_pending(&self) -> AppResult<HashMap<i64, Document>> {
+        let pending = self.pending_documents()?;
+        Ok(pending.iter().filter_map(|d| earlier_in(d, &pending).into_iter().next().map(|first| (d.id, first))).collect())
+    }
+
     /// The older statements of the same account still waiting before this document can be validated.
     pub fn earlier_waiting(&self, doc_id: i64) -> AppResult<Vec<Document>> {
         self.session(|c| {
@@ -1187,9 +1278,8 @@ impl MyMoney {
     /// Documents read but not yet validated (the ones the user still has to look at), oldest period first.
     pub fn pending_documents(&self) -> AppResult<Vec<Document>> {
         self.session(|c| {
-            let mut docs: Vec<Document> = access::visible_documents(c)?.into_iter().filter(|d| d.status == "parsed").collect();
-            docs.sort_by(|a, b| (period_key(a), a.id).cmp(&(period_key(b), b.id)));
-            Ok(docs)
+            let docs: Vec<Document> = access::visible_documents(c)?.into_iter().filter(|d| d.status == "parsed").collect();
+            Ok(review_order(docs))
         })
     }
 
@@ -1198,9 +1288,16 @@ impl MyMoney {
     pub fn next_pending(&self, after_id: Option<i64>) -> AppResult<(Option<i64>, usize)> {
         let pending = self.pending_documents()?;
         let Some(after) = after_id.filter(|_| !pending.is_empty()) else { return Ok((pending.first().map(|d| d.id), pending.len())) };
-        let key = self.session(|c| Ok(Document::get(c, after)?.map(|d| (period_key(&d), d.id))))?;
-        let later: Vec<&Document> = pending.iter().filter(|d| key.as_ref().map(|k| (period_key(d), d.id) > *k).unwrap_or(true)).collect();
-        Ok((later.first().map(|d| d.id), pending.len()))
+        // the document just left may be validated by now: put it back in the order to find its place
+        let mut all = pending.clone();
+        if !all.iter().any(|d| d.id == after) {
+            if let Some(d) = self.session(|c| Ok(Document::get(c, after)?))? {
+                all.push(d);
+            }
+        }
+        let all = review_order(all);
+        let next = all.iter().skip_while(|d| d.id != after).skip(1).find(|d| pending.iter().any(|p| p.id == d.id)).map(|d| d.id);
+        Ok((next, pending.len()))
     }
 
     /// For each document waiting for validation, what stops it from being validated in one click.

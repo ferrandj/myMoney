@@ -193,7 +193,7 @@ fn a_letter_naming_someone_proposes_to_link_it_to_a_person_and_the_contacts_list
     let doc = drop_file(&client.core, "fgdr.pdf", &crate::testkit::fortuneo::fortuneo_info());
 
     let page = client.get(&format!("/documents/{doc}")).text();
-    assert!(page.contains("Identité") && page.contains("Ce document est au nom de") && page.contains("M MARTIN PAUL"), "{page}");
+    assert!(page.contains("Titulaire du compte") && !page.contains("Identité") && page.contains("Ce document est au nom de") && page.contains("M MARTIN PAUL"), "{page}");
     assert!(page.contains("Créer la fiche et lier"), "no card yet: the proposal creates it");
     assert!(people_of_doc(&client.core, doc).is_empty());
 
