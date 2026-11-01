@@ -3,6 +3,7 @@
 mod adapters_generic;
 mod boursobank;
 mod fortuneo;
+mod hellobank;
 mod import_flow;
 mod loans;
 mod users;

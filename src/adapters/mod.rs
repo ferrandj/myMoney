@@ -6,6 +6,7 @@ pub mod boursobank;
 pub mod common;
 pub mod fortuneo;
 pub mod generic;
+pub mod hellobank;
 pub mod lines;
 pub mod pdftools;
 pub mod re;
