@@ -16,10 +16,10 @@
 {% if pending %}
 <section class="card warn" id="a-valider">
   <h2>À valider <span class="tag">{{ pending|length }}</span></h2>
-  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). <strong>Passer en revue</strong> t'ouvre les documents l'un après l'autre : tu vérifies, tu valides, le suivant s'affiche.</p>
+  <p>Ces documents sont lus mais <strong>pas encore enregistrés</strong> : l'application attend ton feu vert (typiquement pour créer un nouveau compte). <strong>Passer en revue</strong> t'ouvre les documents l'un après l'autre, dans l'ordre : compte par compte, du plus ancien au plus récent (un prêt avec son offre, puis ses tableaux et avis ; les documents sans date en dernier). Ceux qui attendent un relevé plus ancien sont grisés.</p>
   <div class="actions"><a class="btn primary" href="/documents/review">Passer en revue un par un ({{ pending|length }})</a></div>
   <ul class="small">
-    {% for d in pending %}{% set rel = reliability(d) %}<li><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · <a href="/documents/{{ d.id }}">ouvrir et valider</a>{% if reasons.get(d.id) %}<div class="muted">À regarder : {{ reasons[d.id] }}</div>{% endif %}</li>{% endfor %}
+    {% for d in pending %}{% set rel = reliability(d) %}{% set wait = blocked.get(d.id) %}<li {% if wait %}class="is-blocked"{% endif %}><a href="/documents/{{ d.id }}" class="sensitive">{{ d.filename }}</a> <span class="tag conf-{{ rel.code }}" title="{{ rel.detail }}">fiabilité {{ rel.label }}</span> · {% if wait %}<span class="muted">à valider après <a href="/documents/{{ wait.id }}" class="sensitive">{{ wait.filename }}</a></span>{% else %}<a href="/documents/{{ d.id }}">ouvrir et valider</a>{% endif %}{% if reasons.get(d.id) and not wait %}<div class="muted">À regarder : {{ reasons[d.id] }}</div>{% endif %}</li>{% endfor %}
   </ul>
 </section>
 {% endif %}

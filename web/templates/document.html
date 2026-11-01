@@ -72,11 +72,11 @@
 </section>
 {% endif %}
 
-{% if doc.status not in ('duplicate', 'copy') and (identity.line or identity.linked or people_options) %}
-<section class="card" id="identite">
-  <h2>Identité</h2>
+{% if doc.status not in ('duplicate', 'copy') and identity.shown and (identity.line or identity.linked or people_options) %}
+<section class="card" id="titulaire">
+  <h2>Titulaire du compte</h2>
   {% if identity.linked %}
-  <p class="small muted">Ce document concerne :</p>
+  <p class="small muted">Ce document est lié à :</p>
   <ul class="plain">
     {% for k in identity.linked %}
     <li><a href="/people/{{ k.id }}"><span class="sensitive">{{ k.label }}</span></a>
@@ -368,8 +368,7 @@
   {% endif %}
 
   {% if earlier and not done %}
-  <p class="card warn"><strong>À valider dans l'ordre.</strong> Des relevés plus anciens de ce compte attendent encore : valide-les d'abord, du plus ancien au plus récent, puis reviens à celui-ci.
-    {% for e in earlier %}<br>→ <a href="/documents/{{ e.id }}"><span class="sensitive">{{ e.filename }}</span></a>{% endfor %}</p>
+  <p class="card warn"><strong>À valider dans l'ordre</strong> : ce relevé vient après <a href="/documents/{{ earlier[0].id }}"><span class="sensitive">{{ earlier[0].filename }}</span></a>{% if earlier|length > 1 %} (et {{ earlier|length - 1 }} autre(s) plus ancien(s)){% endif %}, à valider d'abord.</p>
   {% endif %}
   {% if not done %}
   <form method="post" action="/documents/{{ doc.id }}/import/{{ idx }}" class="stack import-form" {% if plan.dedup and doc.status == 'parsed' %}hidden{% endif %}>{% if queue %}<input type="hidden" name="review" value="1">{% endif %}

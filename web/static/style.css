@@ -396,3 +396,7 @@ dialog.reminder h2 { margin-top: 0; }
 /* administrator's database browser: one line per row, long values cut (the row page shows them whole) */
 .db-table td, .db-table th { white-space: nowrap; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
 .db-table td:first-child, .db-table th:first-child { max-width: none; }
+
+/* "À valider": the papers that wait for an older statement of their account are greyed (nothing to click yet) */
+#a-valider li.is-blocked { opacity: .55; }
+#a-valider li.is-blocked > a:first-child { pointer-events: none; text-decoration: none; }

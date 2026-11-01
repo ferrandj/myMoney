@@ -1387,3 +1387,78 @@ fn test_the_statements_of_an_account_are_validated_oldest_first() {
     let doc = drop_file(core, "doc.pdf", &fortuneo_statement_pdf(&other));
     assert!(core.earlier_waiting(doc).unwrap().is_empty());
 }
+
+fn paper(id: i64, kind: &str, fields: Value) -> Document {
+    let mut st = json!({"document_kind": kind, "extra": {}});
+    for (k, v) in fields.as_object().unwrap() {
+        st[k] = v.clone();
+    }
+    Document { id, status: "parsed".into(), parse_result: Some(json!({"statements": [st]})), ..Default::default() }
+}
+
+#[test]
+fn test_the_review_goes_account_by_account_oldest_first_and_undated_papers_last() {
+    let loan = |reference: &str, key: &str, day: &str| {
+        let mut loan = json!({"reference": reference});
+        if key == "offer_date" {
+            loan[key] = json!(day);
+        }
+        loan
+    };
+    let docs = vec![
+        paper(1, "statement", json!({"iban": "FR76 A", "period_end": "2026-05-31"})),
+        paper(2, "statement", json!({"iban": "FR76 A", "period_end": "2026-03-31"})),
+        paper(3, "loan_schedule", json!({"period_start": "2027-01-05", "extra": {"loan": {"reference": "L1"}}})),
+        paper(4, "loan_offer", json!({"extra": {"loan": loan("L1", "offer_date", "2025-09-01")}})),
+        paper(5, "loan_event", json!({"balance_date": "2026-02-10", "extra": {"loan": {"reference": "L1"}}})),
+        paper(6, "loan_schedule", json!({"period_start": "2026-03-05", "extra": {"loan": {"reference": "L1"}}})),
+        paper(7, "info", json!({})),
+        paper(8, "statement", json!({"iban": "FR76 A", "period_end": "2026-04-30"})),
+        paper(9, "statement", json!({"iban": "FR76 B", "period_end": "2025-12-31"})),
+        paper(10, "loan_offer", json!({"extra": {"loan": {"reference": "L1"}}})), // an offer nobody dated
+    ];
+    let order: Vec<i64> = crate::app::review_order(docs).iter().map(|d| d.id).collect();
+    // the loan (offer, notice, newer table, later table), the other account, the first account month after month, then what has no date
+    assert_eq!(order, vec![4, 5, 6, 3, 9, 2, 8, 1, 10, 7]); // the undated ones last, still by account
+}
+
+#[test]
+fn test_the_review_queue_and_the_list_follow_the_order_and_grey_what_cannot_be_validated_yet() {
+    let mut client = client();
+    client.login();
+    let core = client.core.clone();
+    let core = &*core;
+    let august = FSpec { period_end: ymd(2026, 8, 31), title: "août".into(), ..FSpec::new(vec![fentry(ymd(2026, 8, 5), &["CARTE 04/08 SHOP"], "-9.00")]) };
+    let september = FSpec { opening: august.closing(), period_end: ymd(2026, 9, 30), title: "sept".into(), ..FSpec::new(vec![fentry(ymd(2026, 9, 5), &["CARTE 04/09 SHOP"], "-10.00")]) };
+    let october = FSpec { opening: september.closing(), period_end: ymd(2026, 10, 31), title: "oct".into(), ..FSpec::new(vec![fentry(ymd(2026, 10, 5), &["CARTE 04/10 SHOP"], "-11.00")]) };
+    let oct = drop_file(core, "oct.pdf", &fortuneo_statement_pdf(&october));
+    let sep = drop_file(core, "sep.pdf", &fortuneo_statement_pdf(&september));
+    let aug = drop_file(core, "aug.pdf", &fortuneo_statement_pdf(&august));
+
+    assert_eq!(core.next_pending(None).unwrap(), (Some(aug), 3));
+    assert_eq!(core.next_pending(Some(aug)).unwrap().0, Some(sep));
+    assert_eq!(core.next_pending(Some(sep)).unwrap().0, Some(oct));
+    assert_eq!(core.next_pending(Some(oct)).unwrap().0, None);
+
+    let page = client.get("/documents").text();
+    let (a, s, o) = (page.find("aug.pdf").unwrap(), page.find("sep.pdf").unwrap(), page.find("oct.pdf").unwrap());
+    assert!(a < s && s < o, "the list is in order");
+    assert_eq!(page.matches("class=\"is-blocked\"").count(), 2, "September and October are greyed");
+    assert!(page.contains("à valider après"));
+
+    // validating August frees September, whose turn comes next in the review
+    core.import_statement(aug, 0, &form(&[("account_id", "new"), ("name", "Compte Fortuneo"), ("import_transactions", "on")])).unwrap();
+    assert_eq!(core.next_pending(Some(aug)).unwrap(), (Some(sep), 2));
+    assert_eq!(client.get("/documents").text().matches("class=\"is-blocked\"").count(), 1);
+}
+
+#[test]
+fn test_a_filed_letter_shows_its_holder_block_even_without_operations() {
+    let mut client = client();
+    let csrf = client.login();
+    let doc = drop_file(&client.core, "fgdr.pdf", &fortuneo_info());
+    client.post(&format!("/documents/{doc}/people"), &[("csrf", &csrf), ("action", "accept")]);
+    client.core.import_statement(doc, 0, &form(&[])).unwrap();
+    let page = client.get(&format!("/documents/{doc}")).text();
+    assert!(page.contains("Titulaire du compte") && page.contains("M MARTIN PAUL") && !page.contains("Identité"), "{page}");
+}

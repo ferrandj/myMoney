@@ -2621,7 +2621,10 @@ impl Web {
             .filter(|d| d.status == "duplicate")
             .map(|d| Value::tuple(vec![doc_value(d), d.duplicate_of.and_then(|o| names.get(&o).cloned()).into()]))
             .collect();
-        let pending: Vec<Value> = documents.iter().filter(|d| d.status == "parsed").map(doc_value).collect();
+        // in the order they are to be validated; the ones that wait for an older statement are shown greyed
+        let waiting = self.core.pending_documents()?;
+        let pending: Vec<Value> = waiting.iter().map(doc_value).collect();
+        let blocked = Value::dict(self.core.blocked_pending()?.into_iter().map(|(id, first)| (Value::Int(id), Value::sdict(vec![("id", first.id.into()), ("filename", first.filename.clone().into())]))).collect());
         let reasons = if documents.iter().any(|d| d.status == "parsed") {
             Value::dict(self.core.pending_reasons()?.into_iter().map(|(id, r)| (Value::Int(id), Value::str(r))).collect())
         } else {
@@ -2647,6 +2650,7 @@ impl Web {
                 ("stale_count", stale_count.into()),
                 ("pending", Value::list(pending)),
                 ("reasons", reasons),
+                ("blocked", blocked),
                 ("imported_count", imported_count.into()),
             ],
         )
@@ -2886,7 +2890,10 @@ impl Web {
                 .filter(|p| !p.is_empty() && !p.id.map(|i| doc.people().contains(&i)).unwrap_or(false))
                 .map(|p| Value::sdict(vec![("label", crate::services::holders::compose(std::slice::from_ref(p)).into()), ("known", p.id.is_some().into())]))
                 .collect();
+            // the import form of a document still to be validated already has its own "Titulaire(s) du compte" block
+            let has_form = !matches!(doc.status.as_str(), "imported" | "duplicate" | "copy") && review.plans.iter().any(|p| p.statement.document_kind.as_deref() != Some("info"));
             let identity = Value::sdict(vec![
+                ("shown", (!has_form).into()),
                 ("linked", Value::list(linked.iter().map(views::person_card).collect())),
                 ("proposed", Value::list(proposed)),
                 ("line", crate::services::naming::reading_holder(doc).into()),
