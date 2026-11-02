@@ -16,7 +16,7 @@ use rust_decimal::Decimal;
 
 use crate::adapters::common::{name_key, norm};
 use crate::error::{value_err, AppResult};
-use crate::models::{CategoryRule, Transaction};
+use crate::models::{CategoryRule, Counterparty, Transaction};
 use crate::py;
 use crate::services::access;
 
@@ -38,18 +38,22 @@ const fn cat(id: &'static str, label: &'static str, direction: &'static str, key
 pub static OUT: &[Category] = &[
     cat("logement", "Logement", "out", &["loyer", "syndic", "foncia", "nexity", "charges copro", "copropriete", "agence immobiliere", "taxe fonciere", "taxe habitation"]),
     cat("impots", "Impôts et taxes", "out", &["dgfip", "direction generale des finance*", "impot", "impots", "tresor public", "urssaf", "amende", "antai", "taxe"]),
+    cat("essence", "Essence et carburant", "out", &["total access", "station*", "esso", "shell", "bp", "avia", "carburant*", "essence", "gazole"]),
     cat("energie", "Énergie et eau", "out", &["edf", "engie", "totalenergies", "eaux du", "veolia", "suez", "saur", "electricite", "gaz de", "enedis", "eau"]),
     cat("telecom", "Téléphone et internet", "out", &["orange", "sfr", "bouygues*", "free mobile", "freebox", "free telecom", "ovh*", "red by sfr", "sosh", "la poste mobile", "lebara"]),
-    cat("abonnements", "Abonnements", "out", &["netflix", "spotify", "disney*", "prime video", "amazon prime", "canal+", "canal plus", "deezer", "youtube*", "icloud", "apple.com/bill", "adobe", "dropbox", "openai", "chatgpt", "microsoft 365", "playstation plus", "xbox", "twitch", "patreon", "notion"]),
+    cat("jeux_video", "Jeux vidéo", "out", &["steam*", "nintendo", "playstation*", "psn", "xbox", "epic games", "ubisoft", "blizzard", "battle.net", "riot games", "gog", "humble bundle", "electronic arts", "micromania", "twitch"]),
+    cat("abonnements", "Abonnements", "out", &["netflix", "spotify", "disney*", "prime video", "amazon prime", "canal+", "canal plus", "deezer", "youtube*", "icloud", "apple.com/bill", "adobe", "dropbox", "openai", "chatgpt", "microsoft 365", "patreon", "notion"]),
     cat("epargne", "Épargne et investissement", "out", &["versement periodique", "livret*", "assurance vie", "assurance-vie", "pea", "coinbase", "binance", "bitstack", "kraken", "crypto*", "bitpanda", "trade republic", "degiro", "interactive brokers", "yomoni", "linxea", "ramify"]),
     cat("assurances", "Assurances", "out", &["assurance*", "maif", "macif", "axa", "matmut", "groupama", "allianz", "april", "maaf", "gmf", "lemonade", "hiscox"]),
     cat("sante", "Santé", "out", &["pharmacie*", "medecin*", "docteur", "dentiste", "doctolib", "hopital", "clinique", "optique", "opticien*", "laboratoire*", "kine*", "osteo*", "mutuelle", "harmonie mutuelle", "cpam"]),
     cat("restaurants", "Restaurants et sorties", "out", &["uber eats", "ubereats", "deliveroo", "just eat", "restaurant*", "resto*", "mcdo", "mcdonald*", "burger king", "kfc", "quick", "subway", "brasserie*", "pizz*", "sushi*", "kebab*", "boulangerie*", "patisserie*", "cafe", "starbucks", "bar", "pub", "traiteur", "creperie*"]),
-    cat("courses", "Courses", "out", &["carrefour*", "leclerc", "auchan", "lidl", "intermarche", "monoprix", "franprix", "casino", "aldi", "picard", "biocoop", "super u", "hyper u", "u express", "netto", "cora", "grand frais", "naturalia", "supermarche*", "epicerie*", "primeur*", "boucherie*", "marche", "drive"]),
+    cat("courses", "Alimentation", "out", &["carrefour*", "leclerc", "auchan", "lidl", "intermarche", "monoprix", "franprix", "casino", "aldi", "picard", "biocoop", "super u", "hyper u", "u express", "netto", "cora", "grand frais", "naturalia", "supermarche*", "epicerie*", "primeur*", "boucherie*", "marche", "drive"]),
     cat("voyages", "Voyages et vacances", "out", &["airbnb", "booking*", "ryanair", "easyjet", "air france", "transavia", "expedia", "hotel*", "hostel*", "abritel", "vacances", "camping*", "eurostar", "lufthansa", "volotea", "trainline", "ouigo"]),
-    cat("transport", "Transports", "out", &["sncf*", "trains de france", "ratp", "navigo", "uber", "bolt", "heetch", "blablacar", "total access", "esso", "shell", "station*", "bp", "peage*", "vinci autoroutes", "sanef", "aprr", "parking*", "indigo", "velib", "lime", "dott", "garage*", "norauto", "midas", "feu vert", "carburant*"]),
+    cat("transport_commun", "Transports en commun", "out", &["sncf*", "trains de france", "ratp", "navigo", "transilien", "tcl", "tisseo", "keolis", "transdev", "ile de france mobilites", "idfm", "bus", "metro", "tramway", "tram", "rer"]),
+    cat("garage", "Garage et entretien auto", "out", &["garage*", "norauto", "midas", "feu vert", "speedy", "euromaster", "point s", "controle technique", "dekra", "vulco", "carrosserie*", "pneu*", "auto bilan"]),
+    cat("transport", "Autres transports", "out", &["uber", "bolt", "heetch", "blablacar", "peage*", "vinci autoroutes", "sanef", "aprr", "parking*", "indigo", "velib", "lime", "dott"]),
     cat("shopping", "Achats et maison", "out", &["amazon", "fnac", "darty", "boulanger", "decathlon", "zara", "h&m", "cdiscount", "aliexpress", "zalando", "vinted", "ikea", "leroy merlin", "castorama", "bricorama", "brico*", "action", "kiabi", "uniqlo", "shein", "temu", "cultura", "gifi", "maisons du monde", "conforama"]),
-    cat("loisirs", "Loisirs et culture", "out", &["cinema*", "ugc", "pathe", "gaumont", "steam", "nintendo", "ticketmaster", "google play", "spectacle*", "musee*", "concert*", "theatre*", "librairie*", "gym", "basic fit", "fitness", "piscine*", "sport*"]),
+    cat("loisirs", "Loisirs et culture", "out", &["cinema*", "ugc", "pathe", "gaumont", "ticketmaster", "google play", "spectacle*", "musee*", "concert*", "theatre*", "librairie*", "gym", "basic fit", "fitness", "piscine*", "sport*"]),
 ];
 
 pub static INCOME: &[Category] = &[
@@ -59,7 +63,7 @@ pub static INCOME: &[Category] = &[
 ];
 
 pub static FIXED: &[Category] = &[
-    cat("credit", "Crédit et prêts", "out", &[]),
+    cat("credit", "Remboursement d'emprunt", "out", &[]),
     cat("frais", "Frais bancaires", "out", &[]),
     cat("retraits", "Retraits d'espèces", "out", &[]),
     cat("proches", "Virements à des personnes", "out", &[]),
@@ -68,7 +72,8 @@ pub static FIXED: &[Category] = &[
     cat("interets", "Intérêts", "in", &[]),
     cat("recus", "Virements reçus", "in", &[]),
     cat("autres_entrees", "Autres entrées", "in", &[]),
-    cat("interne", "Entre mes comptes", "both", &[]),
+    cat("emprunt", "Emprunt (fonds reçus)", "in", &[]),
+    cat("interne", "Transfert compte à compte", "both", &[]),
 ];
 
 pub fn fixed(id: &str) -> &'static Category {
@@ -114,7 +119,7 @@ pub fn options(direction: &str) -> Vec<&'static Category> {
     let mut out: Vec<&'static Category> = if direction == "out" {
         OUT.iter().chain(["credit", "frais", "retraits", "proches", "prelevements", "autres"].iter().map(|k| fixed(k))).collect()
     } else {
-        INCOME.iter().chain(["interets", "recus", "autres_entrees"].iter().map(|k| fixed(k))).collect()
+        INCOME.iter().chain(["interets", "recus", "emprunt", "autres_entrees"].iter().map(|k| fixed(k))).collect()
     };
     out.push(fixed("interne"));
     out
@@ -148,7 +153,13 @@ pub fn load_rules(c: &Connection) -> AppResult<HashMap<String, String>> {
         Some(o) => CategoryRule::query(c, "WHERE owner_id = ?", [o])?,
         None => CategoryRule::query(c, "WHERE owner_id IS NULL", [])?,
     };
-    Ok(rules.into_iter().map(|r| (r.key, r.category)).collect())
+    let mut rules: HashMap<String, String> = rules.into_iter().map(|r| (r.key, r.category)).collect();
+    // a contact marked "Moi (autre compte)" is one of my own accounts: what goes to or comes from it is a transfer between
+    // accounts, unless a rule of mine says otherwise
+    for me in Counterparty::query(c, "WHERE kind = 'self'", [])? {
+        rules.entry(format!("c{}", me.id)).or_insert_with(|| "interne".to_string());
+    }
+    Ok(rules)
 }
 
 /// Remember where a merchant goes (`category` "auto" forgets the rule).
@@ -179,7 +190,7 @@ pub fn set_rule(c: &Connection, key: &str, category: &str) -> AppResult<()> {
 /// once.
 pub struct Categorizer<'a> {
     rules: &'a HashMap<String, String>,
-    seen: HashMap<(bool, Option<i64>, Option<String>, String, Option<String>, Option<String>, bool, Option<String>), &'static str>,
+    seen: HashMap<(bool, Option<i64>, Option<String>, String, Option<String>, Option<String>, bool, Option<String>, Option<String>), &'static str>,
 }
 
 impl<'a> Categorizer<'a> {
@@ -197,6 +208,7 @@ impl<'a> Categorizer<'a> {
             t.kind.clone(),
             t.amount >= Decimal::ZERO,
             contact.map(|s| s.to_string()),
+            t.category.clone(),
         );
         if let Some(c) = self.seen.get(&key) {
             return c;
@@ -209,6 +221,10 @@ impl<'a> Categorizer<'a> {
 
 /// The id of the category of one operation.
 pub fn categorize(t: &Transaction, contact: Option<&str>, rules: &HashMap<String, String>) -> &'static str {
+    // 0. the category chosen for this very operation
+    if let Some(own) = t.category.as_deref().and_then(get) {
+        return own.id;
+    }
     if t.internal() {
         return "interne";
     }
@@ -220,6 +236,9 @@ pub fn categorize(t: &Transaction, contact: Option<&str>, rules: &HashMap<String
     let kind = t.kind.as_deref().unwrap_or("");
     if kind == "interest" {
         return "interets";
+    }
+    if income && kind == "loan_payment" {
+        return "emprunt"; // funds paid out to the account by a loan
     }
     if !income {
         match kind {

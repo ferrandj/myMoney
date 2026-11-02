@@ -128,6 +128,8 @@ document.querySelectorAll("form[data-autosubmit]").forEach((form) => {
     }),
   );
 });
+// Budget: choosing a category saves it right away (the "1×" box alone does not).
+document.querySelectorAll("form.cat-form select").forEach((select) => select.addEventListener("change", () => select.form.requestSubmit()));
 document.querySelectorAll("table[data-sortable]").forEach((table) => {
   const body = table.tBodies[0];
   table.tHead.querySelectorAll("th").forEach((th, column) =>

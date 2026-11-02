@@ -289,7 +289,7 @@ fn test_web_views_filters_and_totals() {
 
     let depenses = client.get("/analytics?vue=depenses&periode=tout");
     let text = depenses.text();
-    assert!(depenses.status == 200 && text.contains("par catégorie") && text.contains("Courses") && text.contains("Impôts et taxes"));
+    assert!(depenses.status == 200 && text.contains("par catégorie") && text.contains("Alimentation") && text.contains("Impôts et taxes"));
 
     // Spending and income share one page, each with its own ring
     assert!(text.matches("donut-svg").count() >= 2 && text.contains("Revenus") && text.contains("Dépenses") && text.contains("Mois par mois"));

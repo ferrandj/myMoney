@@ -1,6 +1,7 @@
 pub mod access;
 pub mod admin_db;
 pub mod analytics;
+pub mod budget;
 pub mod categories;
 pub mod counterparties;
 pub mod coverage;

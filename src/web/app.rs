@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{Account, AccountShare, Counterparty, Document, Holding, Loan, LoanEvent, LoanInstallment, Transaction, User, ACCOUNT_TYPES, CATEGORIES, COUNTERPARTY_KINDS};
 use crate::py::{self, PyDec};
 use crate::services::access::{self, Identity};
-use crate::services::{admin_db, analytics, people as people_service, categories as category_service, counterparties as contact_service, coverage as coverage_service, loans as loan_service, rates, users as user_service};
+use crate::services::{admin_db, analytics, budget, people as people_service, categories as category_service, counterparties as contact_service, coverage as coverage_service, loans as loan_service, rates, users as user_service};
 
 const PUBLIC_PATHS: &[&str] = &["/static/", "/themes.css", "/healthz", "/login", "/setup", "/manifest.webmanifest", "/sw.js", "/icons/"];
 
@@ -277,6 +277,7 @@ const TEMPLATES: &[(&str, &str)] = template_sources!(
     "person.html",
     "analytics.html",
     "base.html",
+    "budget.html",
     "contact.html",
     "contact_identify.html",
     "contacts.html",
@@ -324,6 +325,8 @@ enum R {
     GapRestore,
     Analytics,
     AnalyticsCategorize,
+    Budget,
+    BudgetCategorize,
     AccountNew,
     AccountList,
     PeopleList,
@@ -420,6 +423,8 @@ const ROUTES: &[(&str, &str, R)] = &[
     ("POST", "/gaps/{ack_id}/restore", R::GapRestore),
     ("GET", "/analytics", R::Analytics),
     ("POST", "/analytics/categorize", R::AnalyticsCategorize),
+    ("GET", "/budget", R::Budget),
+    ("POST", "/budget/categorize", R::BudgetCategorize),
     ("GET", "/accounts", R::AccountList),
     ("GET", "/people", R::PeopleList),
     ("GET", "/people/new", R::PersonNew),
@@ -897,6 +902,8 @@ impl Web {
             R::GapRestore => self.gap_restore(cx),
             R::Analytics => self.analytics_page(cx),
             R::AnalyticsCategorize => self.analytics_categorize(cx),
+            R::Budget => self.budget_page(cx),
+            R::BudgetCategorize => self.budget_categorize(cx),
             R::AccountList => self.accounts_page(cx),
             R::PeopleList => self.people_page(cx),
             R::PersonNew => self.person_page(cx, None),
@@ -1935,6 +1942,155 @@ impl Web {
                 ("saved", r.saved().into()),
             ],
         ))
+    }
+
+    /// Budget mode: every operation one by one, with its category.
+    fn budget_page(&self, cx: &Cx) -> Out {
+        const PER_PAGE: usize = 100;
+        let mut p = Params::new(cx);
+        let account = p.query_int("compte", 0);
+        let page = p.query_int("page", 1).max(1) as usize;
+        p.check()?;
+        let sens = match cx.q("sens") {
+            Some("depenses") => "depenses",
+            Some("entrees") => "entrees",
+            _ => "tout",
+        };
+        let cat = if category_service::get(&cx.qs("cat")).is_some() { cx.qs("cat") } else { String::new() };
+        let sort = match cx.q("tri") {
+            Some(k @ ("date" | "compte" | "libelle" | "montant" | "categorie")) => k.to_string(),
+            _ => "date".to_string(),
+        };
+        let desc = match cx.q("ordre") {
+            Some("asc") => false,
+            Some("desc") => true,
+            _ => sort == "date" || sort == "montant",
+        };
+        let filter = budget::Filter {
+            account: Some(account).filter(|a| *a > 0),
+            category: cat.clone(),
+            sens: sens.to_string(),
+            from: py_date(&cx.qs("du")),
+            to: py_date(&cx.qs("au")),
+            text: py::strip(&cx.qs("q")).to_string(),
+            sort: sort.clone(),
+            desc,
+        };
+        let listing = self.core.session(|c| budget::list(c, &filter))?;
+        let count = listing.rows.len();
+        let pages = count.div_ceil(PER_PAGE).max(1);
+        let page = page.min(pages);
+        // the filters, as a query string to build the links of the page
+        let base: Vec<(String, String)> = [
+            ("compte", if account > 0 { account.to_string() } else { String::new() }),
+            ("cat", cat.clone()),
+            ("sens", if sens == "tout" { String::new() } else { sens.to_string() }),
+            ("du", filter.from.map(|d| d.to_string()).unwrap_or_default()),
+            ("au", filter.to.map(|d| d.to_string()).unwrap_or_default()),
+            ("q", filter.text.clone()),
+        ]
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let url = |extra: &[(&str, String)]| {
+            let mut pairs = base.clone();
+            pairs.extend(extra.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.to_string(), v.clone())));
+            if pairs.is_empty() {
+                "/budget".to_string()
+            } else {
+                format!("/budget?{}", py::urlencode(&pairs))
+            }
+        };
+        let order = |desc: bool| if desc { "desc" } else { "asc" };
+        let sort_pairs = |key: &str| -> Vec<(&str, String)> {
+            let next_desc = if sort == key { !desc } else { key == "date" || key == "montant" };
+            vec![("tri", key.to_string()), ("ordre", order(next_desc).to_string())]
+        };
+        let sort_links: Vec<(Value, Value)> = ["date", "compte", "libelle", "montant", "categorie"]
+            .iter()
+            .map(|k| (Value::str(*k), Value::str(url(&sort_pairs(k)))))
+            .collect();
+        let here = |n: usize| url(&[("tri", sort.clone()), ("ordre", order(desc).to_string()), ("page", if n > 1 { n.to_string() } else { String::new() })]);
+        let rows: Vec<Value> = listing
+            .rows
+            .iter()
+            .skip((page - 1) * PER_PAGE)
+            .take(PER_PAGE)
+            .map(|r| {
+                Value::sdict(vec![
+                    ("id", r.t.id.into()),
+                    ("date", r.t.date.into()),
+                    ("account", r.account.clone().into()),
+                    ("account_id", r.t.account_id.into()),
+                    ("label", r.t.label.clone().into()),
+                    ("counterparty", r.t.counterparty_name.clone().into()),
+                    ("memo", r.t.memo.clone().into()),
+                    ("amount", r.t.amount.into()),
+                    ("currency", r.t.currency.clone().into()),
+                    ("income", (r.t.amount >= rust_decimal::Decimal::ZERO).into()),
+                    ("category", r.category.into()),
+                    ("category_label", category_service::get(r.category).map(|c| c.label).unwrap_or("").into()),
+                    ("own", r.own.into()),
+                    ("ruled", r.ruled.into()),
+                    ("merchant", r.merchant.clone().into()),
+                ])
+            })
+            .collect();
+        let totals: Vec<Value> = listing
+            .totals
+            .iter()
+            .map(|t| Value::sdict(vec![("id", t.id.into()), ("label", t.label.into()), ("total", t.total.into()), ("count", t.count.into()), ("share", t.share.into()), ("url", url(&[("cat", t.id.to_string())]).into())]))
+            .collect();
+        let all: Vec<Value> = category_service::all().map(category_value).collect();
+        let accounts: Vec<Value> = listing.accounts.iter().map(|a| Value::sdict(vec![("id", a.id.into()), ("name", a.name.clone().into())])).collect();
+        let this_url = here(page);
+        self.page(
+            cx,
+            "budget.html",
+            vec![
+                ("rows", Value::list(rows)),
+                ("count", count.into()),
+                ("page", page.into()),
+                ("pages", pages.into()),
+                ("first", ((page - 1) * PER_PAGE + 1).min(count).into()),
+                ("last", (page * PER_PAGE).min(count).into()),
+                ("prev_url", if page > 1 { here(page - 1).into() } else { Value::None }),
+                ("next_url", if page < pages { here(page + 1).into() } else { Value::None }),
+                ("sort", sort.clone().into()),
+                ("desc", desc.into()),
+                ("sort_links", Value::dict(sort_links)),
+                ("compte", account.into()),
+                ("cat", cat.clone().into()),
+                ("sens", sens.into()),
+                ("du", filter.from.map(|d| d.to_string()).unwrap_or_default().into()),
+                ("au", filter.to.map(|d| d.to_string()).unwrap_or_default().into()),
+                ("q", filter.text.clone().into()),
+                ("accounts", Value::list(accounts)),
+                ("all_categories", Value::list(all)),
+                ("opts_out", Value::list(category_service::options("out").into_iter().map(category_value).collect())),
+                ("opts_in", Value::list(category_service::options("in").into_iter().map(category_value).collect())),
+                ("totals", Value::list(totals)),
+                ("total_out", listing.total_out.into()),
+                ("total_in", listing.total_in.into()),
+                ("transfers", listing.transfers.into()),
+                ("this_url", this_url.into()),
+            ],
+        )
+    }
+
+    /// Give an operation its category (and, by default, keep it for the operations that read the same).
+    fn budget_categorize(&self, cx: &Cx) -> Out {
+        let form = self.verified_form(cx)?;
+        let id = get(&form, "id").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0);
+        let target = safe_next(get(&form, "next"), "/budget");
+        let target = format!("{}#t{id}", target.split('#').next().unwrap_or("/budget"));
+        let remember = get(&form, "only").is_none();
+        match self.core.session(|c| budget::set_category(c, id, get_or(&form, "category", ""), remember)) {
+            Ok(m) => msg(&target, m),
+            Err(AppError::Value(m)) => msg(&target, m),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn analytics_categorize(&self, cx: &Cx) -> Out {

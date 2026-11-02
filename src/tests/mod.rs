@@ -2,6 +2,7 @@
 
 mod adapters_generic;
 mod boursobank;
+mod budget;
 mod fortuneo;
 mod hellobank;
 mod import_flow;
