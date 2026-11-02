@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Budget{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <h1>Budget</h1>
+    <p class="muted">Toutes tes opérations, une par une, avec leur catégorie. Change la catégorie d'une ligne : elle est retenue pour toutes les opérations équivalentes (même bénéficiaire ou même libellé), d'hier et de demain. Coche « 1× » pour ne changer que cette ligne.</p>
+  </div>
+</section>
+
+<form method="get" action="/budget" class="card budget-filters" data-autosubmit>
+  <label>Compte
+    <select name="compte">
+      <option value="">Tous les comptes</option>
+      {% for a in accounts %}<option value="{{ a.id }}" {% if a.id == compte %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Catégorie
+    <select name="cat">
+      <option value="">Toutes</option>
+      {% for k in all_categories %}<option value="{{ k.id }}" {% if k.id == cat %}selected{% endif %}>{{ k.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Sens
+    <select name="sens">
+      <option value="" {% if sens == 'tout' %}selected{% endif %}>Dépenses et entrées</option>
+      <option value="depenses" {% if sens == 'depenses' %}selected{% endif %}>Dépenses</option>
+      <option value="entrees" {% if sens == 'entrees' %}selected{% endif %}>Entrées</option>
+    </select>
+  </label>
+  <label>Du <input type="date" name="du" value="{{ du }}"></label>
+  <label>Au <input type="date" name="au" value="{{ au }}"></label>
+  <label class="wide">Recherche <input type="search" name="q" value="{{ q }}" placeholder="libellé, bénéficiaire, catégorie…"></label>
+  <input type="hidden" name="tri" value="{{ sort }}"><input type="hidden" name="ordre" value="{{ 'desc' if desc else 'asc' }}">
+  <button class="btn">Filtrer</button>
+  {% if compte or cat or sens != 'tout' or du or au or q %}<a class="btn ghost" href="/budget">Tout afficher</a>{% endif %}
+</form>
+
+<section class="tiles kpis">
+  <div class="tile"><span class="muted small">Dépenses</span><strong class="kpi">{{ total_out|money }}</strong></div>
+  <div class="tile"><span class="muted small">Entrées</span><strong class="kpi pos">{{ total_in|money }}</strong></div>
+  <div class="tile"><span class="muted small">Entre mes comptes (non compté)</span><strong class="kpi">{{ transfers|money }}</strong></div>
+</section>
+
+{% if totals %}
+<section class="card">
+  <h2>Dépenses par catégorie</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Catégorie</th><th class="num">Opérations</th><th class="num">Total</th><th class="num">Part</th><th></th></tr></thead>
+    {% for t in totals %}
+    <tr>
+      <td><a href="{{ t.url }}">{{ t.label }}</a></td>
+      <td class="num">{{ t.count }}</td>
+      <td class="num">{{ t.total|money }}</td>
+      <td class="num">{{ t.share }} %</td>
+      <td class="bar-cell"><progress max="100" value="{{ t.share|round(0)|int }}" aria-label="{{ t.share }} %"></progress></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Opérations <span class="tag">{{ count }}</span></h2>
+  {% if rows %}
+  <div class="table-wrap"><table class="budget-table">
+    <thead><tr>
+      <th><a href="{{ sort_links['date'] }}">Date{% if sort == 'date' %} {{ '↓' if desc else '↑' }}{% endif %}</a></th>
+      <th><a href="{{ sort_links['compte'] }}">Compte{% if sort == 'compte' %} {{ '↓' if desc else '↑' }}{% endif %}</a></th>
+      <th><a href="{{ sort_links['libelle'] }}">Opération{% if sort == 'libelle' %} {{ '↓' if desc else '↑' }}{% endif %}</a></th>
+      <th class="num"><a href="{{ sort_links['montant'] }}">Montant{% if sort == 'montant' %} {{ '↓' if desc else '↑' }}{% endif %}</a></th>
+      <th><a href="{{ sort_links['categorie'] }}">Catégorie{% if sort == 'categorie' %} {{ '↓' if desc else '↑' }}{% endif %}</a></th>
+    </tr></thead>
+    {% for r in rows %}
+    <tr id="t{{ r.id }}">
+      <td class="nowrap">{{ r.date|frdate }}</td>
+      <td class="small"><a href="/accounts/{{ r.account_id }}">{{ r.account }}</a></td>
+      <td><span class="sensitive">{{ r.label }}</span>{% if r.counterparty and r.counterparty != r.label %}<div class="muted small sensitive">{{ r.counterparty }}</div>{% endif %}</td>
+      <td class="num {{ 'pos' if r.income else '' }}">{{ r.amount|money(r.currency) }}</td>
+      <td>
+        <form method="post" action="/budget/categorize" class="cat-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ r.id }}"><input type="hidden" name="next" value="{{ this_url }}">
+          <select name="category" aria-label="Catégorie de l'opération">
+            <option value="auto">↺ Automatique</option>
+            {% for k in (opts_in if r.income else opts_out) %}<option value="{{ k.id }}" {% if k.id == r.category %}selected{% endif %}>{{ k.label }}</option>{% endfor %}
+          </select>
+          <label class="check small" title="Ne changer que cette opération, sans la retenir pour les opérations équivalentes"><input type="checkbox" name="only" value="1"> 1×</label>
+          {% if r.own %}<span class="tag" title="Catégorie choisie pour cette opération seulement">choisie</span>{% elif r.ruled %}<span class="tag" title="Retenue pour « {{ r.merchant }} »">retenue</span>{% endif %}
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  <p class="small muted">Opérations {{ first }} à {{ last }} sur {{ count }}.
+    {% if prev_url %}<a href="{{ prev_url }}">← Précédentes</a>{% endif %}
+    {% if next_url %}<a href="{{ next_url }}">Suivantes →</a>{% endif %}</p>
+  {% else %}<p class="muted">Aucune opération ne correspond. Dépose des relevés dans <a href="/documents">Documents</a>, ou élargis les filtres.</p>{% endif %}
+</section>
+{% endblock %}

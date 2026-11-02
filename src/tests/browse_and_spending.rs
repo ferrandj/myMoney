@@ -65,7 +65,7 @@ guesses! {
     test_the_automatic_guess_boulangerie: ("Boulangerie du coin", -3, "card", "restaurants");
     test_the_automatic_guess_uber_eats: ("UBER *EATS", -18, "card", "restaurants");
     test_the_automatic_guess_uber_trip: ("UBER TRIP", -12, "card", "transport");
-    test_the_automatic_guess_trains: ("TRAINS DE FRANCE", -71, "card", "transport");
+    test_the_automatic_guess_trains: ("TRAINS DE FRANCE", -71, "card", "transport_commun");
     test_the_automatic_guess_eaux: ("PRLV SEPA EAUX DU NORD", -28, "direct_debit", "energie");
     test_the_automatic_guess_edf: ("PRLV EDF CLIENTS", -62, "direct_debit", "energie");
     test_the_automatic_guess_impots: ("PRLV SEPA DIRECTION GENERALE DES FINANCES", -1396, "direct_debit", "impots");
@@ -94,7 +94,7 @@ guesses! {
 #[test]
 fn test_a_word_is_a_whole_word() {
     guess("BPCE PRELEVEMENT", -9, "direct_debit", "prelevements"); // "bp" is not "bpce"
-    guess("BP STATION", -50, "card", "transport");
+    guess("BP STATION", -50, "card", "essence");
     guess("FREE MOBILE", -9, "direct_debit", "telecom");
     guess("Transport en commun", -2, "card", "autres"); // "sport*" starts a word, "transport" does not
 }
@@ -279,7 +279,7 @@ fn test_web_spending_by_category_with_drill_down_and_recategorising() {
     let csrf = sign_up(&mut web);
     add_ops(&web.core);
     let page = web.get("/analytics?vue=depenses&periode=tout").text();
-    for expected in ["Où est parti", "par catégorie", "Courses", "Énergie et eau", "Autres dépenses", "cat=courses", "Plus gros bénéficiaires", "Mois par mois", "Revenus", "Plus grosses sources", "Solde de la période"] {
+    for expected in ["Où est parti", "par catégorie", "Alimentation", "Énergie et eau", "Autres dépenses", "cat=courses", "Plus gros bénéficiaires", "Mois par mois", "Revenus", "Plus grosses sources", "Solde de la période"] {
         assert!(page.contains(expected), "{expected}");
     }
     // Inside a category: who, when, and a way to change it.
@@ -323,7 +323,7 @@ fn test_the_account_page_names_the_category_of_each_operation() {
     sign_up(&mut web);
     let a = add_ops(&web.core);
     let page = web.get(&format!("/accounts/{a}")).text();
-    assert!(page.contains("Courses") && page.contains("Énergie et eau"));
+    assert!(page.contains("Alimentation") && page.contains("Énergie et eau"));
 }
 
 // ----------------------------------------------------------------------------------------- documents

@@ -320,7 +320,20 @@ fn transactions(c: &Connection, account_ids: &[i64], start: NaiveDate, end: Naiv
     params.push(rusqlite::types::Value::Text(date_param(start)));
     params.push(rusqlite::types::Value::Text(date_param(end)));
     let rows = Transaction::query(c, &format!("WHERE account_id IN ({marks}) AND date >= ? AND date <= ?"), rusqlite::params_from_iter(params))?;
-    Ok(rows.into_iter().filter(|t| include_internal || !t.internal()).collect())
+    if include_internal {
+        return Ok(rows);
+    }
+    // transfers between my accounts: the ones the import paired, and the ones I (or a contact "Moi") classed so
+    let rules = categories::load_rules(c)?;
+    let contacts = contact_names(c)?;
+    let mut categorize = Categorizer::new(&rules);
+    Ok(rows
+        .into_iter()
+        .filter(|t| {
+            let contact = t.counterparty_id.and_then(|i| contacts.get(&i)).map(|s| s.as_str());
+            categorize.decide(t, contact) != "interne"
+        })
+        .collect())
 }
 
 fn next_month(d: NaiveDate) -> NaiveDate {
